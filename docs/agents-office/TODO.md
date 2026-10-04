@@ -49,7 +49,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 ## Todos
 
 ### T01 Raster cell codec
-- status: done (#PR, 2026-10-04)
+- status: done (#2, 2026-10-04)
 - needs: none
 - size: S
 - scope: Hand-written base64 encoder, glyph validation (printable width-1 BMP only) and `packCells(grid: Cell[][])` in `hooks/raster.ts`, plus the `Cell` type. Settles R4: the test imports a sibling `hooks/*.ts` module; if `claude plugin test` cannot, record the working layout in `## Decisions` and use it from here on.
@@ -196,4 +196,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - Walk-cycle easing (two ticks per tile at 10 fps if one tile per tick looks too fast).
 
 ## Log
-2026-10-04 T01 #PR raster cell codec packs and validates cells (R4: sibling import works; plan vector corrected to iCUAAACI/wAAAAAB)
+2026-10-04 T01 #2 raster cell codec packs and validates cells (R4: sibling import works; plan vector corrected to iCUAAACI/wAAAAAB)
