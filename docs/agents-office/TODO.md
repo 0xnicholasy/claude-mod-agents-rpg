@@ -123,7 +123,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "an unchanged office does not blit on the next tick" pass)
 
 ### T06 BFS pathfinding on the tile map
-- status: done (#PR, 2026-10-04)
+- status: done (#8, 2026-10-04)
 - needs: T03
 - size: S
 - scope: `hooks/path.ts` BFS over floor/door tiles with 4-neighbour moves, `findPath(map, from, to)` returning the tile list (empty when unreachable). Pure; no wiring.
@@ -227,4 +227,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T03 #5 tile map: seven rooms, 3-wide doors, anchors and doorStands standable and reachable; D27 map contract
 2026-10-04 T04 #6 sprite sheet: 7 poses, 2-frame walk and work cycles, tier palette, nameplate; D28 transparency convention
 2026-10-04 T05 #7 frame builder and real pane rendering: buildFrame/placeMotion, blit only on change, 5-row strip reserved; D29-D32
-2026-10-04 T06 #PR BFS pathfinding over canStand footprints: findPath returns steps after from through to, empty when unreachable; D33 path convention
+2026-10-04 T06 #8 BFS pathfinding over canStand footprints: findPath returns steps after from through to, empty when unreachable; D33 path convention
