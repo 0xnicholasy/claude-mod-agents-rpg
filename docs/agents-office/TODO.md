@@ -113,7 +113,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "every pose and frame is 3x2 of width-1 BMP glyphs the raster accepts" pass)
 
 ### T05 Frame builder and real pane rendering
-- status: done (#PR, 2026-10-04)
+- status: done (#7, 2026-10-04)
 - needs: T02, T03, T04
 - size: M
 - scope: `hooks/frame.ts`: `buildFrame({ map, agents, motion, bubbles })` returns the `Cell[][]` grid: floor, walls, door gaps, room signs, each agent's sprite at its `motion` tile with the nameplate above and a bubble row when one is active (bubbles drawn as cells, so no overlay Box in v1). `register.tsx` render: terminal branch builds the Raster from atoms; `loop.ts` tick packs `buildFrame` and blits only when the frame hash changed. The T01B counter frame is removed. An agent in `agents` with no `motion` entry gets one at its room's first free anchor (the `agent.spawn` hook writes it), so every drawn agent has a position before T06 adds walking.
@@ -225,4 +225,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T02 #4 agent roster reducer: spawn/turn.complete/agent.list hooks and 5 s expiry; D24 stub shapes, D25 expire runs in tick
 2026-10-04 T03 #5 tile map: seven rooms, 3-wide doors, anchors and doorStands standable and reachable; D27 map contract
 2026-10-04 T04 #6 sprite sheet: 7 poses, 2-frame walk and work cycles, tier palette, nameplate; D28 transparency convention
-2026-10-04 T05 #PR frame builder and real pane rendering: buildFrame/placeMotion, blit only on change, 5-row strip reserved; D29-D32
+2026-10-04 T05 #7 frame builder and real pane rendering: buildFrame/placeMotion, blit only on change, 5-row strip reserved; D29-D32
