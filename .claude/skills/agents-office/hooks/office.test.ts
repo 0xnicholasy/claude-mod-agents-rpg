@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { buildMap } from './map'
 import { STRIP_ROWS } from './timing'
 
 const paneProps = {
@@ -444,5 +445,37 @@ test('a spawned agent is drawn on the first tick after the spawn', async ($, on)
 
   expect(cells).toHaveLength(2)
   expect(cells[1]).not.toBe(cells[0])
+  await ui.unmount()
+})
+
+test('a spawned agent is at the Lobby door, then one tile further per 100 ms tick', async ($, on) => {
+  const clock = mock.clock(on)
+  const positions: Array<{ x: number; y: number }> = []
+  on('state.set', ($, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the motion atom is read.
+    if (e.key === 'motion') {
+      const a1 = (e.value as Record<string, { x: number; y: number }>).a1
+      if (a1 !== undefined) positions.push({ x: a1.x, y: a1.y })
+    }
+    return next(e)
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('ui.blit', () => ({ value: {} }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  await $.agent.spawn(spawnArgs)
+  await clock.advance(100)
+  await clock.advance(100)
+
+  const lobby = buildMap(60, 18).rooms.find(r => r.id === 'lobby')
+  expect(positions).toHaveLength(3)
+  expect(positions[0]).toEqual(lobby?.doorStand)
+  for (const [i, p] of positions.slice(1).entries()) {
+    const prev = positions[i]
+    expect(Math.abs(p.x - (prev?.x ?? 0)) + Math.abs(p.y - (prev?.y ?? 0))).toBe(1)
+  }
   await ui.unmount()
 })

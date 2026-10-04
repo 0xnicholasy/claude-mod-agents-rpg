@@ -6,8 +6,8 @@ import { canStand, FOOTPRINT_W } from './map'
 import type { OfficeMap, Point, TileKind } from './map'
 import { DEFAULT_COLOR, isValidGlyph } from './raster'
 import type { Cell } from './raster'
-import { isTransparent, nameplate, POSES, sprite } from './sprites'
-import type { Pose } from './sprites'
+import { drawnFrame, drawnPose } from './motion'
+import { isTransparent, nameplate, sprite } from './sprites'
 
 export type Motion = Record<string, { x: number; y: number; path: Point[]; frame: number }>
 export type Bubble = { agentId: string; text: string; until: number }
@@ -41,8 +41,6 @@ const baseCell = (kind: TileKind | undefined): Cell => {
       return { ...FLOOR_CELL }
   }
 }
-
-const isPose = (value: string): value is Pose => POSES.some(pose => pose === value)
 
 // Text as cells; a glyph the Raster would refuse becomes '?'.
 const textCells = (text: string, fg: number, bg: number): Cell[] =>
@@ -117,8 +115,8 @@ export const buildFrame = ({ map, agents, motion, bubbles, now }: FrameInput): C
 
   const plates: Plate[] = []
   for (const { agent, at } of placed) {
-    const pose = isPose(agent.pose) ? agent.pose : 'idle'
-    sprite(pose, at.frame, agent.tier).forEach((row, dy) =>
+    const pose = drawnPose(agent, at)
+    sprite(pose, drawnFrame(pose, at, now), agent.tier).forEach((row, dy) =>
       row.forEach((over, dx) => {
         const x = at.x + dx
         const y = at.y + dy
@@ -167,8 +165,11 @@ export const placeMotion = (map: OfficeMap, agents: Roster, motion: Motion): Mot
   let next = motion
   for (const id of Object.keys(motion)) {
     const entry = motion[id]
-    // A resting entry that is off the map or not standable (after a resize) is dropped and reseated below.
-    const stale = entry !== undefined && entry.path.length === 0 && !canStand(map, entry.x, entry.y)
+    // An entry that is off the map or not standable, or whose path is (after a resize), is dropped and reseated
+    // at an anchor below: the one allowed move that does not walk (D31, D34).
+    const stale =
+      entry !== undefined &&
+      (!canStand(map, entry.x, entry.y) || entry.path.some(p => !canStand(map, p.x, p.y)))
     if (agents[id] !== undefined && !stale) continue
     if (next === motion) next = { ...motion }
     delete next[id]

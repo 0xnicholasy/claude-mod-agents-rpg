@@ -5,6 +5,7 @@ import type { Roster } from './agents'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { mapFor, rasterSize } from './loop'
+import { enterAtDoor, step } from './motion'
 import { DEFAULT_COLOR, packCells } from './raster'
 import type { Cell } from './raster'
 import { LIST_MS, TICK_MS } from './timing'
@@ -55,16 +56,27 @@ const refreshRoster = async ($: EngineInterface): Promise<void> => {
 
 // Seats the given roster on the current map. The caller passes the roster it
 // computed locally, so no atom just written is read back (same-dispatch
-// snapshot). Returns the motion it computed, or undefined with no map.
-const seat = async ($: EngineInterface, roster: Roster): Promise<Motion | undefined> => {
+// snapshot). `entering` is a just-spawned agent that appears at the Lobby door
+// and walks to its room (D34); `advance` moves every walker one tile (the tick).
+// One write at most. Returns the motion it computed, or undefined with no map.
+type SeatOptions = { entering?: string; advance?: boolean }
+
+const seat = async (
+  $: EngineInterface,
+  roster: Roster,
+  { entering, advance = false }: SeatOptions = {},
+): Promise<Motion | undefined> => {
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
   if (map === undefined) return undefined
   const current = await read($, motion)
-  const placed = placeMotion(map, roster, current)
-  if (placed !== current) await update($, motion, () => placed)
+  const arriving = entering === undefined ? undefined : roster[entering]
+  const entered = arriving === undefined ? current : enterAtDoor(current, map, arriving.id, arriving.room)
+  const placed = placeMotion(map, roster, entered)
+  const next = advance ? step(placed) : placed
+  if (next !== current) await update($, motion, () => next)
 
-  return placed
+  return next
 }
 
 const tick = async ($: EngineInterface): Promise<void> => {
@@ -74,7 +86,7 @@ const tick = async ($: EngineInterface): Promise<void> => {
   if (roster !== stored) {
     await guard($, 'expire', undefined, async () => update($, agents, () => roster))
   }
-  const placed = await guard($, 'place', undefined, async () => seat($, roster))
+  const placed = await guard($, 'place', undefined, async () => seat($, roster, { advance: true }))
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
   if (map === undefined) return
@@ -176,7 +188,7 @@ export const register: Register = on => {
       const stored = await read($, agents)
       const roster = onSpawn(stored, e, result)
       if (roster !== stored) await update($, agents, () => roster)
-      await seat($, roster)
+      await seat($, roster, { entering: result.agentId })
     })
 
     return result

@@ -39,7 +39,8 @@ test('frame draws every room sign at its anchor', () => {
 
 test("an agent's sprite and nameplate sit at its motion tile", () => {
   const roster: Roster = { a1: agent('a1', { label: 'quick', pose: 'type' }) }
-  const grid = buildFrame({ map, agents: roster, motion: { a1: at(anchor.x, anchor.y, 1) }, bubbles: [], now: 0 })
+  // A resting work pose animates from the clock (D34): now = 300 ms is work frame 1.
+  const grid = buildFrame({ map, agents: roster, motion: { a1: at(anchor.x, anchor.y) }, bubbles: [], now: 300 })
   const art = sprite('type', 1, 'opus')
 
   // Face cell: opaque, own skin bg. Body cells keep the floor bg (D28).
