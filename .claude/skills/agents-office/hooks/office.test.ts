@@ -334,10 +334,15 @@ test('no blit happens before the pane renders', async ($, on) => {
   expect(seen).toHaveLength(0)
 })
 
-const stubSession = (on: On): void => {
+// `logs`, when given, collects the text of every ui.log call.
+const stubSession = (on: On, logs?: string[]): void => {
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'office' } }))
-  on('ui.log', () => ({ value: undefined }))
+  on('ui.log', (_$, e) => {
+    logs?.push(e.text)
+
+    return { value: undefined }
+  })
 }
 
 const watchRoster = (on: On): (() => string[]) => {
@@ -570,6 +575,7 @@ const startOffice = async ($: Engine, on: On) => {
   let latest: MotionWrite = {}
   let latestBubbles: Array<{ agentId: string; text: string; until: number }> = []
   let latestRoster: string[] = []
+  const logs: string[] = []
   on('state.set', ($, e, next) => {
     // StateWrite types `value` as the union of every atom; only the motion, bubbles and agents atoms are read.
     if (e.key === 'agents') latestRoster = Object.keys(e.value as Record<string, unknown>)
@@ -577,7 +583,7 @@ const startOffice = async ($: Engine, on: On) => {
     if (e.key === 'bubbles') latestBubbles = e.value as typeof latestBubbles
     return next(e)
   })
-  stubSession(on)
+  stubSession(on, logs)
   on('agent.list', () => ({ value: [] }))
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   on('ui.blit', () => ({ value: {} }))
@@ -587,7 +593,7 @@ const startOffice = async ($: Engine, on: On) => {
   const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
   await clock.advance(100)
 
-  return { clock, ui, motion: () => latest, bubbles: () => latestBubbles, roster: () => latestRoster }
+  return { clock, ui, logs, motion: () => latest, bubbles: () => latestBubbles, roster: () => latestRoster }
 }
 
 const endsAtAnchor = (entry: MotionWrite[string] | undefined, room: string): boolean => {
@@ -869,7 +875,7 @@ test('a second session.start keeps the roster and exactly one blit happens per t
 })
 
 test('a turn.complete for an unknown agent changes nothing and resolves', async ($, on) => {
-  const { clock, ui, roster, motion, bubbles } = await startOffice($, on)
+  const { clock, ui, logs, roster, motion, bubbles } = await startOffice($, on)
   await $.agent.spawn(spawnArgs)
   await clock.advance(100)
   const before = { roster: roster(), motion: motion(), bubbles: bubbles() }
@@ -877,6 +883,7 @@ test('a turn.complete for an unknown agent changes nothing and resolves', async 
   await $.turn.complete({ ...turnArgs, agentId: undefined })
 
   expect(result).toEqual({ text: 'done' })
+  expect(logs.filter(text => /agents-office:.*threw/.test(text))).toEqual([])
   expect({ roster: roster(), motion: motion(), bubbles: bubbles() }).toEqual(before)
   await ui.unmount()
 })
@@ -912,4 +919,15 @@ test('a ui.blit that throws leaves the frame loop running and repaints next tick
   // The throwing first blit cleared the frame cache, so the next tick blits the same frame again.
   expect(calls).toBeGreaterThanOrEqual(2)
   await ui.unmount()
+})
+
+test('a hook body that throws is logged as "agents-office: <name> threw" and the session still starts', async ($, on) => {
+  const logs: string[] = []
+  stubSession(on, logs)
+  on('agent.list', () => {
+    throw new Error('list boom')
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  expect(logs.filter(text => /^agents-office: .+ threw /.test(text))).not.toEqual([])
 })

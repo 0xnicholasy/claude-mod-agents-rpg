@@ -30,19 +30,33 @@ const bubbles = atom({ plugin: 'agents-office', key: 'bubbles' } as const, EMPTY
 const EMPTY_LOG: string[] = []
 const log = atom({ plugin: 'agents-office', key: 'log' } as const, EMPTY_LOG)
 
+// Log de-dup cache for guard failures, not drawn state (D49): a hook that fails the same
+// way every tick logs once per distinct name + message.
+const loggedFailures = new Set<string>()
+
 // Runs a hook body; a failure is logged to the debug log as `agents-office: <name> threw`
-// (the line the /implement check greps for) and never thrown.
+// (the line the /implement check greps for) and never thrown. The fallback may be a
+// thunk so its work (e.g. $.ui.resolve) also runs inside the guard.
 const guard = async <T,>(
   $: EngineInterface,
   name: string,
-  fallback: T,
+  fallback: T | (() => T),
   body: () => Promise<T> | T,
 ): Promise<T> => {
   try {
     return await body()
   } catch (error) {
-    $.ui.log(`agents-office: ${name} threw ${String(error)}`, { to: 'debug' })
-    return fallback
+    const message = String(error)
+    const key = `${name}\u0000${message}`
+    if (!loggedFailures.has(key)) {
+      loggedFailures.add(key)
+      try {
+        $.ui.log(`agents-office: ${name} threw ${message}`, { to: 'debug' })
+      } catch {
+        // Logging must never throw out of a hook.
+      }
+    }
+    return typeof fallback === 'function' ? (fallback as () => T)() : fallback
   }
 }
 
@@ -396,10 +410,10 @@ export const register: Register = on => {
     guard(
       $,
       'ui.render',
-      (() => {
+      () => {
         const { Text } = $.ui.resolve(e)
         return <Text>Office failed to draw.</Text>
-      })(),
+      },
       async () => {
         const { Box, Text } = $.ui.resolve(e)
         if (e.surface !== 'terminal') {
