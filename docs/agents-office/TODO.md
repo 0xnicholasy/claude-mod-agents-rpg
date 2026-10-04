@@ -2,7 +2,7 @@
 
 ultraplan: agents-office | branch: feat/agents-office | base: main | tag: pre-agents-office-main | created: 2026-10-04
 Status: ACTIVE
-Progress: 14/16 done
+Progress: 15/16 done
 
 ## Goal
 A Claude Code mod at `.claude/skills/agents-office/` that opens a pane (`/office`, id `office`, title `Office`) drawing every running agent of this session (main, Agent-tool subagents, teammates) as a 3x2-cell pixel character in a tiled office with named rooms, rendered into one terminal `Raster` and animated at 10 fps with `$.clock.every` + `$.ui.blit`. Tool calls drive room and pose, spawns walk in, SendMessage meets in the Meeting Room, turn.complete reports in the Lobby and leaves. Every drawn value lives in `$.state` so a hot reload keeps the office populated.
@@ -81,7 +81,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - D46 Line sources (T10): arrival = in a tick, inside `seat`'s updater, an agent whose motion entry had exactly one path tile left in the updater's `cur` and now stands on that tile with an empty path in `next` (a reseat or retarget never matches; the lines come from that pair, not from a read before `seat`). Only work walks log: an agent with a `script` in the roster at that moment (meeting, report, Break Room) logs nothing, to cut noise; main logs work walks too. One line per arrival, in the room under its top-left cell (`Room.name`, "office" if outside every room). Told = `meet()` after `commitChoreo`, for a known speaker, a string `to` and not a self-message (peer matched by id, then label; an unmatched `to` prints as given), including the bubble-only unknown-peer case. Reported = `turn.complete` when the agent gains a report script it did not have, so main, teammates and unknown ids log nothing. Every formatter runs labels, `to` and text through `clean` (C0/C1 controls to spaces, whitespace collapsed), labels and `to` capped at 16 code points, text at 40. (settled, T10)
 - D47 Strip render (T10): under the Raster the terminal branch draws exactly `STRIP_ROWS` dim `Text` lines (`wrap="truncate-end"`) (`log` oldest first, padded with " " so the height is stable). It sits in the same branch as the Raster, so below the minimum size the existing blank-Raster behaviour stays and T11 owns the widen line. A `log` write triggers the engine's throttled redraw, so a line appears on the next redraw, not on a blit. (settled, T10)
 - D48 Fallback render (T11, replaces the D29 blank Raster and the D47 note): a non-terminal surface draws only the `Text` "Office needs the terminal surface."; a terminal pane whose Raster size is below 60x18 (`mapFor` undefined, i.e. bodyColumns < 60 or bodyRows < 18 + STRIP_ROWS) draws only the `Text` "Widen the pane for the office", with no Raster and no strip. The viewport is still written in that case, so the tick sees a map-less size and skips the blit, and a later resize to a valid size draws and blits at once. A non-terminal render zeroes the viewport the same way (a `$.clock.after(0, ...)` write, only when it is not already 0x0), so a pane that moves off the terminal surface leaves no stale size. The blit-deny once-per-reason log (D32) already existed and is unchanged. `vscode` is in the d.ts surface list and is tested with `desktop`. (settled, T11)
-- D49 Failure isolation (T12): audit found every hook body (ui.render included, with a fallback `Text`) already in `guard`, every fire-and-forget promise already `.catch`ed, and `startLoop`/`startRefresh` already cancelling the previous handle (D25). The one gap was the guard log text (`<name> failed:`), which the /implement grep for `agents-office:` could not see; `guard` now logs `agents-office: <name> threw <error>`. A throwing bottom `ui.blit` is caught by the blit `.catch`, which clears `lastFrameCells`, so the next tick repaints. (settled, T12)
+- D49 Failure isolation (T12): audit found every hook body (ui.render included, with a fallback `Text`) already in `guard`, every fire-and-forget promise already `.catch`ed, and `startLoop`/`startRefresh` already cancelling the previous handle (D25). The one gap was the guard log text (`<name> failed:`), which the /implement grep for `agents-office:` could not see; `guard` now logs `agents-office: <name> threw <error>`. A throwing bottom `ui.blit` is caught by the blit `.catch`, which clears `lastFrameCells`, so the next tick repaints. The guard also dedupes repeated identical failure logs with a module-level `Set` (a cache, not drawn state) and wraps `$.ui.log` in try/catch so a failing log call cannot throw out of the guard. (settled, T12)
 
 ## Todos
 
@@ -212,7 +212,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "a second session.start keeps the roster and exactly one blit happens per tick" pass)
 
 ### T13 README and docs
-- status: todo
+- status: done (#16, 2026-10-05)
 - needs: T12
 - size: S
 - scope: `README.md`: what the office shows, `/office`, room legend, tier colors, terminal-only note, minimum pane size, how to run `npm run check`, how hot reload behaves. `docs/agents-office/plan.md` kept current with the settled API facts (Decisions D2-D9).
@@ -253,3 +253,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-05 T10 #13 interaction log strip: log.ts, arrival/told/reported lines, five dim Text rows under the Raster; D45-D47
 2026-10-05 T11 #14 fallback surfaces and minimum size: terminal-only line off terminal, widen line below 60x23 with no blit, resize redraw blits the new size; D48
 2026-10-05 T12 #15 hot-reload resilience: guard logs `agents-office: <name> threw`; tests for second session.start (one blit per tick), unknown-agent turn.complete, numeric SendMessage `to`, throwing blit; D49
+2026-10-05 T13 #16 README and plan: README sections intro/Run it/Rooms/Tiers/What you will see/Requirements/Develop/Known limits; plan.md matches the built modules and D2-D9 corrections
