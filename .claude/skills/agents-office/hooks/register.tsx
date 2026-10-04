@@ -402,6 +402,18 @@ export const register: Register = on => {
       async () => {
         const { Box, Text } = $.ui.resolve(e)
         if (e.surface !== 'terminal') {
+          // Nothing is mounted off terminal, so zero the viewport (D48); a write
+          // inside the hook is denied, so it runs in a timer closure (D20).
+          $.clock.after(0, () => {
+            read($, viewport)
+              .then(current => {
+                if (current.columns === 0 && current.rows === 0) return current
+                return update($, viewport, () => ({ columns: 0, rows: 0 }))
+              })
+              .catch(error =>
+                $.ui.log(`agents-office: viewport write threw ${String(error)}`, { to: 'debug' }),
+              )
+          })
           return (
             <Box flexDirection="column">
               <Text>Office needs the terminal surface.</Text>
@@ -424,8 +436,7 @@ export const register: Register = on => {
               $.ui.log(`agents-office: viewport write threw ${String(error)}`, { to: 'debug' }),
             )
         })
-        // Below the 60x18 map minimum there is nothing to lay out: a blank floor
-        // keeps the Raster mounted (T11 replaces it with the widen line).
+        // Below the minimum size draw only the widen line (D48).
         const map = mapFor(columns, rows)
         if (map === undefined) {
           return (
