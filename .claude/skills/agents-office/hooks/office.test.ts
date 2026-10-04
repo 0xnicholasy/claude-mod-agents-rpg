@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
 import { packSpikeFrame } from './loop'
 
 const paneProps = {
@@ -184,4 +185,148 @@ test('no blit happens before the pane renders', async ($, on) => {
   await clock.advance(100)
 
   expect(seen).toHaveLength(0)
+})
+
+const stubSession = (on: On): void => {
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: { command: 'office' } }))
+  on('ui.log', () => ({ value: undefined }))
+}
+
+const watchRoster = (on: On): (() => string[]) => {
+  let latest: Record<string, unknown> = {}
+  on('state.set', ($, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the agents atom is read.
+    if (e.key === 'agents') latest = e.value as Record<string, unknown>
+    return next(e)
+  })
+
+  return () => Object.keys(latest)
+}
+
+const turnArgs = {
+  answer: 'done',
+  durationMs: 1,
+  isAborted: false,
+  turnId: 'u1',
+  agentId: 'a1',
+  reason: 'answer',
+} as const
+
+test('a spawned agent leaves the roster 5 s after its turn completes', async ($, on) => {
+  const clock = mock.clock(on)
+  stubSession(on)
+  const roster = watchRoster(on)
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('turn.complete', () => ({ text: 'done' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.agent.spawn(spawnArgs)
+  expect(roster()).toContain('a1')
+  await $.turn.complete(turnArgs)
+  await clock.advance(4900)
+  expect(roster()).toContain('a1')
+  await clock.advance(200)
+
+  expect(roster()).not.toContain('a1')
+  expect(roster()).toContain('main')
+})
+
+test('session.start seeds main and the listed teammates', async ($, on) => {
+  mock.clock(on)
+  stubSession(on)
+  const roster = watchRoster(on)
+  on('agent.list', () => ({
+    value: [{ id: 'bot', description: 'watch ci', type: 'teammate', status: 'idle' as const }],
+  }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  expect(roster().sort()).toEqual(['bot', 'main'])
+})
+
+test('the roster refreshes from agent.list every 10 s', async ($, on) => {
+  const clock = mock.clock(on)
+  stubSession(on)
+  const roster = watchRoster(on)
+  let calls = 0
+  const listed: Array<{ id: string; description: string; type: string; status: 'running' }> = []
+  on('agent.list', () => {
+    calls += 1
+    return { value: [...listed] }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(calls).toBe(1)
+  listed.push({ id: 'late', description: 'joined later', type: 'teammate', status: 'running' })
+  await clock.advance(10000)
+
+  expect(calls).toBe(2)
+  expect(roster()).toContain('late')
+})
+
+test('a second session.start keeps exactly one tick and one refresh cadence', async ($, on) => {
+  const clock = mock.clock(on)
+  stubSession(on)
+  const blits: string[] = []
+  on('ui.blit', ($, e) => {
+    blits.push(e.key)
+    return { value: {} }
+  })
+  let calls = 0
+  on('agent.list', () => {
+    calls += 1
+    return { value: [] }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({
+    plugin: 'agents-office',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'office',
+    props: paneProps,
+  })
+  await clock.advance(1)
+  blits.length = 0
+  await clock.advance(99)
+  expect(blits).toHaveLength(1)
+  const before = calls
+  await clock.advance(10000 - 99)
+
+  expect(calls - before).toBe(1)
+  await ui.unmount()
+})
+
+test('a failing first agent.list still refreshes 10 s later', async ($, on) => {
+  const clock = mock.clock(on)
+  stubSession(on)
+  const roster = watchRoster(on)
+  let calls = 0
+  on('agent.list', () => {
+    calls += 1
+    if (calls === 1) throw new Error('list failed')
+
+    return { value: [{ id: 'bot', description: 'watch ci', type: 'teammate', status: 'idle' as const }] }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(roster()).not.toContain('bot')
+  await clock.advance(10000)
+
+  expect(roster()).toContain('bot')
+})
+
+test('an unchanged roster is not rewritten on each tick', async ($, on) => {
+  const clock = mock.clock(on)
+  stubSession(on)
+  const writes: Array<{ key: string }> = []
+  on('state.set', ($, e, next) => {
+    writes.push(e)
+    return next(e)
+  })
+  on('agent.list', () => ({ value: [] }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const after = writes.filter(w => w.key === 'agents').length
+  await clock.advance(1000)
+
+  expect(after).toBeGreaterThan(0)
+  expect(writes.filter(w => w.key === 'agents')).toHaveLength(after)
 })

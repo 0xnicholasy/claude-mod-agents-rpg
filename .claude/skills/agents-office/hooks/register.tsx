@@ -1,8 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import { packSpikeFrame, TICK_MS } from './loop'
+import { expire, onComplete, onSpawn, seedMain, syncList } from './agents'
+import type { Roster } from './agents'
+import { packSpikeFrame } from './loop'
 import { DEFAULT_COLOR, packCells } from './raster'
 import type { Cell } from './raster'
+import { LIST_MS, TICK_MS } from './timing'
 
 const PANE = 'office'
 const opened = atom({ plugin: 'agents-office', key: 'opened' } as const, false)
@@ -11,10 +14,8 @@ const viewport = atom(
   { columns: 0, rows: 0 },
 )
 const tickCount = atom({ plugin: 'agents-office', key: 'tick' } as const, 0)
-const agents = atom(
-  { plugin: 'agents-office', key: 'agents' } as const,
-  {} as Record<string, { id: string }>,
-)
+const EMPTY_ROSTER: Roster = {}
+const agents = atom({ plugin: 'agents-office', key: 'agents' } as const, EMPTY_ROSTER)
 
 // Runs a hook body; a failure is logged to the debug log and never thrown.
 const guard = async <T,>(
@@ -37,7 +38,24 @@ const loggedBlitDenies = new Set<string>()
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value))
 
+// Drops expired agents; writes only when the roster changed.
+const expireRoster = async ($: EngineInterface, now: number): Promise<void> => {
+  const current = await read($, agents)
+  if (expire(current, now) === current) return
+  await update($, agents, roster => expire(roster, now))
+}
+
+// Adds agents $.agent.list() knows and the roster does not; writes only on change.
+const refreshRoster = async ($: EngineInterface): Promise<void> => {
+  const infos = await $.agent.list()
+  const current = await read($, agents)
+  if (syncList(current, infos) === current) return
+  await update($, agents, roster => syncList(roster, infos))
+}
+
 const tick = async ($: EngineInterface): Promise<void> => {
+  // Own guard: a failing expiry must not stop the blit below.
+  await guard($, 'expire', undefined, async () => expireRoster($, await $.clock.now()))
   const size = await read($, viewport)
   if (size.columns < 1 || size.rows < 1) return
   const n = await update($, tickCount, count => count + 1)
@@ -60,11 +78,28 @@ const tick = async ($: EngineInterface): Promise<void> => {
     .catch(error => $.ui.log(`agents-office: blit threw ${String(error)}`, { to: 'debug' }))
 }
 
-// One frame loop per session.start; a hot reload drops the old environment's timers.
+type Timer = ReturnType<EngineInterface['clock']['every']>
+
+// Timer handles, not drawn state: a repeated session.start in one environment
+// cancels the previous timer so cadences never stack. A hot reload drops the
+// old environment's timers on its own.
+let loopTimer: Timer | undefined
+let refreshTimer: Timer | undefined
+
 const startLoop = ($: EngineInterface): void => {
-  $.clock.every(TICK_MS, () => {
+  loopTimer?.cancel()
+  loopTimer = $.clock.every(TICK_MS, () => {
     tick($).catch(error =>
       $.ui.log(`agents-office: tick threw ${String(error)}`, { to: 'debug' }),
+    )
+  })
+}
+
+const startRefresh = ($: EngineInterface): void => {
+  refreshTimer?.cancel()
+  refreshTimer = $.clock.every(LIST_MS, () => {
+    refreshRoster($).catch(error =>
+      $.ui.log(`agents-office: agent.list refresh threw ${String(error)}`, { to: 'debug' }),
     )
   })
 }
@@ -86,6 +121,15 @@ export const register: Register = on => {
       // isInteractive, no fullscreen field (isFullscreen is on command.run
       // presentation and on the ui.render viewport only).
     })
+    // Own guards: neither a failing first agent.list nor a failing seed may stop
+    // the frame loop above or the 10 s refresh.
+    await guard($, 'session.start refresh timer', undefined, async () => {
+      startRefresh($)
+    })
+    await guard($, 'session.start roster', undefined, async () => {
+      await update($, agents, seedMain)
+      await refreshRoster($)
+    })
 
     return next(e)
   })
@@ -93,10 +137,24 @@ export const register: Register = on => {
   on('agent.spawn', async ($, e, next) => {
     const result = await next(e)
     await guard($, 'agent.spawn', undefined, async () => {
-      const agentId = result.agentId
-      if (agentId === undefined) return
-      await update($, agents, current => ({ ...current, [agentId]: { id: agentId } }))
+      if (result.agentId === undefined) return
+      await update($, agents, roster => onSpawn(roster, e, result))
     })
+
+    return result
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    const agentId = e.agentId
+    if (agentId !== undefined) {
+      await guard($, 'turn.complete', undefined, async () => {
+        const now = await $.clock.now()
+        const current = await read($, agents)
+        if (onComplete(current, agentId, now) === current) return
+        await update($, agents, roster => onComplete(roster, agentId, now))
+      })
+    }
 
     return result
   })
