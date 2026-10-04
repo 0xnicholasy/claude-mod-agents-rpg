@@ -4,7 +4,7 @@ Agents Office is a Claude Code mod. It adds an `/office` command that opens a pa
 
 ## Run it
 
-1. Start `claude` in this repo. The mod is in `.claude/skills/agents-office/` and is loaded from there.
+1. Start `claude` in this repo. The mod loads automatically from the project skills folder `.claude/skills/agents-office/` (as `agents-office@skills-dir`, per Claude Code's skills-dir plugin loading). If `/office` is not offered, run `claude plugin list` to check that it is loaded and enabled.
 2. Run `/office`. The pane opens only on `/office`; nothing opens by itself.
 3. Spawn any subagent (for example with the Agent tool) and watch it appear.
 
@@ -14,13 +14,15 @@ The tool an agent just called decides its room (`hooks/activity.ts`).
 
 | Room | Sent there by |
 | --- | --- |
-| Dev Bay | Edit, Write, MultiEdit, NotebookEdit, and any tool not listed here, including MCP tools that are not network tools. Spawned agents have their desk here. |
+| Dev Bay | The default desk room of spawned agents. |
 | Library | Read, Grep, Glob, NotebookRead, LSP, ReadMcpResourceTool, ListMcpResourcesTool, ReadMcpResourceDirTool. Agents whose subagent type contains "explore" have their desk here. |
 | Server Room | Bash, BashOutput, KillShell, Monitor. |
 | Phone Booth | WebSearch, WebFetch, and MCP tools whose name contains fetch, http or search. |
-| Lobby | Agent, TaskStop, SendMessage as a plain tool call. The main session has its desk here. New agents walk in through the Lobby door. |
+| Lobby | Agent and TaskStop calls, spawn walk-ins through the Lobby door, the main session's desk, and completion reports. |
 | Meeting Room | A SendMessage between two known agents (see "What you will see"). |
 | Break Room | Finished agents, before they leave. |
+
+Edit, Write, MultiEdit, NotebookEdit, and any tool not listed above (including MCP tools that are not network tools) send an agent to its own desk room: Dev Bay for spawned agents, Library for explore-type agents, Lobby for the main session.
 
 Code search that runs through Bash shows in the Server Room, not the Library, because the office sees only the tool name.
 
@@ -55,7 +57,7 @@ Grey means the model is unknown. It is used for the main session and for teammat
 
 - `npm install`, then `npm run check`. It runs `validate` (`claude plugin validate`), `typecheck` (`tsc -p tsconfig.json`) and `test` (`claude plugin test`). Validate and test need the `claude` CLI and run locally only. CI runs typecheck only.
 - Mod path: `.claude/skills/agents-office/` (manifest `.claude-plugin/plugin.json`, hooks in `hooks/`, state contract in `types/index.d.ts`). The design notes are in `docs/agents-office/plan.md`.
-- Hot reload: saving a file in the mod reloads the module in a running session. The office keeps its agents, because state lives in `$.state` atoms and not in module variables. The one module variable set is a cache of already-logged failures and is never drawn.
+- Hot reload: saving a file in the mod reloads the module in a running session. The office keeps its agents, because state lives in `$.state` atoms and not in module variables. Module variables hold only caches and timer handles (`loggedFailures`, `loggedBlitDenies`, `lastFrameCells`, `loopTimer`, `refreshTimer` in `register.tsx`; the map cache in `loop.ts`), none of them drawn.
 - Debug lines in the Claude Code debug log start with `agents-office:`. A line containing `threw` or `refused` is a failure.
 
 ## Known limits

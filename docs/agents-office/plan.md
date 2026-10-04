@@ -33,7 +33,7 @@ Pure modules take plain data and `now: number` and never touch `$`. `claude plug
 
 ## Frame loop
 
-Each `TICK_MS` the `tick` in `register.tsx` reads the clock and atoms, then: `expire` (a done agent leaves only after `DESPAWN_MS` and standing in the Break Room, D43); `seat` (`placeMotion` plus `step`, collecting arrivals for log lines); `advanceScripts` through `commitChoreo`; `buildFrame`; `packCells`; compare with the module-level `lastFrameCells`; blit only on change (D32). A blit `deny` resets the cache; a "mounted" deny with an unchanged viewport zeroes the viewport. `lastFrameCells`, `loggedBlitDenies`, `loggedFailures` and the `mapFor` cache are the only module state, all caches and none drawn, so a reload costs one extra blit and no agents.
+Each `TICK_MS` the `tick` in `register.tsx` reads the clock and atoms, then: `expire` (a done agent leaves only after `DESPAWN_MS` and standing in the Break Room, D43); `seat` (`placeMotion` plus `step`, collecting arrivals for log lines); `advanceScripts` through `commitChoreo`; `buildFrame`; `packCells`; compare with the module-level `lastFrameCells`; blit only on change (D32). A blit `deny` resets the cache; a "mounted" deny with an unchanged viewport zeroes the viewport. Module variables hold only caches and timer handles (`loggedFailures`, `loggedBlitDenies`, `lastFrameCells`, `loopTimer`, `refreshTimer` in `register.tsx`; the map cache in `loop.ts`), none of them drawn, so a reload costs one extra blit and no agents.
 
 Failure isolation (D49): every hook body runs in `guard`, which logs `agents-office: <name> threw <error>` once per distinct name and message and returns a fallback.
 
