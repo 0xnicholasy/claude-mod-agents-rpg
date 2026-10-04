@@ -3,6 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 import { activityFor } from './activity'
 import { expire, onActivity, onComplete, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
+import { advanceScripts, startMeet } from './choreo'
+import type { ChoreoState } from './choreo'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { mapFor, rasterSize } from './loop'
@@ -78,6 +80,36 @@ const applyRoster = async (
   return next
 }
 
+// Writes the atoms a choreography step changed. Each updater recomputes from the
+// atom's current value, so a concurrent hook's change is not dropped (D36); `base`
+// carries the values the caller read or computed locally (D31).
+const commitChoreo = async (
+  $: EngineInterface,
+  base: ChoreoState,
+  compute: (state: ChoreoState) => ChoreoState,
+): Promise<ChoreoState> => {
+  const next = compute(base)
+  if (next.agents !== base.agents) await update($, agents, cur => compute({ ...base, agents: cur }).agents)
+  if (next.motion !== base.motion) await update($, motion, cur => compute({ ...base, motion: cur }).motion)
+  if (next.bubbles !== base.bubbles) await update($, bubbles, cur => compute({ ...base, bubbles: cur }).bubbles)
+
+  return next
+}
+
+// SendMessage: both agents walk to the Meeting Room (D38). `to` is `unknown` because
+// the SendMessage input types it `unknown & unknown`; startMeet narrows it.
+const meet = async ($: EngineInterface, from: string, to: unknown, text: unknown): Promise<void> => {
+  const now = await $.clock.now()
+  const size = await read($, viewport)
+  const base: ChoreoState = {
+    map: mapFor(size.columns, size.rows),
+    agents: await read($, agents),
+    motion: await read($, motion),
+    bubbles: await read($, bubbles),
+  }
+  await commitChoreo($, base, state => startMeet(state, from, to, typeof text === 'string' ? text : '', now))
+}
+
 type SeatOptions = { entering?: string; advance?: boolean }
 
 const seat = async (
@@ -118,13 +150,16 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
   if (map === undefined) return
-  const frame = buildFrame({
+  const before: ChoreoState = {
     map,
     agents: roster,
     motion: placed ?? (await read($, motion)),
     bubbles: await read($, bubbles),
-    now,
-  })
+  }
+  const after = await guard($, 'choreo', before, async () =>
+    commitChoreo($, before, state => advanceScripts(state, now)),
+  )
+  const frame = buildFrame({ map, agents: after.agents, motion: after.motion, bubbles: after.bubbles, now })
   const cells = packCells(frame)
   if (cells === lastFrameCells) return
   lastFrameCells = cells
@@ -225,6 +260,11 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     await guard($, 'tool.call', undefined, async () => {
       const id = e.agentId ?? 'main'
+      // SendMessage starts a meeting instead of the lobby talk activity (D38).
+      if (e.tool === 'SendMessage') {
+        await meet($, id, e.to, e.message)
+        return
+      }
       const activity = activityFor(e.tool)
       const roster = await applyRoster($, cur => onActivity(cur, id, activity))
       const room = roster[id]?.room

@@ -4,6 +4,18 @@ import type { RoomId } from './map'
 import type { Pose } from './sprites'
 import { DESPAWN_MS } from './timing'
 
+// A meeting walk (D38). `text` is the speaker's bubble, shown on arrival; `until` is
+// set once both stand in the Meeting Room.
+export type Script = {
+  kind: 'meet'
+  peer: string
+  phase: 'going' | 'talking' | 'returning'
+  returnRoom: RoomId
+  returnPose: Pose
+  until?: number
+  text?: string
+}
+
 export type Tier = 'haiku' | 'sonnet' | 'opus' | 'fable' | 'grey'
 export type AgentStatus = 'working' | 'idle' | 'done' | 'leaving'
 
@@ -20,6 +32,8 @@ export type OfficeAgent = {
   // A teammate has several turns: turn.complete makes it idle, never done (D26).
   teammate: boolean
   completedAt?: number
+  // A running choreography (T08); tool activity is ignored while one runs.
+  script?: Script
 }
 
 export type Roster = Record<string, OfficeAgent>
@@ -93,10 +107,11 @@ export const onComplete = (roster: Roster, agentId: string, now: number): Roster
 }
 
 // Records what a tool call makes the agent do; 'desk' resolves to its home (D37).
-// Returns the same reference when the agent is unknown, done or leaving, or nothing changes.
+// Returns the same reference when the agent is unknown, done, leaving or running a script, or nothing changes.
 export const onActivity = (roster: Roster, agentId: string, activity: Activity): Roster => {
   const agent = roster[agentId]
   if (agent === undefined || agent.status === 'done' || agent.status === 'leaving') return roster
+  if (agent.script !== undefined) return roster
   const room = activity.room === 'desk' ? agent.home : activity.room
   if (agent.room === room && agent.pose === activity.pose) return roster
 

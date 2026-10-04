@@ -27,6 +27,15 @@ declare module 'claude-code' {
           home: 'lobby' | 'devbay' | 'library' | 'server' | 'phone' | 'meeting' | 'break'
           teammate: boolean
           completedAt?: number
+          script?: {
+            kind: 'meet'
+            peer: string
+            phase: 'going' | 'talking' | 'returning'
+            returnRoom: 'lobby' | 'devbay' | 'library' | 'server' | 'phone' | 'meeting' | 'break'
+            returnPose: 'idle' | 'walk' | 'read' | 'type' | 'run' | 'call' | 'talk'
+            until?: number
+            text?: string
+          }
         }
       >
       motion: Record<
