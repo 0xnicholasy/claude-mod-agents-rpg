@@ -171,7 +171,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "main messaging a1 meets, shows the bubble for 4 s, then both return to their anchors" pass)
 
 ### T09 Completion choreography: report in the Lobby, leave via the Break Room
-- status: done (#<pr>, 2026-10-05)
+- status: done (#12, 2026-10-05)
 - needs: T08
 - size: M
 - scope: `choreo.ts` `startReport(state, agentId, now)`: walk to the Lobby, on arrival bubble "done" over the agent and "got it" over its parent (or main) for 4000 ms, then walk to the Break Room. Expiry policy replaced (D15): `expire` (T02) removes the agent only once it stands in the Break Room AND `now - completedAt >= DESPAWN_MS`. `turn.complete` hook now calls `startReport` instead of marking done directly. Aborted or errored turns (`e.reason !== 'answer'`) bubble "stopped" instead of "done". T02's "a spawned agent leaves the roster 5 s after its turn completes" test is deleted and replaced by the one below; T02's `expire` unit test is updated to the new rule.
@@ -244,4 +244,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T06B #9 one-tile-per-tick movement: motion.ts assignTarget/step/drawnPose, spawns walk in from the Lobby door; D34-D36
 2026-10-04 T07 #10 activity mapping: activityFor, per-agent home desk, tool.call hook moves the agent before the tool runs; D37
 2026-10-05 T08 #11 messaging choreography: SendMessage seats both agents in the Meeting Room, bubble 4 s, both return; choreo.ts, bubbles now expire; D38-D40
-2026-10-05 T09 #<pr> completion choreography: finished subagent reports in the Lobby, parent says got it, walks to the Break Room and leaves; expire needs the Break Room; D41-D44
+2026-10-05 T09 #12 completion choreography: finished subagent reports in the Lobby, parent says got it, walks to the Break Room and leaves; expire needs the Break Room; D41-D44
