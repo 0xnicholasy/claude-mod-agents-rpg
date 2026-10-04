@@ -677,3 +677,29 @@ test('a bubble expires on the tick even when no pane was ever drawn', async ($, 
 
   expect(latest).toEqual([])
 })
+
+test('the strip shows quick-search arrived in the Library after it reaches the room', async ($, on) => {
+  const { clock, ui, motion } = await startOffice($, on)
+  const bound = longestPath()
+  await $.agent.spawn({ ...spawnArgs, subagentType: 'quick-search' })
+  // Retarget before it walks anywhere, so the only arrival is the Library one.
+  await $.tool.call({ tool: 'Read', file_path: 'x', agentId: 'a1' } as never)
+  for (let i = 0; i < bound && (motion().a1?.path.length ?? 1) > 0; i += 1) {
+    await clock.advance(100)
+  }
+  expect(motion().a1?.path).toEqual([])
+  await ui.redraw(paneProps)
+
+  expect(await ui.find({ type: 'Text', text: /quick-search arrived in the Library/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the strip shows main told a1: hello', async ($, on) => {
+  const { ui } = await startOffice($, on)
+  await $.agent.spawn({ ...spawnArgs, name: 'a1' })
+  await $.tool.call({ tool: 'SendMessage', to: 'a1', message: 'hello' })
+  await ui.redraw(paneProps)
+
+  expect(await ui.find({ type: 'Text', text: /main told a1: hello/ })).toBeDefined()
+  await ui.unmount()
+})

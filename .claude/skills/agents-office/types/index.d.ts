@@ -51,6 +51,7 @@ declare module 'claude-code' {
         { x: number; y: number; path: Array<{ x: number; y: number }>; frame: number }
       >
       bubbles: Array<{ agentId: string; text: string; until: number }>
+      log: string[]
     }
   }
 }
