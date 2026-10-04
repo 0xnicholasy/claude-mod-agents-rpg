@@ -1,12 +1,13 @@
 import type { AgentInfo, AgentSpawnInput } from 'claude-code'
 import type { Activity } from './activity'
-import type { RoomId } from './map'
+import type { OfficeMap, RoomId } from './map'
+import type { Motion } from './frame'
 import type { Pose } from './sprites'
 import { DESPAWN_MS } from './timing'
 
 // A meeting walk (D38). `text` is the speaker's bubble, shown on arrival; `until` is
 // set once both stand in the Meeting Room.
-export type Script = {
+export type MeetScript = {
   kind: 'meet'
   peer: string
   phase: 'going' | 'talking' | 'returning'
@@ -17,6 +18,17 @@ export type Script = {
   until?: number
   text?: string
 }
+
+// A completion walk (T09): Lobby, bubbles for BUBBLE_MS (`until`), then the Break Room.
+// `stopped` is true when the turn did not end with an answer.
+export type ReportScript = {
+  kind: 'report'
+  phase: 'toLobby' | 'reporting' | 'toBreak'
+  stopped: boolean
+  until?: number
+}
+
+export type Script = MeetScript | ReportScript
 
 export type Tier = 'haiku' | 'sonnet' | 'opus' | 'fable' | 'grey'
 export type AgentStatus = 'working' | 'idle' | 'done' | 'leaving'
@@ -98,7 +110,7 @@ export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult):
 
 export const onComplete = (roster: Roster, agentId: string, now: number): Roster => {
   const agent = roster[agentId]
-  if (agent === undefined || agent.status === 'done') return roster
+  if (agent === undefined || agent.status === 'done' || agent.status === 'leaving') return roster
   if (agent.teammate) {
     if (agent.status === 'idle') return roster
 
@@ -114,6 +126,13 @@ export const onActivity = (roster: Roster, agentId: string, activity: Activity):
   const agent = roster[agentId]
   if (agent === undefined || agent.status === 'done' || agent.status === 'leaving') return roster
   const room = activity.room === 'desk' ? agent.home : activity.room
+  // A working or idle agent cannot still be reporting (the roster list revived it, or the report
+  // started with no pane): the stale report script is dropped and the activity applies normally.
+  if (agent.script?.kind === 'report') {
+    const bare = { ...agent }
+    delete bare.script
+    return onActivity({ ...roster, [agentId]: bare }, agentId, activity)
+  }
   if (agent.script !== undefined) {
     // Mid-meeting: the agent stays put; the activity is where it goes back to.
     const { script } = agent
@@ -161,11 +180,27 @@ export const syncList = (roster: Roster, infos: readonly AgentInfo[]): Roster =>
   return next
 }
 
-// Plain removal of done agents once DESPAWN_MS have passed; T09 replaces the rule.
-export const expire = (roster: Roster, now: number): Roster => {
-  const kept = Object.values(roster).filter(
-    agent => agent.status !== 'done' || agent.completedAt === undefined || now - agent.completedAt < DESPAWN_MS,
-  )
+const inBreakRoom = (map: OfficeMap, at: Motion[string]): boolean => {
+  const room = map.rooms.find(r => r.id === 'break')
+  if (room === undefined) return false
+  const { x, y, w, h } = room.bounds
+
+  return at.path.length === 0 && at.x >= x && at.x < x + w && at.y >= y && at.y < y + h
+}
+
+// Removes a finished agent (D15) only once it stands in the Break Room with an empty path
+// AND DESPAWN_MS have passed since its turn completed. With no map (no pane drawn) or no
+// motion entry nothing is on screen, so the time alone decides. Drops no motion entry
+// itself: the tick's placeMotion drops the entries of agents no longer in the roster.
+export const expire = (roster: Roster, now: number, motion: Motion, map: OfficeMap | undefined): Roster => {
+  const kept = Object.values(roster).filter(agent => {
+    if ((agent.status !== 'done' && agent.status !== 'leaving') || agent.completedAt === undefined) return true
+    if (now - agent.completedAt < DESPAWN_MS) return true
+    const at = motion[agent.id]
+    if (map === undefined || at === undefined) return false
+
+    return !inBreakRoom(map, at)
+  })
   if (kept.length === Object.keys(roster).length) return roster
 
   return Object.fromEntries(kept.map(agent => [agent.id, agent]))

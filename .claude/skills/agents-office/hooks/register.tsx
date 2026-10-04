@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import { activityFor } from './activity'
-import { expire, onActivity, onComplete, onSpawn, seedMain, syncList } from './agents'
+import { expire, onActivity, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
-import { advanceScripts, expireBubbles, startMeet } from './choreo'
+import { advanceScripts, expireBubbles, startMeet, startReport } from './choreo'
 import type { ChoreoState } from './choreo'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
@@ -81,50 +81,22 @@ const applyRoster = async (
 }
 
 // Writes the atoms a choreography step changed (D40). `base` is the triple the caller
-// read (or computed locally, D31); `compute` runs once on it. Each changed atom is
-// written with an updater that returns that result only while the atom still holds
-// the value `base` carried; once any atom differs, that atom and every later one is
-// recomputed from the triple seen so far (earlier atoms as written, this atom as
-// found, later ones as in `base`). The three writes are not atomic. Returns the
-// triple as written.
-// An atom's updater may receive a copy of the stored value (the engine serialises
-// state), so "unchanged since the read" compares by content, not reference.
-const sameValue = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b)
-
+// read (or computed locally, D31); `compute` runs exactly once on it (transitions are
+// not idempotent, so it is never re-run after a partial commit). Each changed atom is
+// then written with its computed value. Accepted v1 risk: last writer wins between
+// dispatches; the 100 ms tick recomputes from current state, so a lost hook write
+// loses only that one event's choreography. The three writes are not atomic.
 const commitChoreo = async (
   $: EngineInterface,
   base: ChoreoState,
   compute: (state: ChoreoState) => ChoreoState,
 ): Promise<ChoreoState> => {
   const next = compute(base)
-  let fresh = base
-  let diverged = false
-  if (next.agents !== base.agents) {
-    await update($, agents, cur => {
-      diverged = !sameValue(cur, base.agents)
-      fresh = { ...fresh, agents: diverged ? compute({ ...fresh, agents: cur }).agents : next.agents }
+  if (next.agents !== base.agents) await update($, agents, () => next.agents)
+  if (next.motion !== base.motion) await update($, motion, () => next.motion)
+  if (next.bubbles !== base.bubbles) await update($, bubbles, () => next.bubbles)
 
-      return fresh.agents
-    })
-  }
-  if (next.motion !== base.motion) {
-    await update($, motion, cur => {
-      diverged = diverged || !sameValue(cur, base.motion)
-      fresh = { ...fresh, motion: diverged ? compute({ ...fresh, motion: cur }).motion : next.motion }
-
-      return fresh.motion
-    })
-  }
-  if (next.bubbles !== base.bubbles) {
-    await update($, bubbles, cur => {
-      diverged = diverged || !sameValue(cur, base.bubbles)
-      fresh = { ...fresh, bubbles: diverged ? compute({ ...fresh, bubbles: cur }).bubbles : next.bubbles }
-
-      return fresh.bubbles
-    })
-  }
-
-  return fresh
+  return next
 }
 
 // SendMessage: both agents walk to the Meeting Room (D38). `to` is `unknown` because
@@ -174,9 +146,13 @@ const seat = async (
 
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
-  const roster = await guard($, 'expire', await read($, agents), async () =>
-    applyRoster($, cur => expire(cur, now)),
-  )
+  const viewSize = await read($, viewport)
+  const viewMap = mapFor(viewSize.columns, viewSize.rows)
+  const roster = await guard($, 'expire', await read($, agents), async () => {
+    // A finished agent leaves only from the Break Room (D15); motion is read once for it.
+    const where = await read($, motion)
+    return applyRoster($, cur => expire(cur, now, where, viewMap))
+  })
   const placed = await guard($, 'place', undefined, async () => seat($, roster, { advance: true }))
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
@@ -323,10 +299,17 @@ export const register: Register = on => {
     const agentId = e.agentId
     if (agentId !== undefined) {
       await guard($, 'turn.complete', undefined, async () => {
+        // A subagent reports in the Lobby and leaves via the Break Room (T09); a teammate
+        // only turns idle (D26). All computed locally and committed like meet() (D40).
         const now = await $.clock.now()
-        const current = await read($, agents)
-        if (onComplete(current, agentId, now) === current) return
-        await update($, agents, roster => onComplete(roster, agentId, now))
+        const size = await read($, viewport)
+        const base: ChoreoState = {
+          map: mapFor(size.columns, size.rows),
+          agents: await read($, agents),
+          motion: await read($, motion),
+          bubbles: await read($, bubbles),
+        }
+        await commitChoreo($, base, state => startReport(state, agentId, now, e.reason))
       })
     }
 

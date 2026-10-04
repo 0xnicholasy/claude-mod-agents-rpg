@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { expire, onActivity, onComplete, onSpawn, seedMain, syncList } from './agents'
 import type { Roster, SpawnInput } from './agents'
+import { buildMap } from './map'
 
 const input = (over: Partial<SpawnInput> = {}): SpawnInput => ({
   subagentType: 'general-purpose',
@@ -39,12 +40,26 @@ test('syncList adds a teammate and never removes a known agent', async () => {
   expect(syncList(next, [])).toBe(next)
 })
 
-test('expire drops a done agent only after 5000 ms', async () => {
+const map = buildMap(60, 18)
+const breakAnchor = map.rooms.find(r => r.id === 'break')?.anchors[0] ?? { x: 0, y: 0 }
+const lobbyAnchor = map.rooms.find(r => r.id === 'lobby')?.anchors[0] ?? { x: 0, y: 0 }
+
+test('expire keeps a done agent until it is in the Break Room and 5000 ms have passed', async () => {
   const done = onComplete(onSpawn({}, input(), { agentId: 'a1' }), 'a1', 1000)
+  const leaving: Roster = { a1: { ...done.a1!, status: 'leaving' } }
+  const at = (p: { x: number; y: number }, path: Array<{ x: number; y: number }> = []) => ({ a1: { x: p.x, y: p.y, path, frame: 0 } })
 
   expect(done.a1).toMatchObject({ status: 'done', completedAt: 1000 })
-  expect(expire(done, 5999).a1).toBeDefined()
-  expect(expire(done, 6000).a1).toBeUndefined()
+  // In the Break Room: still kept before 5000 ms, gone at exactly 5000 ms.
+  expect(expire(leaving, 5999, at(breakAnchor), map).a1).toBeDefined()
+  expect(expire(leaving, 6000, at(breakAnchor), map).a1).toBeUndefined()
+  // Long past 5000 ms but elsewhere, or still walking in the Break Room: kept.
+  expect(expire(done, 99999, at(lobbyAnchor), map)).toBe(done)
+  expect(expire(leaving, 99999, at(breakAnchor, [lobbyAnchor]), map).a1).toBeDefined()
+  // Nothing drawn (no map or no motion entry): the time alone decides.
+  expect(expire(done, 5999, {}, map).a1).toBeDefined()
+  expect(expire(done, 6000, {}, map).a1).toBeUndefined()
+  expect(expire(done, 6000, at(lobbyAnchor), undefined).a1).toBeUndefined()
 })
 
 test("a teammate's turn.complete makes it idle, not done", async () => {
@@ -54,7 +69,7 @@ test("a teammate's turn.complete makes it idle, not done", async () => {
   expect(idle.t1).toMatchObject({ status: 'idle', teammate: true })
   expect(idle.t1?.completedAt).toBeUndefined()
   expect(onComplete(idle, 't1', 2000)).toBe(idle)
-  expect(expire(idle, 1_000_000).t1).toBeDefined()
+  expect(expire(idle, 1_000_000, {}, map).t1).toBeDefined()
 })
 
 test('syncList revives a done agent the list reports running', async () => {
@@ -78,4 +93,14 @@ test("onActivity resolves 'desk' to home and ignores unknown, repeated and done 
   expect(onActivity(roster, 'nobody', desk)).toBe(roster)
   const done = onComplete(roster, 'a1', 1000)
   expect(onActivity(done, 'a1', { room: 'server', pose: 'run' })).toBe(done)
+})
+
+test('a second turn.complete on a leaving agent returns the same roster', () => {
+  const roster: Roster = onSpawn(seedMain({}), input(), { agentId: 'a1' })
+  const done = onComplete(roster, 'a1', 100)
+  const base = done.a1
+  if (base === undefined) throw new Error('a1 missing')
+  const leaving: Roster = { ...done, a1: { ...base, status: 'leaving' } }
+
+  expect(onComplete(leaving, 'a1', 999)).toBe(leaving)
 })

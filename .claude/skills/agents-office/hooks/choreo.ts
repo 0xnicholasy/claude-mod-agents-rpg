@@ -1,7 +1,8 @@
 // Pure messaging choreography (D38): a SendMessage walks both agents to the Meeting
 // Room, shows the speaker's bubble, then sends both back. No `$`; register.tsx reads
 // the atoms, passes plain data in and writes the changed atoms back.
-import type { OfficeAgent, Roster, Script } from './agents'
+import { onComplete } from './agents'
+import type { MeetScript, OfficeAgent, ReportScript, Roster } from './agents'
 import type { Bubble, Motion } from './frame'
 import type { OfficeMap, Point, RoomId } from './map'
 import { assignTarget, targetOf } from './motion'
@@ -57,7 +58,7 @@ export const expireBubbles = (bubbles: Bubble[], now: number): Bubble[] => {
 // Walks `id` back to the tile it left (`returnAt`) unless another agent holds it
 // (position or path end) or no path leads there; then to the first free anchor of
 // its return room.
-const goBack = (motion: Motion, map: OfficeMap, id: string, script: Script): Motion => {
+const goBack = (motion: Motion, map: OfficeMap, id: string, script: MeetScript): Motion => {
   const entry = motion[id]
   if (entry === undefined) return motion
   const held = Object.entries(motion).some(([other, at]) => other !== id && same(targetOf(at), script.returnAt))
@@ -72,7 +73,7 @@ const goBack = (motion: Motion, map: OfficeMap, id: string, script: Script): Mot
   return assignTarget(motion, map, id, script.returnRoom)
 }
 
-const onAnchor = (map: OfficeMap, room: RoomId, at: Motion[string]): boolean =>
+const onAnchor = (map: OfficeMap, room: RoomId, at: Point): boolean =>
   map.rooms.find(r => r.id === room)?.anchors.some(a => a.x === at.x && a.y === at.y) ?? false
 
 /**
@@ -107,7 +108,7 @@ export const startMeet = (state: ChoreoState, from: string, to: unknown, text: s
 
     return { x, y }
   }
-  const script = (agent: OfficeAgent, withText: boolean): Script => ({
+  const script = (agent: OfficeAgent, withText: boolean): MeetScript => ({
     kind: 'meet',
     peer: agent.id === speaker.id ? peer.id : speaker.id,
     phase: 'going',
@@ -157,7 +158,7 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
   const release = (id: string): void => {
     const agent = agents[id]
     const script = agent?.script
-    if (agent === undefined || script === undefined || map === undefined) return
+    if (agent === undefined || script === undefined || script.kind !== 'meet' || map === undefined) return
     const next = clearScript(agent)
     if (!isGone(agent)) {
       next.room = script.returnRoom
@@ -166,16 +167,72 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
     }
     setAgent(next)
   }
-  const send = (agent: OfficeAgent, script: Script): void => {
+  const send = (agent: OfficeAgent, script: MeetScript): void => {
     if (map === undefined) return
     setAgent({ ...agent, room: script.returnRoom, pose: script.returnPose, script })
     motion = goBack(motion, map, agent.id, script)
+  }
+
+  // One step of a completion walk (T09). Every phase falls back to the next without a
+  // jump: an unreachable Lobby shows the bubbles where the agent stands; an unreachable
+  // Break Room ends the script in place.
+  const advanceReport = (agent: OfficeAgent, script: ReportScript): void => {
+    if (map === undefined) return
+    const at = motion[agent.id]
+    if (agent.status === 'working' || agent.status === 'idle') {
+      // Revived by the roster list mid-report: back to its own room, script ended.
+      setAgent({ ...clearScript(agent), room: agent.home, pose: 'idle' })
+      motion = assignTarget(motion, map, agent.id, agent.home)
+      return
+    }
+    if (script.phase === 'toLobby') {
+      // Resuming (a report started with no pane, or a path left from before): keep a path only
+      // when it ends on a Lobby anchor, else retarget to the Lobby now.
+      const headsToLobby = (entry: Motion[string]): boolean => entry.path.length > 0 && onAnchor(map, 'lobby', targetOf(entry))
+      if (at !== undefined && headsToLobby(at)) return
+      if (at !== undefined && !onAnchor(map, 'lobby', at)) {
+        motion = assignTarget(motion, map, agent.id, 'lobby')
+        const routed = motion[agent.id]
+        if (routed !== undefined && headsToLobby(routed)) return
+        // Lobby unreachable: drop the stale path and show the bubbles where it stands.
+        if (routed !== undefined && routed.path.length > 0) motion = { ...motion, [agent.id]: { ...routed, path: [] } }
+      } else if (at !== undefined && at.path.length > 0) {
+        motion = { ...motion, [agent.id]: { ...at, path: [] } }
+      }
+      const until = now + BUBBLE_MS
+      setAgent({ ...agent, pose: 'talk', script: { kind: 'report', phase: 'reporting', stopped: script.stopped, until } })
+      bubbles = withBubble(bubbles, { agentId: agent.id, text: script.stopped ? 'stopped' : 'done', until })
+      const parent = agent.parentId ?? 'main'
+      if (agents[parent] !== undefined && parent !== agent.id) {
+        bubbles = withBubble(bubbles, { agentId: parent, text: 'got it', until })
+      }
+      return
+    }
+    if (script.phase === 'reporting') {
+      if (script.until !== undefined && now < script.until) return
+      setAgent({
+        ...agent,
+        status: 'leaving',
+        room: 'break',
+        pose: 'idle',
+        script: { kind: 'report', phase: 'toBreak', stopped: script.stopped },
+      })
+      motion = assignTarget(motion, map, agent.id, 'break')
+      return
+    }
+    // toBreak: arrived (or no path to follow) ends the script; expire takes it from there.
+    if (at === undefined || at.path.length === 0) setAgent(clearScript(agent))
   }
 
   for (const id of Object.keys(state.agents)) {
     const agent = agents[id]
     const script = agent?.script
     if (agent === undefined || script === undefined || map === undefined) continue
+
+    if (script.kind === 'report') {
+      advanceReport(agent, script)
+      continue
+    }
 
     if (script.phase === 'returning') {
       const at = motion[id]
@@ -187,6 +244,7 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
     const pairBroken =
       peer === undefined ||
       peer.script === undefined ||
+      peer.script.kind !== 'meet' ||
       peer.script.peer !== id ||
       peer.script.phase === 'returning' ||
       isGone(agent) ||
@@ -215,9 +273,9 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
       }
       const until = now + BUBBLE_MS
       for (const member of [agent, peer]) {
-        const speaking = member.script?.text !== undefined
         const base = member.script
-        if (base === undefined) continue
+        if (base === undefined || base.kind !== 'meet') continue
+        const speaking = base.text !== undefined
         setAgent({
           ...member,
           pose: speaking ? 'talk' : 'idle',
@@ -240,7 +298,7 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
     if (script.until !== undefined && now < script.until) continue
     for (const member of [agent, peer]) {
       const base = member.script
-      if (base === undefined) continue
+      if (base === undefined || base.kind !== 'meet') continue
       send(member, {
         kind: 'meet',
         peer: base.peer,
@@ -255,4 +313,44 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
   if (!touched && motion === state.motion && bubbles === state.bubbles) return state
 
   return { map, agents, motion, bubbles }
+}
+
+/**
+ * Starts the completion walk for the agent whose turn ended (T09): it is marked done,
+ * walks to the Lobby, shows "done" (or "stopped" when `reason` is not 'answer') while its
+ * parent (or main) shows "got it" for BUBBLE_MS, then walks to the Break Room as
+ * `leaving`. A meeting it was in is released first, so the peer returns normally.
+ * A teammate only turns idle (D26); main, an unknown agent or one already finished
+ * changes nothing. With no map or motion entry the agent is only marked done.
+ */
+export const startReport = (state: ChoreoState, agentId: string, now: number, reason: string): ChoreoState => {
+  if (agentId === 'main') return state
+  const completed = onComplete(state.agents, agentId, now)
+  const agent = completed[agentId]
+  if (completed === state.agents || agent === undefined) return state
+  if (agent.teammate) return { ...state, agents: completed }
+
+  // Dropping the meet script makes advanceScripts release the peer like any broken pair.
+  const bare = { ...agent }
+  delete bare.script
+  const released =
+    agent.script?.kind === 'meet' ? advanceScripts({ ...state, agents: { ...completed, [agentId]: bare } }, now) : { ...state, agents: { ...completed, [agentId]: bare } }
+  const { map } = released
+  const walking: OfficeAgent = {
+    ...bare,
+    room: 'lobby',
+    pose: 'idle',
+    script: { kind: 'report', phase: 'toLobby', stopped: reason !== 'answer' },
+  }
+  const agents = { ...released.agents, [agentId]: walking }
+  if (map === undefined || released.motion[agentId] === undefined) return { ...released, agents }
+
+  const routed = assignTarget(released.motion, map, agentId, 'lobby')
+  const entry = routed[agentId]
+  // No path to the Lobby: a path left toward another room is dropped, never walked.
+  if (entry !== undefined && entry.path.length > 0 && !onAnchor(map, 'lobby', targetOf(entry))) {
+    return { ...released, agents, motion: { ...routed, [agentId]: { ...entry, path: [] } } }
+  }
+
+  return { ...released, agents, motion: routed }
 }
