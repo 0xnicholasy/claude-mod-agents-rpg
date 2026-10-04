@@ -45,6 +45,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - D13 Hooks that throw are skipped by the engine and reported by name (3836-3838); `guard` is kept anyway so the debug log carries `agents-office:` lines the /implement rule greps for. Fire-and-forget promises (`$.ui.blit`, `update`) inside the tick get `.catch` that logs. (owner design)
 - D14 Frame-loop redraw trade-off: the render hook reads `motion` (so a redraw or reload draws correct positions), which means each tick's `motion` write also triggers the engine's throttled redraw (3870, "at the redraw rate") on top of the blit. Accepted for v1; if T01 shows visible flicker, `motion` is written every 5th tick and blits carry the frames between. (assumed, confirm by T01)
 - D17 R4 settled (T01): `claude plugin test` resolves a sibling module by relative path without extension, so `hooks/*.test.ts` use `import { ... } from './raster'` next to `import { expect, test } from 'claude-code/testing'`; no other layout needed. A `packCells` result never needs base64 padding (a cell is 12 bytes), so padding is tested on the exported `base64Encode`. (settled, T01)
+- D18 Environment: `claude plugin test` can refuse with 'hooks modules are turned off in this process: the rollout switch was saved off...'. Fix: one networked `claude -p "reply with the single word ok" --max-turns 1` outside the sandbox, then rerun. Run `npm run check` with the sandbox disabled. (orchestrator, 2026-10-04)
 
 ## Todos
 
@@ -54,7 +55,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - size: S
 - scope: Hand-written base64 encoder, glyph validation (printable width-1 BMP only) and `packCells(grid: Cell[][])` in `hooks/raster.ts`, plus the `Cell` type. Settles R4: the test imports a sibling `hooks/*.ts` module; if `claude plugin test` cannot, record the working layout in `## Decisions` and use it from here on.
 - files: `.claude/skills/agents-office/hooks/raster.ts`, `hooks/raster.test.ts`, `types/index.d.ts` (export `Cell` only if needed)
-- done when: `raster.test.ts` "raster packs the documented orange cell" passes (input `[0x2588, 0xff8800, 0x01000000]` encodes to `iCUAAACI/wAAAAAB`; the implementer re-derives the vector with a scratch Node `Buffer` one-liner before locking it), "raster pads a cell count that is not a multiple of three bytes correctly" and "raster refuses a width-2 or non-BMP glyph" pass.
+- done when: `raster.test.ts` "raster packs the documented orange cell" passes (input `[0x2588, 0xff8800, 0x01000000]` encodes to `iCUAAACI/wAAAAAB`; the implementer re-derives the vector with a scratch Node `Buffer` one-liner before locking it), "base64 encoder pads one- and two-byte tails", "raster packs cells as little-endian words in row order", "raster refuses a width-2 or non-BMP glyph" and "raster refuses invalid colors and ragged grids" pass.
 - verify: `npm run check` (plus test "raster packs the documented orange cell" pass)
 
 ### T01B Spike: blit loop in a mounted pane, /office, and agent.spawn shape

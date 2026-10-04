@@ -11,75 +11,35 @@ export const DEFAULT_COLOR = 0x01000000
 
 // Code point ranges [first, last] the Raster refuses or draws wider than one
 // column. Anything not listed here and <= 0xFFFF is accepted.
-const REJECTED_RANGES: ReadonlyArray<readonly [number, number]> = [
-  // Control characters (C0, DEL, C1).
-  [0x0000, 0x001f],
-  [0x007f, 0x009f],
-  // Combining marks (zero width): diacriticals, extended, supplement, for symbols, half marks.
-  [0x0300, 0x036f],
-  [0x1ab0, 0x1aff],
-  [0x1dc0, 0x1dff],
-  [0x20d0, 0x20ff],
-  [0xfe00, 0xfe0f], // variation selectors
-  [0xfe20, 0xfe2f],
-  // Zero-width and bidi formatting characters, BOM.
-  [0x200b, 0x200f],
-  [0x2028, 0x202e],
-  [0x2060, 0x206f],
-  [0xfeff, 0xfeff],
-  // Surrogates, private use, specials block end.
-  [0xd800, 0xf8ff],
-  [0xfff0, 0xffff],
-  // East Asian wide and fullwidth.
-  [0x1100, 0x115f], // Hangul Jamo
-  [0x2e80, 0x303e], // CJK radicals, Kangxi, CJK symbols
-  [0x3041, 0xa4cf], // Kana, Bopomofo, CJK, Yi
-  [0xa960, 0xa97f], // Hangul Jamo Extended-A
-  [0xac00, 0xd7a3], // Hangul syllables
-  [0xf900, 0xfaff], // CJK compatibility ideographs
-  [0xfe30, 0xfe6f], // CJK compatibility forms, small forms
-  [0xff00, 0xff60], // Fullwidth forms
-  [0xffe0, 0xffe6], // Fullwidth signs
-  // Emoji presentation characters in the BMP (drawn two columns wide).
-  [0x231a, 0x231b],
-  [0x23e9, 0x23ec],
-  [0x23f0, 0x23f0],
-  [0x23f3, 0x23f3],
-  [0x25fd, 0x25fe],
-  [0x2614, 0x2615],
-  [0x2648, 0x2653],
-  [0x267f, 0x267f],
-  [0x2693, 0x2693],
-  [0x26a1, 0x26a1],
-  [0x26aa, 0x26ab],
-  [0x26bd, 0x26be],
-  [0x26c4, 0x26c5],
-  [0x26ce, 0x26ce],
-  [0x26d4, 0x26d4],
-  [0x26ea, 0x26ea],
-  [0x26f2, 0x26f3],
-  [0x26f5, 0x26f5],
-  [0x26fa, 0x26fa],
-  [0x26fd, 0x26fd],
-  [0x2705, 0x2705],
-  [0x270a, 0x270b],
-  [0x2728, 0x2728],
-  [0x274c, 0x274c],
-  [0x274e, 0x274e],
-  [0x2753, 0x2755],
-  [0x2757, 0x2757],
-  [0x2795, 0x2797],
-  [0x27b0, 0x27b0],
-  [0x27bf, 0x27bf],
-  [0x2b1b, 0x2b1c],
-  [0x2b50, 0x2b50],
-  [0x2b55, 0x2b55],
+// Allowlist, not deny-list: terminal cell width is a property of the whole
+// Unicode table (wide, combining, format, emoji-presentation and unassigned
+// code points are scattered everywhere), so a deny-list always has gaps. Only
+// ranges known to be printable and width 1 in a BMP cell are accepted. Known
+// width-2 emoji-presentation code points inside otherwise-allowed blocks
+// (U+231A-231B, U+23E9-23EC, U+23F0, U+23F3, U+25FD-25FE) are split out, and
+// U+2600-U+26FF is dropped entirely because it is mostly emoji presentation.
+const ALLOWED_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x0020, 0x007e], // ASCII printable
+  [0x00a0, 0x00ac], // Latin-1 (before soft hyphen)
+  [0x00ae, 0x00ff], // Latin-1 (after soft hyphen U+00AD)
+  [0x2010, 0x2027], // punctuation
+  [0x2030, 0x205e], // punctuation
+  [0x2190, 0x21ff], // arrows
+  [0x2200, 0x22ff], // math operators
+  [0x2300, 0x2319], // technical (before U+231A-231B)
+  [0x231c, 0x2328],
+  [0x232b, 0x23e8], // technical (U+2329-232A are CJK angle brackets)
+  [0x23ed, 0x23ef],
+  [0x23f1, 0x23f2],
+  [0x23f4, 0x23ff],
+  [0x2500, 0x25fc], // box drawing, blocks, geometric shapes
+  [0x25ff, 0x25ff],
+  [0x2800, 0x28ff], // braille
 ]
 
-// True when `ch` is one printable width-1 BMP character.
 export const isValidGlyph = (ch: number): boolean => {
-  if (!Number.isInteger(ch) || ch < 0 || ch > 0xffff) return false
-  return !REJECTED_RANGES.some(([first, last]) => ch >= first && ch <= last)
+  if (!Number.isInteger(ch)) return false
+  return ALLOWED_RANGES.some(([first, last]) => ch >= first && ch <= last)
 }
 
 const isValidColor = (color: number): boolean =>
@@ -108,6 +68,13 @@ export const base64Encode = (bytes: ArrayLike<number>): string => {
 // Packs a row-major grid into little-endian u32 triplets [codePoint, fg, bg] and
 // base64s them. Throws on an invalid glyph or color, naming the cell.
 export const packCells = (grid: Cell[][]): string => {
+  const width = grid[0]?.length ?? 0
+  if (grid.length === 0 || width === 0) throw new Error('raster: empty grid')
+  grid.forEach((row, y) => {
+    if (row.length !== width) {
+      throw new Error(`raster: ragged grid, row ${y} has ${row.length} cells, expected ${width}`)
+    }
+  })
   const count = grid.reduce((sum, row) => sum + row.length, 0)
   const bytes = new Uint8Array(count * 12)
   let offset = 0
