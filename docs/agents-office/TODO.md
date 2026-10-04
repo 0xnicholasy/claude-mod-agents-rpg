@@ -79,7 +79,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "office blits a new frame after one 100 ms tick" pass)
 
 ### T02 Agent roster reducer and lifecycle hooks
-- status: done (#PR, 2026-10-04)
+- status: done (#4, 2026-10-04)
 - needs: T01B
 - size: M
 - scope: `hooks/agents.ts` pure reducer over `Record<string, OfficeAgent>`: `seedMain`, `onSpawn(input, result)` (label from `name` / `subagentType` / first 12 chars of `description`, tier per D4, parentId), `onComplete(agentId, now)` (status `done`, `completedAt`), `syncList(infos)` (adds unknown running/idle/waiting agents as grey, never removes), `expire(now)` (drops `done` agents older than 5000 ms). `register.tsx`: `session.start` seeds `main`, calls `$.agent.list()`, starts `$.clock.every(10000)` refresh; `agent.spawn` and `turn.complete` hooks call the reducer. Despawn here is a plain removal; T09 replaces it with the walk-out choreography.
@@ -214,4 +214,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 ## Log
 2026-10-04 T01 #2 raster cell codec packs and validates cells (R4: sibling import works; plan vector corrected to iCUAAACI/wAAAAAB)
 2026-10-04 T01B #3 blit loop, /office and agent.spawn roster work in tests; D8 blit observable, D9 agentId reaches tool.call hook via cast, D14 not observable headless; D19 `$` cannot cross imports, D20 render cannot write state
-2026-10-04 T02 #PR agent roster reducer: spawn/turn.complete/agent.list hooks and 5 s expiry; D24 stub shapes, D25 expire runs in tick
+2026-10-04 T02 #4 agent roster reducer: spawn/turn.complete/agent.list hooks and 5 s expiry; D24 stub shapes, D25 expire runs in tick
