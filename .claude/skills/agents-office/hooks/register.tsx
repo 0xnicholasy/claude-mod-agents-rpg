@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import { activityFor } from './activity'
 import { expire, onActivity, onComplete, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
-import { advanceScripts, startMeet } from './choreo'
+import { advanceScripts, expireBubbles, startMeet } from './choreo'
 import type { ChoreoState } from './choreo'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
@@ -80,25 +80,56 @@ const applyRoster = async (
   return next
 }
 
-// Writes the atoms a choreography step changed. Each updater recomputes from the
-// atom's current value, so a concurrent hook's change is not dropped (D36); `base`
-// carries the values the caller read or computed locally (D31).
+// Writes the atoms a choreography step changed (D40). `base` is the triple the caller
+// read (or computed locally, D31); `compute` runs once on it. Each changed atom is
+// written with an updater that returns that result only while the atom still holds
+// the value `base` carried; once any atom differs, that atom and every later one is
+// recomputed from the triple seen so far (earlier atoms as written, this atom as
+// found, later ones as in `base`). The three writes are not atomic. Returns the
+// triple as written.
+// An atom's updater may receive a copy of the stored value (the engine serialises
+// state), so "unchanged since the read" compares by content, not reference.
+const sameValue = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b)
+
 const commitChoreo = async (
   $: EngineInterface,
   base: ChoreoState,
   compute: (state: ChoreoState) => ChoreoState,
 ): Promise<ChoreoState> => {
   const next = compute(base)
-  if (next.agents !== base.agents) await update($, agents, cur => compute({ ...base, agents: cur }).agents)
-  if (next.motion !== base.motion) await update($, motion, cur => compute({ ...base, motion: cur }).motion)
-  if (next.bubbles !== base.bubbles) await update($, bubbles, cur => compute({ ...base, bubbles: cur }).bubbles)
+  let fresh = base
+  let diverged = false
+  if (next.agents !== base.agents) {
+    await update($, agents, cur => {
+      diverged = !sameValue(cur, base.agents)
+      fresh = { ...fresh, agents: diverged ? compute({ ...fresh, agents: cur }).agents : next.agents }
 
-  return next
+      return fresh.agents
+    })
+  }
+  if (next.motion !== base.motion) {
+    await update($, motion, cur => {
+      diverged = diverged || !sameValue(cur, base.motion)
+      fresh = { ...fresh, motion: diverged ? compute({ ...fresh, motion: cur }).motion : next.motion }
+
+      return fresh.motion
+    })
+  }
+  if (next.bubbles !== base.bubbles) {
+    await update($, bubbles, cur => {
+      diverged = diverged || !sameValue(cur, base.bubbles)
+      fresh = { ...fresh, bubbles: diverged ? compute({ ...fresh, bubbles: cur }).bubbles : next.bubbles }
+
+      return fresh.bubbles
+    })
+  }
+
+  return fresh
 }
 
 // SendMessage: both agents walk to the Meeting Room (D38). `to` is `unknown` because
 // the SendMessage input types it `unknown & unknown`; startMeet narrows it.
-const meet = async ($: EngineInterface, from: string, to: unknown, text: unknown): Promise<void> => {
+const meet = async ($: EngineInterface, from: string, to: unknown, text: string): Promise<void> => {
   const now = await $.clock.now()
   const size = await read($, viewport)
   const base: ChoreoState = {
@@ -107,7 +138,7 @@ const meet = async ($: EngineInterface, from: string, to: unknown, text: unknown
     motion: await read($, motion),
     bubbles: await read($, bubbles),
   }
-  await commitChoreo($, base, state => startMeet(state, from, to, typeof text === 'string' ? text : '', now))
+  await commitChoreo($, base, state => startMeet(state, from, to, text, now))
 }
 
 type SeatOptions = { entering?: string; advance?: boolean }
@@ -149,7 +180,15 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const placed = await guard($, 'place', undefined, async () => seat($, roster, { advance: true }))
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
-  if (map === undefined) return
+  if (map === undefined) {
+    // No pane drawn: scripts cannot advance, but a shown bubble still expires.
+    await guard($, 'bubbles', undefined, async () => {
+      if (expireBubbles(await read($, bubbles), now) === (await read($, bubbles))) return
+      await update($, bubbles, cur => expireBubbles(cur, now))
+    })
+
+    return
+  }
   const before: ChoreoState = {
     map,
     agents: roster,
@@ -262,7 +301,7 @@ export const register: Register = on => {
       const id = e.agentId ?? 'main'
       // SendMessage starts a meeting instead of the lobby talk activity (D38).
       if (e.tool === 'SendMessage') {
-        await meet($, id, e.to, e.message)
+        await meet($, id, e.to, typeof e.message === 'string' ? e.message : '')
         return
       }
       const activity = activityFor(e.tool)

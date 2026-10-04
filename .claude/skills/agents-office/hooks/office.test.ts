@@ -615,3 +615,22 @@ test('main messaging a1 meets, shows the bubble for 4 s, then both return to the
   expect(home('a1')).toBe(true)
   await ui.unmount()
 })
+
+test('a bubble expires on the tick even when no pane was ever drawn', async ($, on) => {
+  const clock = mock.clock(on)
+  let latest: Array<{ agentId: string; text: string; until: number }> | undefined
+  on('state.set', ($, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the bubbles atom is read.
+    if (e.key === 'bubbles') latest = e.value as NonNullable<typeof latest>
+    return next(e)
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('tool.call', () => ({ result: 'stub' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'SendMessage', to: 'nobody', message: 'hello' })
+  expect(latest).toMatchObject([{ agentId: 'main', text: 'hello' }])
+  await clock.advance(4100)
+
+  expect(latest).toEqual([])
+})

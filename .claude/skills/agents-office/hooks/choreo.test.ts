@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
+import { onActivity } from './agents'
 import type { OfficeAgent, Roster } from './agents'
-import { advanceScripts, bubbleText, startMeet } from './choreo'
+import { advanceScripts, bubbleText, expireBubbles, startMeet } from './choreo'
 import type { ChoreoState } from './choreo'
 import { placeMotion } from './frame'
 import { buildMap } from './map'
@@ -119,4 +120,115 @@ test('a script is released when the peer is gone', () => {
   const released = advanceScripts({ ...state, agents: rest }, 100)
   expect(released.agents.main?.script).toBeUndefined()
   expect(released.agents.main?.room).toBe('lobby')
+})
+
+const devbay = map.rooms.find(r => r.id === 'devbay')?.anchors ?? []
+
+// main in the lobby; a2 and a3 in the Dev Bay on anchors 1 and 2 (anchor 0 is free).
+const threeInOneRoom = (): ChoreoState => {
+  const full: Roster = { ...roster, a1: agent('a1'), a2: agent('a2'), a3: agent('a3') }
+  const seated = placeMotion(map, full, {})
+  const { a1: _a1, ...motion } = seated
+  const { a1: _gone, ...agents } = full
+
+  return { map, agents, motion, bubbles: [] }
+}
+
+const settle = (start: ChoreoState, from: number): ChoreoState => {
+  let state = start
+  let now = from
+  let ticks = 0
+  while (ticks < 600 && (walking(state) || Object.values(state.agents).some(a => a.script !== undefined))) {
+    now += TICK_MS
+    state = tickOnce(state, now)
+    ticks += 1
+  }
+  expect(ticks).toBeLessThan(600)
+
+  return state
+}
+
+test('the messaging agent returns to its own anchor, not the first free one', () => {
+  const start = threeInOneRoom()
+  expect(start.motion.a2).toMatchObject({ x: devbay[1]?.x, y: devbay[1]?.y })
+  expect(start.motion.a3).toMatchObject({ x: devbay[2]?.x, y: devbay[2]?.y })
+  const state = settle(startMeet(start, 'a2', 'a3', 'hi', 0), 0)
+  expect(state.motion.a2).toMatchObject({ x: devbay[1]?.x, y: devbay[1]?.y })
+  expect(state.motion.a3).toMatchObject({ x: devbay[2]?.x, y: devbay[2]?.y })
+})
+
+test('an agent whose anchor was taken meanwhile returns to a free anchor of its room', () => {
+  const start = threeInOneRoom()
+  const going = startMeet(start, 'a2', 'a3', 'hi', 0)
+  const taken = { x: devbay[1]?.x ?? 0, y: devbay[1]?.y ?? 0, path: [], frame: 0 }
+  const state = settle({ ...going, motion: { ...going.motion, squatter: taken } }, 0)
+  const at = state.motion.a2
+  expect(devbay.some(a => a.x === at?.x && a.y === at?.y)).toBe(true)
+  expect(at).not.toMatchObject({ x: taken.x, y: taken.y })
+})
+
+test('a meet on an agent already in a meeting gives only a bubble over the speaker', () => {
+  const first = startMeet(initial(), 'main', 'a1', 'hello', 0)
+  const third: Roster = { ...first.agents, a2: agent('a2') }
+  const withThird: ChoreoState = { ...first, agents: third, motion: placeMotion(map, third, first.motion) }
+  const second = startMeet(withThird, 'a1', 'a2', 'and you', 10)
+  expect(second.agents).toBe(withThird.agents)
+  expect(second.motion).toBe(withThird.motion)
+  expect(second.agents.a2?.script).toBeUndefined()
+  expect(second.bubbles).toEqual([{ agentId: 'a1', text: 'and you', until: 10 + BUBBLE_MS }])
+})
+
+test('a new bubble replaces the agent\'s existing one', () => {
+  const once = startMeet(initial(), 'main', 'nobody', 'first', 0)
+  const twice = startMeet(once, 'main', 'nobody', 'second', 100)
+  expect(twice.bubbles).toEqual([{ agentId: 'main', text: 'second', until: 100 + BUBBLE_MS }])
+})
+
+test('expireBubbles drops bubbles at their end time and keeps the reference when none expired', () => {
+  const live = [{ agentId: 'main', text: 'x', until: 100 }]
+  expect(expireBubbles(live, 99)).toBe(live)
+  expect(expireBubbles(live, 100)).toEqual([])
+})
+
+test('the script is released in `going` when the peer goes done', () => {
+  let going = startMeet(initial(), 'main', 'a1', 'hi', 0)
+  for (let i = 1; i <= 5; i += 1) going = tickOnce(going, i * TICK_MS)
+  expect(going.agents.main?.script?.phase).toBe('going')
+  const broken: ChoreoState = { ...going, agents: { ...going.agents, a1: { ...going.agents.a1!, status: 'done' } } }
+  const released = advanceScripts(broken, 600)
+  expect(released.agents.main?.script).toBeUndefined()
+  expect(released.agents.main?.room).toBe('lobby')
+  expect(released.agents.a1?.script).toBeUndefined()
+  expect(released.motion.main?.path.length).toBeGreaterThan(0)
+})
+
+test('the script is released in `talking` when the peer goes done', () => {
+  let state = startMeet(initial(), 'main', 'a1', 'hi', 0)
+  let now = 0
+  while (state.agents.main?.script?.phase !== 'talking' && now < 60000) {
+    now += TICK_MS
+    state = tickOnce(state, now)
+  }
+  expect(state.agents.main?.script?.phase).toBe('talking')
+  expect(state.agents.main?.pose).toBe('talk')
+  const broken: ChoreoState = { ...state, agents: { ...state.agents, a1: { ...state.agents.a1!, status: 'done' } } }
+  const released = advanceScripts(broken, now + TICK_MS)
+  expect(released.agents.main?.script).toBeUndefined()
+  expect(released.agents.main?.room).toBe('lobby')
+  expect(released.agents.main?.pose).toBe('idle')
+  expect(released.motion.main?.path.length).toBeGreaterThan(0)
+})
+
+test('a tool call under a script updates where the agent returns and does not move it', () => {
+  const going = startMeet(initial(), 'a1', 'main', 'hi', 0)
+  const after = onActivity(going.agents, 'a1', { room: 'library', pose: 'read' })
+  expect(after.a1?.script).toMatchObject({ phase: 'going', returnRoom: 'library', returnPose: 'read' })
+  expect(after.a1?.room).toBe('meeting')
+  expect(after.a1?.pose).toBe(going.agents.a1?.pose)
+  expect(onActivity(after, 'a1', { room: 'library', pose: 'read' })).toBe(after)
+
+  const state = settle({ ...going, agents: after }, 0)
+  const libraryAnchors = map.rooms.find(r => r.id === 'library')?.anchors ?? []
+  expect(libraryAnchors.some(a => a.x === state.motion.a1?.x && a.y === state.motion.a1?.y)).toBe(true)
+  expect(state.agents.a1?.pose).toBe('read')
 })

@@ -3,8 +3,9 @@
 // the atoms, passes plain data in and writes the changed atoms back.
 import type { OfficeAgent, Roster, Script } from './agents'
 import type { Bubble, Motion } from './frame'
-import type { OfficeMap, RoomId } from './map'
-import { assignTarget } from './motion'
+import type { OfficeMap, Point, RoomId } from './map'
+import { assignTarget, targetOf } from './motion'
+import { findPath } from './path'
 import { BUBBLE_MS } from './timing'
 
 export type ChoreoState = {
@@ -30,13 +31,45 @@ const isGone = (agent: OfficeAgent): boolean => agent.status === 'done' || agent
 const byId = (agents: Roster, id: string): OfficeAgent | undefined =>
   Object.values(agents).find(agent => agent.id === id)
 
-// `to` is `unknown & unknown` in the SendMessage tool input (d.ts 15775), so it is
-// narrowed here: only a string can name an agent, by id first, then by label (the
-// spawn `name` when one was given).
+// Only a string can name an agent: by id first, then by label (the spawn `name` when one was given).
 const findPeer = (agents: Roster, to: unknown): OfficeAgent | undefined => {
+  // d.ts SendMessage `to: unknown & unknown` (line 15775): any value can arrive.
   if (typeof to !== 'string') return undefined
 
   return Object.values(agents).find(agent => agent.id === to) ?? Object.values(agents).find(agent => agent.label === to)
+}
+
+const same = (a: { x: number; y: number }, b: { x: number; y: number }): boolean => a.x === b.x && a.y === b.y
+
+// A new bubble replaces the agent's existing one.
+const withBubble = (bubbles: Bubble[], bubble: Bubble): Bubble[] => [
+  ...bubbles.filter(b => b.agentId !== bubble.agentId),
+  bubble,
+]
+
+/** Drops bubbles with `until <= now`; returns the same reference when none expired. */
+export const expireBubbles = (bubbles: Bubble[], now: number): Bubble[] => {
+  const live = bubbles.filter(b => b.until > now)
+
+  return live.length === bubbles.length ? bubbles : live
+}
+
+// Walks `id` back to the tile it left (`returnAt`) unless another agent holds it
+// (position or path end) or no path leads there; then to the first free anchor of
+// its return room.
+const goBack = (motion: Motion, map: OfficeMap, id: string, script: Script): Motion => {
+  const entry = motion[id]
+  if (entry === undefined) return motion
+  const held = Object.entries(motion).some(([other, at]) => other !== id && same(targetOf(at), script.returnAt))
+  // Only a desk of the return room counts: a tool call mid-meeting can change that room.
+  const deskOfRoom = map.rooms.find(r => r.id === script.returnRoom)?.anchors.some(a => same(a, script.returnAt)) ?? false
+  if (!held && deskOfRoom) {
+    const path = findPath(map, entry, script.returnAt)
+    if (path.length > 0) return { ...motion, [id]: { ...entry, path } }
+    if (same(entry, script.returnAt)) return entry.path.length === 0 ? motion : { ...motion, [id]: { ...entry, path: [] } }
+  }
+
+  return assignTarget(motion, map, id, script.returnRoom)
 }
 
 const onAnchor = (map: OfficeMap, room: RoomId, at: Motion[string]): boolean =>
@@ -64,16 +97,23 @@ export const startMeet = (state: ChoreoState, from: string, to: unknown, text: s
     state.motion[speaker.id] === undefined ||
     state.motion[peer.id] === undefined
   ) {
-    return { ...state, bubbles: [...state.bubbles, { agentId: speaker.id, text: shown, until: now + BUBBLE_MS }] }
+    return { ...state, bubbles: withBubble(state.bubbles, { agentId: speaker.id, text: shown, until: now + BUBBLE_MS }) }
   }
 
   const motion = assignTarget(assignTarget(state.motion, map, speaker.id, 'meeting'), map, peer.id, 'meeting')
+  // Where each agent was heading when the meeting started (its desk), read before the walk is assigned.
+  const origin = (agent: OfficeAgent): Point => {
+    const { x, y } = targetOf(state.motion[agent.id] ?? { x: 0, y: 0, path: [], frame: 0 })
+
+    return { x, y }
+  }
   const script = (agent: OfficeAgent, withText: boolean): Script => ({
     kind: 'meet',
     peer: agent.id === speaker.id ? peer.id : speaker.id,
     phase: 'going',
     returnRoom: agent.room,
     returnPose: agent.pose,
+    returnAt: origin(agent),
     ...(withText ? { text: shown } : {}),
   })
 
@@ -91,14 +131,13 @@ export const startMeet = (state: ChoreoState, from: string, to: unknown, text: s
 /**
  * Moves every script one step along. Called each tick, after the agents have
  * stepped: drops expired bubbles; when both reach their Meeting Room anchors the
- * speaker's bubble shows for BUBBLE_MS; when it expires both walk back to their
- * `returnRoom` with their pose restored; the script is cleared once back. A script
+ * speaker's bubble shows for BUBBLE_MS; when it expires both walk back to the tile they
+ * left (their `returnAt`, else the first free anchor of `returnRoom`) with their pose restored; the script is cleared once back. A script
  * whose peer vanished, finished or cannot reach the room is released. Returns the
  * same reference when nothing changes.
  */
 export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => {
-  const live = state.bubbles.filter(b => b.until > now)
-  let bubbles = live.length === state.bubbles.length ? state.bubbles : live
+  let bubbles = expireBubbles(state.bubbles, now)
   const { map } = state
   let motion = state.motion
   let agents = state.agents
@@ -123,14 +162,14 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
     if (!isGone(agent)) {
       next.room = script.returnRoom
       next.pose = script.returnPose
-      motion = assignTarget(motion, map, id, script.returnRoom)
+      motion = goBack(motion, map, id, script)
     }
     setAgent(next)
   }
   const send = (agent: OfficeAgent, script: Script): void => {
     if (map === undefined) return
     setAgent({ ...agent, room: script.returnRoom, pose: script.returnPose, script })
-    motion = assignTarget(motion, map, agent.id, script.returnRoom)
+    motion = goBack(motion, map, agent.id, script)
   }
 
   for (const id of Object.keys(state.agents)) {
@@ -188,10 +227,11 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
             phase: 'talking',
             returnRoom: base.returnRoom,
             returnPose: base.returnPose,
+            returnAt: base.returnAt,
             until,
           },
         })
-        if (base.text !== undefined) bubbles = [...bubbles, { agentId: member.id, text: base.text, until }]
+        if (base.text !== undefined) bubbles = withBubble(bubbles, { agentId: member.id, text: base.text, until })
       }
       continue
     }
@@ -207,6 +247,7 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
         phase: 'returning',
         returnRoom: base.returnRoom,
         returnPose: base.returnPose,
+        returnAt: base.returnAt,
       })
     }
   }

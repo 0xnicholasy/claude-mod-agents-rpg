@@ -12,6 +12,8 @@ export type Script = {
   phase: 'going' | 'talking' | 'returning'
   returnRoom: RoomId
   returnPose: Pose
+  // The tile the agent left (its desk), so it sits back on its own anchor (D38).
+  returnAt: { x: number; y: number }
   until?: number
   text?: string
 }
@@ -107,12 +109,22 @@ export const onComplete = (roster: Roster, agentId: string, now: number): Roster
 }
 
 // Records what a tool call makes the agent do; 'desk' resolves to its home (D37).
-// Returns the same reference when the agent is unknown, done, leaving or running a script, or nothing changes.
+// Returns the same reference when the agent is unknown, done, leaving or or nothing changes. Under a script only `script.returnRoom`/`returnPose` change, so the agent finishes the meeting and then goes there.
 export const onActivity = (roster: Roster, agentId: string, activity: Activity): Roster => {
   const agent = roster[agentId]
   if (agent === undefined || agent.status === 'done' || agent.status === 'leaving') return roster
-  if (agent.script !== undefined) return roster
   const room = activity.room === 'desk' ? agent.home : activity.room
+  if (agent.script !== undefined) {
+    // Mid-meeting: the agent stays put; the activity is where it goes back to.
+    const { script } = agent
+    if (script.returnRoom === room && script.returnPose === activity.pose) return roster
+
+    const moved = { ...script, returnRoom: room, returnPose: activity.pose }
+    // Already walking back: the new activity is where it is heading now.
+    if (script.phase === 'returning') return { ...roster, [agentId]: { ...agent, room, pose: activity.pose, script: moved } }
+
+    return { ...roster, [agentId]: { ...agent, script: moved } }
+  }
   if (agent.room === room && agent.pose === activity.pose) return roster
 
   return { ...roster, [agentId]: { ...agent, room, pose: activity.pose } }
