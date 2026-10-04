@@ -1,11 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import { expire, onComplete, onSpawn, seedMain, syncList } from './agents'
+import { activityFor } from './activity'
+import { expire, onActivity, onComplete, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { mapFor, rasterSize } from './loop'
-import { enterAtDoor, step } from './motion'
+import { assignTarget, enterAtDoor, step } from './motion'
 import { DEFAULT_COLOR, packCells } from './raster'
 import type { Cell } from './raster'
 import { LIST_MS, TICK_MS } from './timing'
@@ -203,6 +204,28 @@ export const register: Register = on => {
     })
 
     return result
+  })
+
+  // The activity is applied before next(e); nothing awaits after it, and a
+  // failure in the pre-work is logged and never blocks the tool (D37).
+  on('tool.call', async ($, e, next) => {
+    await guard($, 'tool.call', undefined, async () => {
+      const id = e.agentId ?? 'main'
+      const activity = activityFor(e.tool)
+      const stored = await read($, agents)
+      const roster = onActivity(stored, id, activity)
+      if (roster === stored) return
+      await update($, agents, current => onActivity(current, id, activity))
+      const room = roster[id]?.room
+      const size = await read($, viewport)
+      const map = mapFor(size.columns, size.rows)
+      if (room === undefined || map === undefined) return
+      const current = await read($, motion)
+      if (assignTarget(current, map, id, room) === current) return
+      await update($, motion, cur => assignTarget(cur, map, id, room))
+    })
+
+    return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
