@@ -4,6 +4,7 @@ import type { Bubble, Motion } from './frame'
 import type { OfficeAgent, Roster, Tier } from './agents'
 import { buildMap } from './map'
 import { DEFAULT_COLOR } from './raster'
+import { enterAtDoor } from './motion'
 import { nameplate, POSES, SPRITE_PALETTE, sprite } from './sprites'
 
 const map = buildMap(60, 18)
@@ -176,4 +177,22 @@ test('a bubble at the right edge draws up to the edge and nothing past it', () =
   expect(row).toHaveLength(60)
   expect(row.filter(c => c.bg === BUBBLE_BG)).toHaveLength(60 - start)
   expect(row[59]).toMatchObject({ bg: BUBBLE_BG })
+})
+
+test('placeMotion treats the end of a walker path as held', () => {
+  const walking = enterAtDoor({}, map, 'a', 'devbay')
+  const first = devbay?.anchors[0]
+  const second = devbay?.anchors[1]
+  const placed = placeMotion(map, { a: agent('a'), b: agent('b') }, walking)
+
+  expect(walking.a?.path.at(-1)).toEqual(first)
+  expect(placed.b).toMatchObject({ x: second?.x, y: second?.y, path: [] })
+})
+
+test('placeMotion reseats a walker whose path has an unstandable tile at an anchor with no path', () => {
+  const roster: Roster = { a: agent('a') }
+  const broken: Motion = { a: { x: anchor.x, y: anchor.y, path: [{ x: 0, y: 0 }], frame: 1 } }
+  const reseated = placeMotion(map, roster, broken)
+
+  expect(reseated.a).toMatchObject({ x: anchor.x, y: anchor.y, path: [] })
 })

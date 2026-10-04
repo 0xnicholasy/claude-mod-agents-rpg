@@ -6,7 +6,7 @@ import { canStand, FOOTPRINT_W } from './map'
 import type { OfficeMap, Point, TileKind } from './map'
 import { DEFAULT_COLOR, isValidGlyph } from './raster'
 import type { Cell } from './raster'
-import { drawnFrame, drawnPose } from './motion'
+import { drawnFrame, drawnPose, targetOf } from './motion'
 import { isTransparent, nameplate, sprite } from './sprites'
 
 export type Motion = Record<string, { x: number; y: number; path: Point[]; frame: number }>
@@ -178,8 +178,8 @@ export const placeMotion = (map: OfficeMap, agents: Roster, motion: Motion): Mot
     if (next[agent.id] !== undefined) continue
     const room = map.rooms.find(r => r.id === agent.room)
     if (room === undefined) continue
-    const taken = Object.values(next)
-    const spot = room.anchors.find(a => !taken.some(m => sameCell(m, a))) ?? room.anchors[0]
+    const taken = Object.values(next).map(targetOf)
+    const spot = room.anchors.find(a => !taken.some(t => sameCell(t, a))) ?? room.anchors[0]
     if (spot === undefined) continue
     if (next === motion) next = { ...motion }
     next[agent.id] = { x: spot.x, y: spot.y, path: [], frame: 0 }

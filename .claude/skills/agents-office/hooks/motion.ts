@@ -11,14 +11,15 @@ import { TICK_MS, WORK_FRAME_TICKS } from './timing'
 const same = (a: Point, b: Point): boolean => a.x === b.x && a.y === b.y
 
 // Where an entry is heading: the end of its path, or where it stands.
-const targetOf = (entry: Motion[string]): Point => entry.path[entry.path.length - 1] ?? entry
+export const targetOf = (entry: Motion[string]): Point => entry.path[entry.path.length - 1] ?? entry
 
 /**
  * Sends `agentId` to the first anchor of `room` that no other agent holds (its
  * position when resting, the end of its path when walking); when every anchor is
  * held it falls back to the first one. An agent already heading to an anchor of
  * the room keeps it. Returns the same reference when the target is unchanged or
- * the agent has no entry or the room is unknown.
+ * the agent has no entry or the room is unknown. When no path to the chosen
+ * anchor exists the agent keeps its current path.
  */
 export const assignTarget = (motion: Motion, map: OfficeMap, agentId: string, room: string): Motion => {
   const entry = motion[agentId]
@@ -32,7 +33,7 @@ export const assignTarget = (motion: Motion, map: OfficeMap, agentId: string, ro
   const spot = found.anchors.find(a => !held.some(h => same(h, a))) ?? found.anchors[0]
   if (spot === undefined) return motion
   const path = findPath(map, entry, spot)
-  if (path.length === 0 && entry.path.length === 0) return motion
+  if (path.length === 0 && !same(entry, spot)) return motion
 
   return { ...motion, [agentId]: { ...entry, path } }
 }
@@ -47,7 +48,11 @@ export const enterAtDoor = (motion: Motion, map: OfficeMap, agentId: string, roo
   if (lobby === undefined) return motion
   const placed: Motion = { ...motion, [agentId]: { x: lobby.doorStand.x, y: lobby.doorStand.y, path: [], frame: 0 } }
 
-  return assignTarget(placed, map, agentId, room)
+  const assigned = assignTarget(placed, map, agentId, room)
+
+  // No path (unknown room or unreachable anchor): make no entry, so the next
+  // placeMotion seats the agent directly.
+  return (assigned[agentId]?.path.length ?? 0) === 0 ? motion : assigned
 }
 
 /**

@@ -72,3 +72,18 @@ test('an arriving agent switches from walk to its work pose', () => {
   expect(drawnFrame('type', entry(motion, 'a'), 0)).toBe(0)
   expect(drawnFrame('type', entry(motion, 'a'), 300)).toBe(1)
 })
+
+const island = { ...map, rooms: map.rooms.map(r => (r.id === 'library' ? { ...r, anchors: [{ x: 0, y: 0 }] } : r)) }
+
+test('retargeting a walker to an unreachable room keeps its path', () => {
+  const walking = enterAtDoor({}, map, 'a', 'devbay')
+
+  expect(assignTarget(walking, island, 'a', 'library')).toBe(walking)
+})
+
+test('enterAtDoor makes no entry when the room is unknown or unreachable', () => {
+  const motion: Motion = {}
+
+  expect(enterAtDoor(motion, island, 'a', 'library')).toBe(motion)
+  expect(enterAtDoor(motion, map, 'a', 'nowhere')).toBe(motion)
+})

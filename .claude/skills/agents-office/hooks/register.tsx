@@ -69,12 +69,23 @@ const seat = async (
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
   if (map === undefined) return undefined
-  const current = await read($, motion)
   const arriving = entering === undefined ? undefined : roster[entering]
-  const entered = arriving === undefined ? current : enterAtDoor(current, map, arriving.id, arriving.room)
-  const placed = placeMotion(map, roster, entered)
-  const next = advance ? step(placed) : placed
-  if (next !== current) await update($, motion, () => next)
+  const compute = (cur: Motion): Motion => {
+    const entered = arriving === undefined ? cur : enterAtDoor(cur, map, arriving.id, arriving.room)
+    const placed = placeMotion(map, roster, entered)
+
+    return advance ? step(placed) : placed
+  }
+  // The read only gates the write; the written value is computed from the
+  // updater's own current value, so concurrent tick and spawn dispatches
+  // cannot drop each other's entries.
+  const current = await read($, motion)
+  let next = compute(current)
+  if (next === current) return next
+  await update($, motion, cur => {
+    next = compute(cur)
+    return next
+  })
 
   return next
 }
