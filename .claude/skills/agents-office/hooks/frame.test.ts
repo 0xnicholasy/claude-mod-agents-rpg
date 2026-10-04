@@ -136,3 +136,43 @@ test('placeMotion seats a new agent at its first free anchor and drops departed 
   expect(placeMotion(map, roster, first)).toBe(first)
   expect(placeMotion(map, { a: agent('a') }, first)).toEqual({ a: first.a })
 })
+
+test('placeMotion reseats a resting entry that is off the map and keeps a valid one by reference', () => {
+  const roster: Roster = { a: agent('a') }
+  const valid = placeMotion(map, roster, {})
+  const off: Motion = { a: at(100, anchor.y) }
+  const reseated = placeMotion(map, roster, off)
+
+  expect(reseated.a).toMatchObject({ x: anchor.x, y: anchor.y })
+  expect(reseated).not.toBe(off)
+  expect(placeMotion(map, roster, valid)).toBe(valid)
+  expect(placeMotion(map, roster, valid).a).toBe(valid.a)
+})
+
+test('a bubble centred left of the grid writes nothing outside it', () => {
+  const roster: Roster = { a1: agent('a1', { label: 'q' }) }
+  const text = 'hello there friend'
+  const bubble: Bubble = { agentId: 'a1', text, until: 1000 }
+  const grid = buildFrame({ map, agents: roster, motion: { a1: at(0, 2) }, bubbles: [bubble], now: 999 })
+  const row = grid[0] ?? []
+  const left = 0 + 1 - Math.floor(text.length / 2)
+  const drawn = row.filter(c => c.bg === BUBBLE_BG).length
+
+  expect(grid).toHaveLength(18)
+  expect(grid.every(r => r.length === 60)).toBe(true)
+  expect(drawn).toBe(text.length + left)
+  expect(row[0]).toMatchObject({ fg: BUBBLE_FG, bg: BUBBLE_BG, ch: text.codePointAt(-left) })
+})
+
+test('a bubble at the right edge draws up to the edge and nothing past it', () => {
+  const roster: Roster = { a1: agent('a1', { label: 'q' }) }
+  const text = 'hello there friend'
+  const bubble: Bubble = { agentId: 'a1', text, until: 1000 }
+  const grid = buildFrame({ map, agents: roster, motion: { a1: at(56, 2) }, bubbles: [bubble], now: 999 })
+  const row = grid[0] ?? []
+  const start = 56 + 1 - Math.floor(text.length / 2)
+
+  expect(row).toHaveLength(60)
+  expect(row.filter(c => c.bg === BUBBLE_BG)).toHaveLength(60 - start)
+  expect(row[59]).toMatchObject({ bg: BUBBLE_BG })
+})

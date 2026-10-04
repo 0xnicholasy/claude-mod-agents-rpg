@@ -15,6 +15,17 @@ export const rasterSize = (bodyColumns: number, bodyRows: number): { columns: nu
 export const isOfficeSize = (columns: number, rows: number): boolean =>
   columns >= MIN_COLUMNS && rows >= MIN_ROWS
 
+// One-entry cache keyed on columns,rows: a pure cache like lastFrameCells
+// (D32), so render, tick and spawn share one map per size.
+let cached: { key: string; map: OfficeMap } | undefined
+
 // The map for a raster size, or undefined below the 60x18 minimum.
-export const mapFor = (columns: number, rows: number): OfficeMap | undefined =>
-  isOfficeSize(columns, rows) ? buildMap(columns, rows) : undefined
+export const mapFor = (columns: number, rows: number): OfficeMap | undefined => {
+  if (!isOfficeSize(columns, rows)) return undefined
+  const key = `${columns},${rows}`
+  if (cached?.key === key) return cached.map
+  const map = buildMap(columns, rows)
+  cached = { key, map }
+
+  return map
+}

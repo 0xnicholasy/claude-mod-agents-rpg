@@ -375,3 +375,74 @@ test('an unchanged roster is not rewritten on each tick', async ($, on) => {
   expect(after).toBeGreaterThan(0)
   expect(writes.filter(w => w.key === 'agents')).toHaveLength(after)
 })
+
+const paneAt = (bodyRows: number) =>
+  ({
+    plugin: 'agents-office',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'office',
+    props: { ...paneProps, scroll: { offset: 0, bodyRows } },
+  }) as const
+
+test('remounting at a different size blits a new frame with the new size', async ($, on) => {
+  const clock = mock.clock(on)
+  const lengths: number[] = []
+  on('ui.blit', ($, e) => {
+    if ('cells' in e) lengths.push(e.cells.length)
+    return { value: {} }
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const first = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  await first.unmount()
+  const second = await $.ui.mount(paneAt(20 + STRIP_ROWS))
+  await clock.advance(100)
+
+  expect(lengths).toHaveLength(2)
+  expect(lengths[1]).toBe(4 * Math.ceil((60 * 20 * 12) / 3))
+  expect(lengths[1]).not.toBe(lengths[0])
+  await second.unmount()
+})
+
+test('a denied blit is retried on the next tick', async ($, on) => {
+  const clock = mock.clock(on)
+  let calls = 0
+  on('ui.blit', () => {
+    calls += 1
+
+    return calls === 1 ? { value: { deny: 'x' } } : { value: {} }
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  await clock.advance(100)
+
+  expect(calls).toBe(2)
+  await ui.unmount()
+})
+
+test('a spawned agent is drawn on the first tick after the spawn', async ($, on) => {
+  const clock = mock.clock(on)
+  const cells: string[] = []
+  on('ui.blit', ($, e) => {
+    if ('cells' in e) cells.push(e.cells)
+    return { value: {} }
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  await $.agent.spawn(spawnArgs)
+  await clock.advance(100)
+
+  expect(cells).toHaveLength(2)
+  expect(cells[1]).not.toBe(cells[0])
+  await ui.unmount()
+})

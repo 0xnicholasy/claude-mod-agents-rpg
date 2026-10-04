@@ -2,7 +2,7 @@
 // speech bubbles into one grid of cells. No `$`; register.tsx reads the atoms
 // and passes plain data in.
 import type { Roster } from './agents'
-import { FOOTPRINT_W } from './map'
+import { canStand, FOOTPRINT_W } from './map'
 import type { OfficeMap, Point, TileKind } from './map'
 import { DEFAULT_COLOR, isValidGlyph } from './raster'
 import type { Cell } from './raster'
@@ -166,7 +166,10 @@ const sameCell = (a: Point, b: Point): boolean => a.x === b.x && a.y === b.y
 export const placeMotion = (map: OfficeMap, agents: Roster, motion: Motion): Motion => {
   let next = motion
   for (const id of Object.keys(motion)) {
-    if (agents[id] !== undefined) continue
+    const entry = motion[id]
+    // A resting entry that is off the map or not standable (after a resize) is dropped and reseated below.
+    const stale = entry !== undefined && entry.path.length === 0 && !canStand(map, entry.x, entry.y)
+    if (agents[id] !== undefined && !stale) continue
     if (next === motion) next = { ...motion }
     delete next[id]
   }

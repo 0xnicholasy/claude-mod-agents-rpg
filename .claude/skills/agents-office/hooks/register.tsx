@@ -46,13 +46,6 @@ const loggedBlitDenies = new Set<string>()
 let lastFrameCells: string | null = null
 
 // Drops expired agents; writes only when the roster changed.
-const expireRoster = async ($: EngineInterface, now: number): Promise<void> => {
-  const current = await read($, agents)
-  if (expire(current, now) === current) return
-  await update($, agents, roster => expire(roster, now))
-}
-
-// Adds agents $.agent.list() knows and the roster does not; writes only on change.
 const refreshRoster = async ($: EngineInterface): Promise<void> => {
   const infos = await $.agent.list()
   const current = await read($, agents)
@@ -60,30 +53,35 @@ const refreshRoster = async ($: EngineInterface): Promise<void> => {
   await update($, agents, roster => syncList(roster, infos))
 }
 
-// Seats agents that have no motion entry at their room's first free anchor, using
-// the map of the mounted size; does nothing while no pane has reported a size.
-const placeRoster = async ($: EngineInterface): Promise<void> => {
+// Seats the given roster on the current map. The caller passes the roster it
+// computed locally, so no atom just written is read back (same-dispatch
+// snapshot). Returns the motion it computed, or undefined with no map.
+const seat = async ($: EngineInterface, roster: Roster): Promise<Motion | undefined> => {
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
-  if (map === undefined) return
-  const roster = await read($, agents)
+  if (map === undefined) return undefined
   const current = await read($, motion)
-  if (placeMotion(map, roster, current) === current) return
-  await update($, motion, existing => placeMotion(map, roster, existing))
+  const placed = placeMotion(map, roster, current)
+  if (placed !== current) await update($, motion, () => placed)
+
+  return placed
 }
 
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
-  // Own guards: a failing expiry or placement must not stop the blit below.
-  await guard($, 'expire', undefined, async () => expireRoster($, now))
-  await guard($, 'place', undefined, async () => placeRoster($))
+  const stored = await read($, agents)
+  const roster = expire(stored, now)
+  if (roster !== stored) {
+    await guard($, 'expire', undefined, async () => update($, agents, () => roster))
+  }
+  const placed = await guard($, 'place', undefined, async () => seat($, roster))
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
   if (map === undefined) return
   const frame = buildFrame({
     map,
-    agents: await read($, agents),
-    motion: await read($, motion),
+    agents: roster,
+    motion: placed ?? (await read($, motion)),
     bubbles: await read($, bubbles),
     now,
   })
@@ -92,16 +90,17 @@ const tick = async ($: EngineInterface): Promise<void> => {
   lastFrameCells = cells
   $.ui
     .blit({ requestId: PANE, key: 'office', cells })
-    .then(result => {
+    .then(async result => {
       if (result.deny === undefined) return
-      // The frame did not land: repaint it on the next tick.
       lastFrameCells = null
-      // A refusal naming an unmounted pane means the pane is gone: stop ticking
-      // until the next render writes the viewport again.
-      if (/mounted/i.test(result.deny)) {
-        update($, viewport, () => ({ columns: 0, rows: 0 })).catch(error =>
-          $.ui.log(`agents-office: viewport reset threw ${String(error)}`, { to: 'debug' }),
-        )
+      // The d.ts deny text lists several reasons without a stable code, so the
+      // size captured at tick start decides: a changed viewport is a stale
+      // frame (only lastFrameCells resets); the same size with a "mounted"
+      // deny means nothing is mounted, so the viewport is zeroed.
+      const latest = await read($, viewport)
+      const sameSize = latest.columns === size.columns && latest.rows === size.rows
+      if (sameSize && /mounted/i.test(result.deny)) {
+        await update($, viewport, () => ({ columns: 0, rows: 0 }))
       }
       if (loggedBlitDenies.has(result.deny)) return
       loggedBlitDenies.add(result.deny)
@@ -174,8 +173,10 @@ export const register: Register = on => {
     const result = await next(e)
     await guard($, 'agent.spawn', undefined, async () => {
       if (result.agentId === undefined) return
-      await update($, agents, roster => onSpawn(roster, e, result))
-      await placeRoster($)
+      const stored = await read($, agents)
+      const roster = onSpawn(stored, e, result)
+      if (roster !== stored) await update($, agents, () => roster)
+      await seat($, roster)
     })
 
     return result
