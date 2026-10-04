@@ -1,21 +1,20 @@
-import { DEFAULT_COLOR, packCells } from './raster'
-import type { Cell } from './raster'
-
 // Pure frame pieces only: `claude plugin validate` refuses a `$` passed to a
 // function imported from another file, so `startLoop` and `tick` live in
 // register.tsx and call these (TODO.md D19). Durations live in timing.ts.
-// Spike frame: a bright column that moves one cell per tick over a dark floor,
-// so every tick packs a different grid.
-export const spikeFrame = (columns: number, rows: number, tick: number): Cell[][] => {
-  const lit = tick % columns
-  return Array.from({ length: rows }, () =>
-    Array.from({ length: columns }, (_, x): Cell => ({
-      ch: 0x2588,
-      fg: x === lit ? 0xffcc00 : 0x203040,
-      bg: DEFAULT_COLOR,
-    })),
-  )
-}
+import { buildMap, MIN_COLUMNS, MIN_ROWS } from './map'
+import type { OfficeMap } from './map'
+import { STRIP_ROWS } from './timing'
 
-export const packSpikeFrame = (columns: number, rows: number, tick: number): string =>
-  packCells(spikeFrame(columns, rows, tick))
+// Raster size for a pane body (D29): the strip rows stay free for T10 and the
+// result is clamped to the Raster limits (columns 1-512, rows 1-256).
+export const rasterSize = (bodyColumns: number, bodyRows: number): { columns: number; rows: number } => ({
+  columns: Math.min(512, Math.max(1, bodyColumns)),
+  rows: Math.min(256, Math.max(1, bodyRows - STRIP_ROWS)),
+})
+
+export const isOfficeSize = (columns: number, rows: number): boolean =>
+  columns >= MIN_COLUMNS && rows >= MIN_ROWS
+
+// The map for a raster size, or undefined below the 60x18 minimum.
+export const mapFor = (columns: number, rows: number): OfficeMap | undefined =>
+  isOfficeSize(columns, rows) ? buildMap(columns, rows) : undefined

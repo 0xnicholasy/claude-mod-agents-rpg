@@ -32,8 +32,7 @@ declare module 'claude-code' {
         string,
         { x: number; y: number; path: Array<{ x: number; y: number }>; frame: number }
       >
-      // Frame counter bumped by every loop tick (spike value, removed in T05).
-      tick: number
+      bubbles: Array<{ agentId: string; text: string; until: number }>
     }
   }
 }
