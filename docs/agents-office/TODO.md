@@ -203,7 +203,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "after redraw to 100x30 the Raster and the next blit are 100 by 25" pass)
 
 ### T12 Hot-reload resilience and failure isolation
-- status: done (#PR, 2026-10-05)
+- status: done (#15, 2026-10-05)
 - needs: T10, T11
 - size: S
 - scope: Every hook body in `guard`; every fire-and-forget promise in `loop.ts` has `.catch` logging `agents-office: <hook> threw`. `startLoop` is idempotent per environment (a second `session.start` from a reload starts one loop, since the old environment's timers are dropped, 3322-3324) and re-seeds nothing that exists. Reducers tolerate malformed inputs (missing `agentId`, non-string `to`, unknown agent in `turn.complete`). `claude plugin validate` output is clean of refusals.
@@ -252,4 +252,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-05 T09 #12 completion choreography: finished subagent reports in the Lobby, parent says got it, walks to the Break Room and leaves; expire needs the Break Room; D41-D44
 2026-10-05 T10 #13 interaction log strip: log.ts, arrival/told/reported lines, five dim Text rows under the Raster; D45-D47
 2026-10-05 T11 #14 fallback surfaces and minimum size: terminal-only line off terminal, widen line below 60x23 with no blit, resize redraw blits the new size; D48
-2026-10-05 T12 #PR hot-reload resilience: guard logs `agents-office: <name> threw`; tests for second session.start (one blit per tick), unknown-agent turn.complete, numeric SendMessage `to`, throwing blit; D49
+2026-10-05 T12 #15 hot-reload resilience: guard logs `agents-office: <name> threw`; tests for second session.start (one blit per tick), unknown-agent turn.complete, numeric SendMessage `to`, throwing blit; D49
