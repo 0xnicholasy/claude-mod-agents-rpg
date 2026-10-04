@@ -2,7 +2,7 @@
 
 ultraplan: agents-office | branch: feat/agents-office | base: main | tag: pre-agents-office-main | created: 2026-10-04
 Status: ACTIVE
-Progress: 2/16 done
+Progress: 3/16 done
 
 ## Goal
 A Claude Code mod at `.claude/skills/agents-office/` that opens a pane (`/office`, id `office`, title `Office`) drawing every running agent of this session (main, Agent-tool subagents, teammates) as a 3x2-cell pixel character in a tiled office with named rooms, rendered into one terminal `Raster` and animated at 10 fps with `$.clock.every` + `$.ui.blit`. Tool calls drive room and pose, spawns walk in, SendMessage meets in the Meeting Room, turn.complete reports in the Lobby and leaves. Every drawn value lives in `$.state` so a hot reload keeps the office populated.
@@ -55,6 +55,8 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - D8 resolved (T01B): a test bottom hook `on('ui.blit', ...)` sees the plugin's blit while a pane is mounted via `$.ui.mount` and `mock.clock(on).advance(100)` drives `$.clock.every`; cells length for 60x18 is 4 * ceil(60*18*12/3). Proven by making the tick skip the blit: both blit tests fail. Blit does not require the Raster to be in `drawn()`. (settled)
 - D9 resolved (T01B): the typed `$.tool.call({ tool, ..., agentId })` is a compile error (ToolCallReserved 12124-12128 has only `tool`, `tool_use_id`, `consent`), but with a cast (`as never`) the runtime delivers `agentId` unchanged to the plugin's `tool.call` hook (scratch test: the plugin hook logged `agentId=a1`, and `undefined` without it). Subagent-scoped `tool.call` is therefore testable with one cast plus a comment; the cast is a test-only workaround and its runtime behavior contradicts the ToolCallArgs doc (12080-12085, "dropped"), so pin it in the first test that depends on it. (observed, one run)
 - D14 resolved (T01B): whether a `motion`/`tick` atom write per tick causes a visible redraw or flicker is not observable headless; check visually in a real pane after merge (`/office`, watch for flicker). The spike writes the `tick` atom every tick but the render hook does not read it, so this run does not exercise the cost. (not observable in tests)
+- D24 T02 settled (observed): a bottom `on('agent.list', () => ({ value: [...] }))` (op shape, `{ value }`) is read by `$.agent.list()` in the plugin; `$.turn.complete` in a test needs `{ answer, durationMs, isAborted, turnId, agentId?, reason }` (TurnCompleteFields 12629-12672) and a bottom `on('turn.complete', () => ({ text }))`; the hook receives `e.agentId` unchanged. D3 confirmed: subagent completion is `turn.complete` with `e.agentId`. `onSpawn` sets `parentId` only from `parentAgentId` (a main-spawned agent has none; T09 treats absent as main). `main` seeds as tier grey, room `lobby`. Reducers return the same reference when nothing changes, and `register.tsx` skips the `state.set` in that case. (settled, T02)
+- D25 `expire` and the roster refresh run from the frame loop and the 10 s timer in `register.tsx` (D19); the tick expires before its viewport check, so a roster ages out with the pane closed. `session.start` runs the roster seed/list in its own `guard` after `startLoop`, so a failing `agent.list` cannot stop the frame loop. (settled, T02)
 
 ## Todos
 
@@ -77,7 +79,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "office blits a new frame after one 100 ms tick" pass)
 
 ### T02 Agent roster reducer and lifecycle hooks
-- status: todo
+- status: done (#PR, 2026-10-04)
 - needs: T01B
 - size: M
 - scope: `hooks/agents.ts` pure reducer over `Record<string, OfficeAgent>`: `seedMain`, `onSpawn(input, result)` (label from `name` / `subagentType` / first 12 chars of `description`, tier per D4, parentId), `onComplete(agentId, now)` (status `done`, `completedAt`), `syncList(infos)` (adds unknown running/idle/waiting agents as grey, never removes), `expire(now)` (drops `done` agents older than 5000 ms). `register.tsx`: `session.start` seeds `main`, calls `$.agent.list()`, starts `$.clock.every(10000)` refresh; `agent.spawn` and `turn.complete` hooks call the reducer. Despawn here is a plain removal; T09 replaces it with the walk-out choreography.
@@ -206,8 +208,10 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - T02 onward: move `$`-taking helpers out of any planned `hooks/*.ts` (D19); T05 `loop.ts` tick becomes a `register.tsx` function calling a pure `buildFrame`.
 - Drop the `tick` atom and `spikeFrame` when T05 lands (spike values only).
 - Hot reload: `startLoop` runs on every `session.start`; idempotence stays in T12.
+- T02 follow-ups: `agents.ts` `room`/`pose` are plain strings until T03/T04 narrow them; the `tick` atom spike still writes every tick (removed in T05); `main` has no model tier (grey) because no event carries it.
 - Walk-cycle easing (two ticks per tile at 10 fps if one tile per tick looks too fast).
 
 ## Log
 2026-10-04 T01 #2 raster cell codec packs and validates cells (R4: sibling import works; plan vector corrected to iCUAAACI/wAAAAAB)
 2026-10-04 T01B #3 blit loop, /office and agent.spawn roster work in tests; D8 blit observable, D9 agentId reaches tool.call hook via cast, D14 not observable headless; D19 `$` cannot cross imports, D20 render cannot write state
+2026-10-04 T02 #PR agent roster reducer: spawn/turn.complete/agent.list hooks and 5 s expiry; D24 stub shapes, D25 expire runs in tick

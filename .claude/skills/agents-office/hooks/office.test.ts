@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
 import { packSpikeFrame } from './loop'
 
 const paneProps = {
@@ -184,4 +185,80 @@ test('no blit happens before the pane renders', async ($, on) => {
   await clock.advance(100)
 
   expect(seen).toHaveLength(0)
+})
+
+const stubSession = (on: On): void => {
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: { command: 'office' } }))
+  on('ui.log', () => ({ value: undefined }))
+}
+
+const watchRoster = (on: On): (() => string[]) => {
+  let latest: Record<string, unknown> = {}
+  on('state.set', ($, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the agents atom is read.
+    if (e.key === 'agents') latest = e.value as Record<string, unknown>
+    return next(e)
+  })
+
+  return () => Object.keys(latest)
+}
+
+const turnArgs = {
+  answer: 'done',
+  durationMs: 1,
+  isAborted: false,
+  turnId: 'u1',
+  agentId: 'a1',
+  reason: 'answer',
+} as const
+
+test('a spawned agent leaves the roster 5 s after its turn completes', async ($, on) => {
+  const clock = mock.clock(on)
+  stubSession(on)
+  const roster = watchRoster(on)
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('turn.complete', () => ({ text: 'done' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.agent.spawn(spawnArgs)
+  expect(roster()).toContain('a1')
+  await $.turn.complete(turnArgs)
+  await clock.advance(4900)
+  expect(roster()).toContain('a1')
+  await clock.advance(200)
+
+  expect(roster()).not.toContain('a1')
+  expect(roster()).toContain('main')
+})
+
+test('session.start seeds main and the listed teammates', async ($, on) => {
+  mock.clock(on)
+  stubSession(on)
+  const roster = watchRoster(on)
+  on('agent.list', () => ({
+    value: [{ id: 'bot', description: 'watch ci', type: 'teammate', status: 'idle' as const }],
+  }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  expect(roster().sort()).toEqual(['bot', 'main'])
+})
+
+test('the roster refreshes from agent.list every 10 s', async ($, on) => {
+  const clock = mock.clock(on)
+  stubSession(on)
+  const roster = watchRoster(on)
+  let calls = 0
+  const listed: Array<{ id: string; description: string; type: string; status: 'running' }> = []
+  on('agent.list', () => {
+    calls += 1
+    return { value: [...listed] }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(calls).toBe(1)
+  listed.push({ id: 'late', description: 'joined later', type: 'teammate', status: 'running' })
+  await clock.advance(10000)
+
+  expect(calls).toBe(2)
+  expect(roster()).toContain('late')
 })

@@ -3,9 +3,7 @@ import type { Cell } from './raster'
 
 // Pure frame pieces only: `claude plugin validate` refuses a `$` passed to a
 // function imported from another file, so `startLoop` and `tick` live in
-// register.tsx and call these (TODO.md D19).
-export const TICK_MS = 100
-
+// register.tsx and call these (TODO.md D19). Durations live in timing.ts.
 // Spike frame: a bright column that moves one cell per tick over a dark floor,
 // so every tick packs a different grid.
 export const spikeFrame = (columns: number, rows: number, tick: number): Cell[][] => {

@@ -2,7 +2,6 @@
 // entry that points at an alias. The named types below are for use in code.
 export type OfficeOpened = boolean
 export type OfficeViewport = { columns: number; rows: number }
-export type OfficeAgent = { id: string }
 export type OfficeMotion = {
   x: number
   y: number
@@ -15,7 +14,19 @@ declare module 'claude-code' {
     'agents-office': {
       opened: boolean
       viewport: { columns: number; rows: number }
-      agents: Record<string, { id: string }>
+      agents: Record<
+        string,
+        {
+          id: string
+          label: string
+          tier: 'haiku' | 'sonnet' | 'opus' | 'fable' | 'grey'
+          parentId?: string
+          status: 'working' | 'idle' | 'done' | 'leaving'
+          room: string
+          pose: string
+          completedAt?: number
+        }
+      >
       motion: Record<
         string,
         { x: number; y: number; path: Array<{ x: number; y: number }>; frame: number }
