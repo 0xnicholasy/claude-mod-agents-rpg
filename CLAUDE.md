@@ -21,4 +21,8 @@ A Claude Code mod ("Agents Office"): a pane that shows the session's agents as p
 - Build with a `sonnet` implementation agent.
 - Tests: `npm run check`.
 - Docs to update: `README.md`.
-- For /implement: after a todo's squash-merge, run `git -C <main checkout> pull --ff-only origin feat/agents-office` so the watched mod folder reloads. Then grep the newest `~/.claude/debug/*.txt` (if present) for `agents-office:` lines and treat any `refused` or `threw` line as a failing check.
+
+## Feature branch (temporary)
+
+- `feat/agents-office` integration branch: sub-branches `feat/agents-office-*` are cut from it and PR into it; merge `main` into it, never rebase or force-push; work runs through `/implement` on that branch. Remove this section at cleanup.
+- After a todo's squash-merge, run `git -C <main checkout> pull --ff-only origin feat/agents-office` so the watched mod folder reloads; grep the newest `~/.claude/debug/*.txt` (if present) for `agents-office:` lines and treat any `refused` or `threw` line as a failing check.
