@@ -2,7 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import { expire, onComplete, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
-import { packSpikeFrame } from './loop'
+import { buildFrame, placeMotion } from './frame'
+import type { Bubble, Motion } from './frame'
+import { mapFor, rasterSize } from './loop'
 import { DEFAULT_COLOR, packCells } from './raster'
 import type { Cell } from './raster'
 import { LIST_MS, TICK_MS } from './timing'
@@ -13,9 +15,12 @@ const viewport = atom(
   { plugin: 'agents-office', key: 'viewport' } as const,
   { columns: 0, rows: 0 },
 )
-const tickCount = atom({ plugin: 'agents-office', key: 'tick' } as const, 0)
 const EMPTY_ROSTER: Roster = {}
 const agents = atom({ plugin: 'agents-office', key: 'agents' } as const, EMPTY_ROSTER)
+const EMPTY_MOTION: Motion = {}
+const motion = atom({ plugin: 'agents-office', key: 'motion' } as const, EMPTY_MOTION)
+const EMPTY_BUBBLES: Bubble[] = []
+const bubbles = atom({ plugin: 'agents-office', key: 'bubbles' } as const, EMPTY_BUBBLES)
 
 // Runs a hook body; a failure is logged to the debug log and never thrown.
 const guard = async <T,>(
@@ -35,17 +40,12 @@ const guard = async <T,>(
 // Log de-dup cache for blit refusals, not drawn state: each distinct reason is logged once.
 const loggedBlitDenies = new Set<string>()
 
-const clamp = (value: number, min: number, max: number): number =>
-  Math.min(max, Math.max(min, value))
+// Cache of the last packed frame handed to blit, not drawn state (D11): a tick
+// whose frame equals it blits nothing. A reload or a new session resets it and
+// costs one extra blit.
+let lastFrameCells: string | null = null
 
 // Drops expired agents; writes only when the roster changed.
-const expireRoster = async ($: EngineInterface, now: number): Promise<void> => {
-  const current = await read($, agents)
-  if (expire(current, now) === current) return
-  await update($, agents, roster => expire(roster, now))
-}
-
-// Adds agents $.agent.list() knows and the roster does not; writes only on change.
 const refreshRoster = async ($: EngineInterface): Promise<void> => {
   const infos = await $.agent.list()
   const current = await read($, agents)
@@ -53,29 +53,63 @@ const refreshRoster = async ($: EngineInterface): Promise<void> => {
   await update($, agents, roster => syncList(roster, infos))
 }
 
-const tick = async ($: EngineInterface): Promise<void> => {
-  // Own guard: a failing expiry must not stop the blit below.
-  await guard($, 'expire', undefined, async () => expireRoster($, await $.clock.now()))
+// Seats the given roster on the current map. The caller passes the roster it
+// computed locally, so no atom just written is read back (same-dispatch
+// snapshot). Returns the motion it computed, or undefined with no map.
+const seat = async ($: EngineInterface, roster: Roster): Promise<Motion | undefined> => {
   const size = await read($, viewport)
-  if (size.columns < 1 || size.rows < 1) return
-  const n = await update($, tickCount, count => count + 1)
-  const cells = packSpikeFrame(size.columns, size.rows, n)
+  const map = mapFor(size.columns, size.rows)
+  if (map === undefined) return undefined
+  const current = await read($, motion)
+  const placed = placeMotion(map, roster, current)
+  if (placed !== current) await update($, motion, () => placed)
+
+  return placed
+}
+
+const tick = async ($: EngineInterface): Promise<void> => {
+  const now = await $.clock.now()
+  const stored = await read($, agents)
+  const roster = expire(stored, now)
+  if (roster !== stored) {
+    await guard($, 'expire', undefined, async () => update($, agents, () => roster))
+  }
+  const placed = await guard($, 'place', undefined, async () => seat($, roster))
+  const size = await read($, viewport)
+  const map = mapFor(size.columns, size.rows)
+  if (map === undefined) return
+  const frame = buildFrame({
+    map,
+    agents: roster,
+    motion: placed ?? (await read($, motion)),
+    bubbles: await read($, bubbles),
+    now,
+  })
+  const cells = packCells(frame)
+  if (cells === lastFrameCells) return
+  lastFrameCells = cells
   $.ui
     .blit({ requestId: PANE, key: 'office', cells })
-    .then(result => {
+    .then(async result => {
       if (result.deny === undefined) return
-      // A refusal naming an unmounted pane means the pane is gone: stop ticking
-      // until the next render writes the viewport again.
-      if (/mounted/i.test(result.deny)) {
-        update($, viewport, () => ({ columns: 0, rows: 0 })).catch(error =>
-          $.ui.log(`agents-office: viewport reset threw ${String(error)}`, { to: 'debug' }),
-        )
+      lastFrameCells = null
+      // The d.ts deny text lists several reasons without a stable code, so the
+      // size captured at tick start decides: a changed viewport is a stale
+      // frame (only lastFrameCells resets); the same size with a "mounted"
+      // deny means nothing is mounted, so the viewport is zeroed.
+      const latest = await read($, viewport)
+      const sameSize = latest.columns === size.columns && latest.rows === size.rows
+      if (sameSize && /mounted/i.test(result.deny)) {
+        await update($, viewport, () => ({ columns: 0, rows: 0 }))
       }
       if (loggedBlitDenies.has(result.deny)) return
       loggedBlitDenies.add(result.deny)
       $.ui.log(`agents-office: blit refused ${result.deny}`, { to: 'debug' })
     })
-    .catch(error => $.ui.log(`agents-office: blit threw ${String(error)}`, { to: 'debug' }))
+    .catch(error => {
+      lastFrameCells = null
+      $.ui.log(`agents-office: blit threw ${String(error)}`, { to: 'debug' })
+    })
 }
 
 type Timer = ReturnType<EngineInterface['clock']['every']>
@@ -88,6 +122,7 @@ let refreshTimer: Timer | undefined
 
 const startLoop = ($: EngineInterface): void => {
   loopTimer?.cancel()
+  lastFrameCells = null
   loopTimer = $.clock.every(TICK_MS, () => {
     tick($).catch(error =>
       $.ui.log(`agents-office: tick threw ${String(error)}`, { to: 'debug' }),
@@ -138,7 +173,10 @@ export const register: Register = on => {
     const result = await next(e)
     await guard($, 'agent.spawn', undefined, async () => {
       if (result.agentId === undefined) return
-      await update($, agents, roster => onSpawn(roster, e, result))
+      const stored = await read($, agents)
+      const roster = onSpawn(stored, e, result)
+      if (roster !== stored) await update($, agents, () => roster)
+      await seat($, roster)
     })
 
     return result
@@ -199,25 +237,36 @@ export const register: Register = on => {
         }
 
         const { Raster } = $.ui.resolve(e)
-        const columns = clamp(e.props.bodyColumns, 1, 512)
-        const rows = clamp(e.props.scroll.bodyRows, 1, 256)
+        const { columns, rows } = rasterSize(e.props.bodyColumns, e.props.scroll.bodyRows)
         // Drawing is pure: a state write inside the hook is denied. A timer closure
         // runs in its own dispatch, where the write is allowed (TODO.md D20).
         $.clock.after(0, () => {
           read($, viewport)
-            .then(current =>
-              current.columns === columns && current.rows === rows
-                ? current
-                : update($, viewport, () => ({ columns, rows })),
-            )
+            .then(current => {
+              if (current.columns === columns && current.rows === rows) return current
+              lastFrameCells = null
+              return update($, viewport, () => ({ columns, rows }))
+            })
             .catch(error =>
               $.ui.log(`agents-office: viewport write threw ${String(error)}`, { to: 'debug' }),
             )
         })
-        const floor: Cell = { ch: 0x2588, fg: 0x203040, bg: DEFAULT_COLOR }
-        const cells = packCells(
-          Array.from({ length: rows }, () => Array.from({ length: columns }, () => floor)),
-        )
+        // Below the 60x18 map minimum there is nothing to lay out: a blank floor
+        // keeps the Raster mounted (T11 replaces it with the widen line).
+        const map = mapFor(columns, rows)
+        const grid =
+          map === undefined
+            ? Array.from({ length: rows }, () =>
+                Array.from({ length: columns }, (): Cell => ({ ch: 0x20, fg: DEFAULT_COLOR, bg: DEFAULT_COLOR })),
+              )
+            : buildFrame({
+                map,
+                agents: await read($, agents),
+                motion: await read($, motion),
+                bubbles: await read($, bubbles),
+                now: await $.clock.now(),
+              })
+        const cells = packCells(grid)
 
         return (
           <Box flexDirection="column">

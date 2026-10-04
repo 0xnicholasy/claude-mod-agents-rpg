@@ -1,20 +1,22 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { packSpikeFrame } from './loop'
+import { STRIP_ROWS } from './timing'
 
 const paneProps = {
   title: 'Office',
   isFocused: false,
   bodyColumns: 60,
   placement: 'inline',
-  scroll: { offset: 0, bodyRows: 18 },
+  // 18 map rows plus the strip rows reserved under the Raster (D29).
+  scroll: { offset: 0, bodyRows: 18 + STRIP_ROWS },
   view: {},
 } as const
 
 // 60 x 18 cells of 12 bytes, base64 encoded.
 const FRAME_LENGTH = 4 * Math.ceil((60 * 18 * 12) / 3)
 
-test('office pane draws a Raster on the terminal and one line elsewhere', async $ => {
+test('office pane draws a Raster on the terminal and one line elsewhere', async ($, on) => {
+  mock.clock(on)
   const terminal = await $.ui.mount({
     plugin: 'agents-office',
     surface: 'terminal',
@@ -61,13 +63,13 @@ test('office blits a new frame after one 100 ms tick', async ($, on) => {
   expect(seen[0]?.requestId).toBe('office')
   expect(seen[0]?.key).toBe('office')
   expect(seen[0]?.cells?.length).toBe(FRAME_LENGTH)
-  expect(seen[0]?.cells).toBe(packSpikeFrame(60, 18, 1))
   expect(await ui.find({ type: 'Raster' })).toMatchObject({ props: { columns: 60, rows: 18 } })
   await ui.unmount()
 })
 
-test('two ticks blit two different frames', async ($, on) => {
+test('a changed office blits again on the next tick', async ($, on) => {
   const clock = mock.clock(on)
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   const cells: string[] = []
   on('ui.blit', ($, e) => {
     if ('cells' in e) cells.push(e.cells)
@@ -84,10 +86,53 @@ test('two ticks blit two different frames', async ($, on) => {
     requestId: 'office',
     props: paneProps,
   })
-  await clock.advance(200)
+  await clock.advance(100)
+  await $.agent.spawn(spawnArgs)
+  await clock.advance(100)
 
   expect(cells).toHaveLength(2)
   expect(cells[0]).not.toBe(cells[1])
+  await ui.unmount()
+})
+
+test('mounted pane draws a Raster of bodyColumns by bodyRows minus the strip', async ($, on) => {
+  mock.clock(on)
+  const ui = await $.ui.mount({
+    plugin: 'agents-office',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'office',
+    props: { ...paneProps, bodyColumns: 60, scroll: { offset: 0, bodyRows: 30 } },
+  })
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({
+    props: { columns: 60, rows: 30 - STRIP_ROWS },
+  })
+  await ui.unmount()
+})
+
+test('an unchanged office does not blit on the next tick', async ($, on) => {
+  const clock = mock.clock(on)
+  const blits: string[] = []
+  on('ui.blit', ($, e) => {
+    blits.push(e.key)
+    return { value: {} }
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({
+    plugin: 'agents-office',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'office',
+    props: paneProps,
+  })
+  await clock.advance(100)
+  expect(blits).toHaveLength(1)
+  await clock.advance(300)
+
+  expect(blits).toHaveLength(1)
   await ui.unmount()
 })
 
@@ -329,4 +374,75 @@ test('an unchanged roster is not rewritten on each tick', async ($, on) => {
 
   expect(after).toBeGreaterThan(0)
   expect(writes.filter(w => w.key === 'agents')).toHaveLength(after)
+})
+
+const paneAt = (bodyRows: number) =>
+  ({
+    plugin: 'agents-office',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'office',
+    props: { ...paneProps, scroll: { offset: 0, bodyRows } },
+  }) as const
+
+test('remounting at a different size blits a new frame with the new size', async ($, on) => {
+  const clock = mock.clock(on)
+  const lengths: number[] = []
+  on('ui.blit', ($, e) => {
+    if ('cells' in e) lengths.push(e.cells.length)
+    return { value: {} }
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const first = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  await first.unmount()
+  const second = await $.ui.mount(paneAt(20 + STRIP_ROWS))
+  await clock.advance(100)
+
+  expect(lengths).toHaveLength(2)
+  expect(lengths[1]).toBe(4 * Math.ceil((60 * 20 * 12) / 3))
+  expect(lengths[1]).not.toBe(lengths[0])
+  await second.unmount()
+})
+
+test('a denied blit is retried on the next tick', async ($, on) => {
+  const clock = mock.clock(on)
+  let calls = 0
+  on('ui.blit', () => {
+    calls += 1
+
+    return calls === 1 ? { value: { deny: 'x' } } : { value: {} }
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  await clock.advance(100)
+
+  expect(calls).toBe(2)
+  await ui.unmount()
+})
+
+test('a spawned agent is drawn on the first tick after the spawn', async ($, on) => {
+  const clock = mock.clock(on)
+  const cells: string[] = []
+  on('ui.blit', ($, e) => {
+    if ('cells' in e) cells.push(e.cells)
+    return { value: {} }
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  await $.agent.spawn(spawnArgs)
+  await clock.advance(100)
+
+  expect(cells).toHaveLength(2)
+  expect(cells[1]).not.toBe(cells[0])
+  await ui.unmount()
 })
