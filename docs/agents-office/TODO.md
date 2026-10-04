@@ -2,7 +2,7 @@
 
 ultraplan: agents-office | branch: feat/agents-office | base: main | tag: pre-agents-office-main | created: 2026-10-04
 Status: ACTIVE
-Progress: 1/16 done
+Progress: 2/16 done
 
 ## Goal
 A Claude Code mod at `.claude/skills/agents-office/` that opens a pane (`/office`, id `office`, title `Office`) drawing every running agent of this session (main, Agent-tool subagents, teammates) as a 3x2-cell pixel character in a tiled office with named rooms, rendered into one terminal `Raster` and animated at 10 fps with `$.clock.every` + `$.ui.blit`. Tool calls drive room and pose, spawns walk in, SendMessage meets in the Meeting Room, turn.complete reports in the Lobby and leaves. Every drawn value lives in `$.state` so a hot reload keeps the office populated.
@@ -47,6 +47,15 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - D17 R4 settled (T01): `claude plugin test` resolves a sibling module by relative path without extension, so `hooks/*.test.ts` use `import { ... } from './raster'` next to `import { expect, test } from 'claude-code/testing'`; no other layout needed. A `packCells` result never needs base64 padding (a cell is 12 bytes), so padding is tested on the exported `base64Encode`. (settled, T01)
 - D18 Environment: `claude plugin test` can refuse with 'hooks modules are turned off in this process: the rollout switch was saved off...'. Fix: one networked `claude -p "reply with the single word ok" --max-turns 1` outside the sandbox, then rerun. Run `npm run check` with the sandbox disabled. (orchestrator, 2026-10-04)
 
+- D19 `claude plugin validate` refuses a `$` passed to a function imported from another file ("$ is followed only into a function declared in this same file, never across an import"). So `startLoop($)` and `tick($)` live in `register.tsx` (same-file functions, like `guard`); `hooks/loop.ts` holds pure pieces only (`TICK_MS`, frame builders). This overrides D10 and every later todo that says "`loop.ts` tick calls ...": reducers and frame builders stay pure in `hooks/*.ts` and take plain data; the `$` wiring (read atoms, call the pure function, write atoms, blit) is in `register.tsx`. Atoms are declared in `register.tsx` (an atom needs no `$`). (settled, T01B, validate output)
+- D20 A `ui.render` hook cannot write state: `state.set` made while rendering is denied ("drawing is pure ... write from a handler ... or from another event"). The render hook writes `viewport` from a `$.clock.after(0, () => update(...))` closure, which runs in its own dispatch and is allowed. The first blit therefore follows the first render by one timer turn. (settled, T01B, observed in `claude plugin test`)
+- D21 Test-stub shapes (T01B, observed): ops (`ui.blit`, `ui.open`, `state.set`, `command.register`, `ui.log`) are answered `{ value: ... }`: `on('ui.blit', ($, e) => { seen.push(e); return { value: {} } })`, `on('ui.open', ...) -> { value: { isPlaced: true } }` (UiOpenResult 13389), `on('command.register', () => ({ value: { command: 'office' } }))`, `on('ui.log', () => ({ value: undefined }))`. Events (`agent.spawn`, `session.start`) are answered with the bare result: `on('agent.spawn', () => ({ model, agentId: 'a1' }))` (AgentSpawnResult 371-401), `on('session.start', ($, e) => ({ cwd: e.cwd }))` (11147). Every hook takes `($, e, next)`, so the first parameter is `$`, not the event. `$.command.run` in a test needs the full `CommandRunInput` (`command`, `args`, `origin: { kind: 'composer' }`, `presentation: { isFullscreen, columns }`); `$.agent.spawn` needs `tool_use_id, prompt, description, subagentType, provider: { plugin: 'engine', tier: 'core' }, parentModel, background, fork`. `session.start` fails inside the plugin's `guard` (and the loop never starts) unless the test stubs `command.register`. (settled, T01B)
+- D22 State is observable in tests by spying on writes: `on('state.set', ($, e, next) => { writes.push(e); return next(e) })` sees `{ plugin, key, value }` and the real write goes through (reads by the plugin work). The test `Engine` has no `state` noun, so a test cannot read an atom directly. (settled, T01B)
+- D23 A close signal exists: `'ui.close': PaneCloseInput` (claude-code.d.ts 6710, `{ id, origin: { kind: 'plugin' | 'person' | 'unload' } }`, 7023-7047). A hook can observe it, but `unload` closes happen before hooks hear of it and the opener's hooks do not run. So `register.tsx` hooks `ui.close`, awaits `next(e)`, and for `id === 'office'` writes `viewport` to 0x0; the tick skips on 0x0 (also the initial default). Backup for `unload`: a `$.ui.blit` `{ deny }` whose reason mentions "mounted" (UiBlitResult 12985) resets viewport to 0x0 until the next render. (settled, T01B)
+- D8 resolved (T01B): a test bottom hook `on('ui.blit', ...)` sees the plugin's blit while a pane is mounted via `$.ui.mount` and `mock.clock(on).advance(100)` drives `$.clock.every`; cells length for 60x18 is 4 * ceil(60*18*12/3). Proven by making the tick skip the blit: both blit tests fail. Blit does not require the Raster to be in `drawn()`. (settled)
+- D9 resolved (T01B): the typed `$.tool.call({ tool, ..., agentId })` is a compile error (ToolCallReserved 12124-12128 has only `tool`, `tool_use_id`, `consent`), but with a cast (`as never`) the runtime delivers `agentId` unchanged to the plugin's `tool.call` hook (scratch test: the plugin hook logged `agentId=a1`, and `undefined` without it). Subagent-scoped `tool.call` is therefore testable with one cast plus a comment; the cast is a test-only workaround and its runtime behavior contradicts the ToolCallArgs doc (12080-12085, "dropped"), so pin it in the first test that depends on it. (observed, one run)
+- D14 resolved (T01B): whether a `motion`/`tick` atom write per tick causes a visible redraw or flicker is not observable headless; check visually in a real pane after merge (`/office`, watch for flicker). The spike writes the `tick` atom every tick but the render hook does not read it, so this run does not exercise the cost. (not observable in tests)
+
 ## Todos
 
 ### T01 Raster cell codec
@@ -59,7 +68,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "raster packs the documented orange cell" pass)
 
 ### T01B Spike: blit loop in a mounted pane, /office, and agent.spawn shape
-- status: todo
+- status: done (#3, 2026-10-04)
 - needs: T01
 - size: M
 - scope: Declare atoms `viewport`, `agents` and `motion` (empty defaults) in `types/index.d.ts`. In `register.tsx`: terminal render returns a `Raster` key `office` sized from props (filled with one color) and writes the `viewport` atom; `session.start` starts `startLoop($)` from `hooks/loop.ts` whose tick bumps a counter and blits a frame that differs each tick. `agent.spawn` hook awaits `next(e)` and writes `{ id: agentId }` into `agents`, returning the result unchanged. Keep the skeleton's `/office` command. Record in `## Log`: whether a test's bottom `on('ui.blit')` sees the plugin's blit when the pane is mounted (D8), whether `$.tool.call` can carry `agentId` to the plugin hook (D9), whether redraw-per-tick flickers (D14). If the blit is not observable, switch the assertions to the frame grid and record the fallback as a Decision.
@@ -194,7 +203,11 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - Tier for teammates without a spawn event from `turn.step` `e.model` + `e.agentId` (streaming hook; needs StreamNext handling).
 - `Text` overlay bubbles (absolute Box) if cell bubbles clip badly on narrow panes.
 - Optional unasked open from a `command.run` whose `presentation.isFullscreen` is true.
+- T02 onward: move `$`-taking helpers out of any planned `hooks/*.ts` (D19); T05 `loop.ts` tick becomes a `register.tsx` function calling a pure `buildFrame`.
+- Drop the `tick` atom and `spikeFrame` when T05 lands (spike values only).
+- Hot reload: `startLoop` runs on every `session.start`; idempotence stays in T12.
 - Walk-cycle easing (two ticks per tile at 10 fps if one tile per tick looks too fast).
 
 ## Log
 2026-10-04 T01 #2 raster cell codec packs and validates cells (R4: sibling import works; plan vector corrected to iCUAAACI/wAAAAAB)
+2026-10-04 T01B #3 blit loop, /office and agent.spawn roster work in tests; D8 blit observable, D9 agentId reaches tool.call hook via cast, D14 not observable headless; D19 `$` cannot cross imports, D20 render cannot write state
