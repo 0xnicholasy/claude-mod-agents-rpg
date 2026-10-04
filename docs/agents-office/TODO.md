@@ -2,7 +2,7 @@
 
 ultraplan: agents-office | branch: feat/agents-office | base: main | tag: pre-agents-office-main | created: 2026-10-04
 Status: ACTIVE
-Progress: 6/16 done
+Progress: 7/16 done
 
 ## Goal
 A Claude Code mod at `.claude/skills/agents-office/` that opens a pane (`/office`, id `office`, title `Office`) drawing every running agent of this session (main, Agent-tool subagents, teammates) as a 3x2-cell pixel character in a tiled office with named rooms, rendered into one terminal `Raster` and animated at 10 fps with `$.clock.every` + `$.ui.blit`. Tool calls drive room and pose, spawns walk in, SendMessage meets in the Meeting Room, turn.complete reports in the Lobby and leaves. Every drawn value lives in `$.state` so a hot reload keeps the office populated.
@@ -64,6 +64,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - D30 Frame composition (T05): `buildFrame({ map, agents, motion, bubbles, now })` in `hooks/frame.ts` draws tiles, sign text, sprites back to front (by y), nameplates, then bubbles. Office colors are `OFFICE_PALETTE` (7: floor, wall, door, sign fg/bg, bubble fg/bg); with `SPRITE_PALETTE` (14) that is 21, under the D6 limit of 32, and a test counts the colors and pairs of a frame with every pose and tier. Nameplate: centred on the sprite, up to 12 cells; a cell wanted by two plates goes to the nearer sprite (a tie to the left one), so plates on the 4-cell desk pitch are clipped (D27). Bubble: one row at `y - 2` (above the plate), centred on the sprite, drawn only when `until > now`, the latest-expiring one per agent, clipped to the grid with no shifting. Bubbles may cover room signs in v1 (backlog: clip a bubble to its room width). An unknown pose draws `idle`. The render hook reads `agents`, `motion`, `bubbles` and `$.clock.now()`, so any test that mounts a pane needs `mock.clock(on)`. (settled, T05)
 - D31 Motion seeding (T05): `placeMotion(map, agents, motion)` in `frame.ts` is pure: it seats an agent with no entry at the first anchor of its room not used by another entry (all taken: the first anchor, overlapping), and drops entries of agents no longer in the roster; it returns the same reference when nothing changes. `seat($, roster)` in `register.tsx` runs it from the `agent.spawn` hook and from every tick, using the map of the `viewport` size and the roster the caller computed locally (no atom just written is read back within one dispatch; the tick builds its frame from those local values and writes atoms only when changed). It also reseats a resting entry (empty `path`) that is outside the map or fails `canStand` (after a resize); with viewport 0x0 it does nothing, so main and early spawns are seated by the first tick after a render. (settled, T05)
 - D32 Blit de-dup (T05): the module-level `lastFrameCells` (the D11 `lastFrameHash`, kept as the packed string so the compare is exact; at most one frame in memory) is compared to each tick's packed frame; equal means no blit. It is reset to null by `startLoop`, by a viewport size change, and by a blit `deny` or throw, so the next tick repaints. Deny rule (the d.ts `UiBlitResult.deny` text lists several reasons with no stable code): the viewport is zeroed only when the viewport still equals the size captured at tick start AND the deny matches /mounted/i; a changed viewport only resets `lastFrameCells`. `mapFor` in `loop.ts` keeps a module-level one-entry cache keyed on `columns,rows` (a pure cache like `lastFrameCells`) shared by render, tick and spawn. The T01B spike frame, `packSpikeFrame` and the `tick` atom are removed. (settled, T05)
+- D33 Path convention (T06): `findPath(map, from, to)` in `hooks/path.ts` is a BFS over `canStand` footprint positions (top-left cell, D27) with 4-neighbour moves in the fixed order right, left, down, up, so equal-length paths are stable. It returns the positions after `from` through `to` inclusive (length = number of steps; first entry adjacent to `from`, last equals `to`); it returns `[]` when `from === to`, when either end cannot stand, or when `to` is unreachable. Lobby to Library anchor 0 is 42 steps on 60x18. (settled, T06)
 
 ## Todos
 
@@ -122,7 +123,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "an unchanged office does not blit on the next tick" pass)
 
 ### T06 BFS pathfinding on the tile map
-- status: todo
+- status: done (#8, 2026-10-04)
 - needs: T03
 - size: S
 - scope: `hooks/path.ts` BFS over floor/door tiles with 4-neighbour moves, `findPath(map, from, to)` returning the tile list (empty when unreachable). Pure; no wiring.
@@ -226,3 +227,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T03 #5 tile map: seven rooms, 3-wide doors, anchors and doorStands standable and reachable; D27 map contract
 2026-10-04 T04 #6 sprite sheet: 7 poses, 2-frame walk and work cycles, tier palette, nameplate; D28 transparency convention
 2026-10-04 T05 #7 frame builder and real pane rendering: buildFrame/placeMotion, blit only on change, 5-row strip reserved; D29-D32
+2026-10-04 T06 #8 BFS pathfinding over canStand footprints: findPath returns steps after from through to, empty when unreachable; D33 path convention
