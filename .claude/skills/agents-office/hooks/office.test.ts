@@ -261,25 +261,6 @@ const turnArgs = {
   reason: 'answer',
 } as const
 
-test('a spawned agent leaves the roster 5 s after its turn completes', async ($, on) => {
-  const clock = mock.clock(on)
-  stubSession(on)
-  const roster = watchRoster(on)
-  on('agent.list', () => ({ value: [] }))
-  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
-  on('turn.complete', () => ({ text: 'done' }))
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  await $.agent.spawn(spawnArgs)
-  expect(roster()).toContain('a1')
-  await $.turn.complete(turnArgs)
-  await clock.advance(4900)
-  expect(roster()).toContain('a1')
-  await clock.advance(200)
-
-  expect(roster()).not.toContain('a1')
-  expect(roster()).toContain('main')
-})
-
 test('session.start seeds main and the listed teammates', async ($, on) => {
   mock.clock(on)
   stubSession(on)
@@ -489,8 +470,10 @@ const startOffice = async ($: Engine, on: On) => {
   const clock = mock.clock(on)
   let latest: MotionWrite = {}
   let latestBubbles: Array<{ agentId: string; text: string; until: number }> = []
+  let latestRoster: string[] = []
   on('state.set', ($, e, next) => {
-    // StateWrite types `value` as the union of every atom; only the motion and bubbles atoms are read.
+    // StateWrite types `value` as the union of every atom; only the motion, bubbles and agents atoms are read.
+    if (e.key === 'agents') latestRoster = Object.keys(e.value as Record<string, unknown>)
     if (e.key === 'motion') latest = e.value as MotionWrite
     if (e.key === 'bubbles') latestBubbles = e.value as typeof latestBubbles
     return next(e)
@@ -500,11 +483,12 @@ const startOffice = async ($: Engine, on: On) => {
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   on('ui.blit', () => ({ value: {} }))
   on('tool.call', () => ({ result: 'stub' }))
+  on('turn.complete', () => ({ text: 'done' }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
   await clock.advance(100)
 
-  return { clock, ui, motion: () => latest, bubbles: () => latestBubbles }
+  return { clock, ui, motion: () => latest, bubbles: () => latestBubbles, roster: () => latestRoster }
 }
 
 const endsAtAnchor = (entry: MotionWrite[string] | undefined, room: string): boolean => {
@@ -613,6 +597,60 @@ test('main messaging a1 meets, shows the bubble for 4 s, then both return to the
   }
   expect(home('main')).toBe(true)
   expect(home('a1')).toBe(true)
+  await ui.unmount()
+})
+
+test('a finished subagent reports, walks to the Break Room, leaves, and never teleports', async ($, on) => {
+  const { clock, ui, motion, bubbles, roster } = await startOffice($, on)
+  const bound = longestPath()
+  await $.agent.spawn(spawnArgs)
+  for (let i = 0; i < bound && (motion().a1 === undefined || (motion().a1?.path.length ?? 1) > 0); i += 1) {
+    await clock.advance(100)
+  }
+  expect(roster()).toContain('a1')
+  await $.turn.complete(turnArgs)
+
+  const breakRoom = buildMap(60, 18).rooms.find(r => r.id === 'break')?.bounds
+  const inBreak = (at: MotionWrite[string] | undefined): boolean =>
+    breakRoom !== undefined &&
+    at !== undefined &&
+    at.path.length === 0 &&
+    at.x >= breakRoom.x &&
+    at.x < breakRoom.x + breakRoom.w &&
+    at.y >= breakRoom.y &&
+    at.y < breakRoom.y + breakRoom.h
+  const texts = new Set<string>()
+  let previous = motion().a1
+  let heldSince: number | undefined
+  let goneAt: number | undefined
+  let ticks = 0
+  // Lobby walk, 4 s of bubbles, Break Room walk; the 5 s floor is shorter than all that.
+  while (goneAt === undefined && ticks < 3 * bound + 100) {
+    await clock.advance(100)
+    ticks += 1
+    for (const bubble of bubbles()) texts.add(`${bubble.agentId}:${bubble.text}`)
+    const at = motion().a1
+    if (previous !== undefined && at !== undefined) {
+      expect(Math.abs(at.x - previous.x) + Math.abs(at.y - previous.y)).toBeLessThanOrEqual(1)
+    }
+    if (!roster().includes('a1')) {
+      goneAt = ticks
+      // It left only from the Break Room, at least 5000 ms after the turn completed.
+      expect(inBreak(previous)).toBe(true)
+      expect(ticks * 100).toBeGreaterThanOrEqual(5000)
+    } else if (heldSince === undefined && inBreak(at) && ticks * 100 >= 5000) {
+      heldSince = ticks
+    }
+    previous = at ?? previous
+  }
+
+  // Gone within one tick after both conditions held.
+  expect(goneAt).toBeDefined()
+  expect(heldSince).toBeDefined()
+  expect((goneAt ?? 0) - (heldSince ?? 0)).toBeLessThanOrEqual(1)
+  expect(roster()).toContain('main')
+  expect([...texts]).toEqual(expect.arrayContaining(['a1:done', 'main:got it']))
+  expect(motion().a1).toBeUndefined()
   await ui.unmount()
 })
 

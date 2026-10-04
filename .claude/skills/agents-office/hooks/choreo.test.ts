@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { onActivity } from './agents'
 import type { OfficeAgent, Roster } from './agents'
-import { advanceScripts, bubbleText, expireBubbles, startMeet } from './choreo'
+import { advanceScripts, bubbleText, expireBubbles, startMeet, startReport } from './choreo'
 import type { ChoreoState } from './choreo'
 import { placeMotion } from './frame'
 import { buildMap } from './map'
@@ -99,7 +99,8 @@ test('a non-string or unknown `to` leaves both agents in place', () => {
 
 test('a peer matches by label, and a busy or finished peer only gets the bubble', () => {
   const start = initial()
-  expect(startMeet(start, 'main', 'reviewer', 'hi', 0).agents.a1?.script?.peer).toBe('main')
+  const peerScript = startMeet(start, 'main', 'reviewer', 'hi', 0).agents.a1?.script
+  expect(peerScript?.kind === 'meet' && peerScript.peer).toBe('main')
   const busy = startMeet(start, 'main', 'a1', 'hi', 0)
   const again = startMeet(busy, 'main', 'a1', 'again', 10)
   expect(again.agents).toBe(busy.agents)
@@ -231,4 +232,80 @@ test('a tool call under a script updates where the agent returns and does not mo
   const libraryAnchors = map.rooms.find(r => r.id === 'library')?.anchors ?? []
   expect(libraryAnchors.some(a => a.x === state.motion.a1?.x && a.y === state.motion.a1?.y)).toBe(true)
   expect(state.agents.a1?.pose).toBe('read')
+})
+
+const lobby = map.rooms.find(r => r.id === 'lobby')?.anchors ?? []
+const breakRoom = map.rooms.find(r => r.id === 'break')?.anchors ?? []
+const onAnchor = (anchors: Array<{ x: number; y: number }>, at: { x: number; y: number } | undefined): boolean =>
+  anchors.some(a => a.x === at?.x && a.y === at?.y)
+
+// Runs ticks until `stop` holds, bounded; returns the state and the clock.
+const runUntil = (state: ChoreoState, now: number, stop: (s: ChoreoState) => boolean): { state: ChoreoState; now: number } => {
+  let ticks = 0
+  while (!stop(state) && ticks < 400) {
+    now += TICK_MS
+    state = tickOnce(state, now)
+    ticks += 1
+  }
+  expect(ticks).toBeLessThan(400)
+
+  return { state, now }
+}
+
+test('a completed agent reports in the Lobby, the parent answers got it, and the agent walks to the Break Room', () => {
+  const withParent: Roster = { ...roster, a2: agent('a2', { label: 'child', parentId: 'a1' }) }
+  const base: ChoreoState = { map, agents: withParent, motion: placeMotion(map, withParent, {}), bubbles: [] }
+  let state = startReport(base, 'a2', 1000, 'answer')
+  expect(state.agents.a2).toMatchObject({ status: 'done', completedAt: 1000, room: 'lobby' })
+  expect(state.agents.a2?.script).toMatchObject({ kind: 'report', phase: 'toLobby' })
+
+  let run = runUntil(state, 1000, s => s.bubbles.length > 0)
+  state = run.state
+  expect(onAnchor(lobby, state.motion.a2)).toBe(true)
+  expect(state.bubbles).toEqual(
+    expect.arrayContaining([
+      { agentId: 'a2', text: 'done', until: run.now + BUBBLE_MS },
+      { agentId: 'a1', text: 'got it', until: run.now + BUBBLE_MS },
+    ]),
+  )
+  const shownAt = run.now
+
+  // Still reporting just before the end, leaving at 4000 ms.
+  state = advanceScripts(state, shownAt + BUBBLE_MS - TICK_MS)
+  expect(state.agents.a2?.script?.kind === 'report' && state.agents.a2.script.phase).toBe('reporting')
+  state = advanceScripts(state, shownAt + BUBBLE_MS)
+  expect(state.bubbles).toEqual([])
+  expect(state.agents.a2).toMatchObject({ status: 'leaving', room: 'break' })
+
+  run = runUntil(state, shownAt + BUBBLE_MS, s => s.agents.a2?.script === undefined)
+  expect(onAnchor(breakRoom, run.state.motion.a2)).toBe(true)
+  expect(run.state.motion.a2?.path).toEqual([])
+  expect(run.state.agents.a2?.status).toBe('leaving')
+})
+
+test('an aborted turn reports stopped', () => {
+  const state = runUntil(startReport(initial(), 'a1', 0, 'aborted'), 0, s => s.bubbles.length > 0).state
+
+  expect(state.bubbles).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ agentId: 'a1', text: 'stopped' }),
+      expect.objectContaining({ agentId: 'main', text: 'got it' }),
+    ]),
+  )
+})
+
+test('main, a teammate and an unknown agent never report; a meeting is released first', () => {
+  const start = initial()
+  expect(startReport(start, 'main', 0, 'answer')).toBe(start)
+  expect(startReport(start, 'nobody', 0, 'answer')).toBe(start)
+  const mate: Roster = { ...roster, a1: agent('a1', { teammate: true }) }
+  const idle = startReport({ ...start, agents: mate }, 'a1', 0, 'answer')
+  expect(idle.agents.a1).toMatchObject({ status: 'idle' })
+  expect(idle.agents.a1?.script).toBeUndefined()
+
+  const meeting = startMeet(start, 'main', 'a1', 'hi', 0)
+  const reported = startReport(meeting, 'a1', 100, 'answer')
+  expect(reported.agents.main?.script).toBeUndefined()
+  expect(reported.agents.main?.room).toBe('lobby')
+  expect(reported.agents.a1?.script?.kind).toBe('report')
 })

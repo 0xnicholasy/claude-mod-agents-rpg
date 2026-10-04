@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import { activityFor } from './activity'
-import { expire, onActivity, onComplete, onSpawn, seedMain, syncList } from './agents'
+import { expire, onActivity, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
-import { advanceScripts, expireBubbles, startMeet } from './choreo'
+import { advanceScripts, expireBubbles, startMeet, startReport } from './choreo'
 import type { ChoreoState } from './choreo'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
@@ -174,9 +174,13 @@ const seat = async (
 
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
-  const roster = await guard($, 'expire', await read($, agents), async () =>
-    applyRoster($, cur => expire(cur, now)),
-  )
+  const viewSize = await read($, viewport)
+  const viewMap = mapFor(viewSize.columns, viewSize.rows)
+  const roster = await guard($, 'expire', await read($, agents), async () => {
+    // A finished agent leaves only from the Break Room (D15); motion is read once for it.
+    const where = await read($, motion)
+    return applyRoster($, cur => expire(cur, now, where, viewMap))
+  })
   const placed = await guard($, 'place', undefined, async () => seat($, roster, { advance: true }))
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
@@ -323,10 +327,17 @@ export const register: Register = on => {
     const agentId = e.agentId
     if (agentId !== undefined) {
       await guard($, 'turn.complete', undefined, async () => {
+        // A subagent reports in the Lobby and leaves via the Break Room (T09); a teammate
+        // only turns idle (D26). All computed locally and committed like meet() (D40).
         const now = await $.clock.now()
-        const current = await read($, agents)
-        if (onComplete(current, agentId, now) === current) return
-        await update($, agents, roster => onComplete(roster, agentId, now))
+        const size = await read($, viewport)
+        const base: ChoreoState = {
+          map: mapFor(size.columns, size.rows),
+          agents: await read($, agents),
+          motion: await read($, motion),
+          bubbles: await read($, bubbles),
+        }
+        await commitChoreo($, base, state => startReport(state, agentId, now, e.reason))
       })
     }
 
