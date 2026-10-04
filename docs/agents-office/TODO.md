@@ -135,7 +135,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "every room is reachable from every other room on the 60x18 and 120x36 maps" pass)
 
 ### T06B One-tile-per-tick movement wired into the loop
-- status: done (#PR, 2026-10-04)
+- status: done (#9, 2026-10-04)
 - needs: T05, T06
 - size: M
 - scope: `hooks/motion.ts` `assignTarget(motion, map, agentId, room)` picks a free anchor and stores the path, `step(motion)` advances every agent one tile and toggles the walk frame; agents arriving switch to their work pose. `loop.ts` tick calls `step` before building the frame. New agents enter at the Lobby door and walk to their room (replaces T05's place-at-anchor).
@@ -231,4 +231,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T04 #6 sprite sheet: 7 poses, 2-frame walk and work cycles, tier palette, nameplate; D28 transparency convention
 2026-10-04 T05 #7 frame builder and real pane rendering: buildFrame/placeMotion, blit only on change, 5-row strip reserved; D29-D32
 2026-10-04 T06 #8 BFS pathfinding over canStand footprints: findPath returns steps after from through to, empty when unreachable; D33 path convention
-2026-10-04 T06B #PR one-tile-per-tick movement: motion.ts assignTarget/step/drawnPose, spawns walk in from the Lobby door; D34-D36
+2026-10-04 T06B #9 one-tile-per-tick movement: motion.ts assignTarget/step/drawnPose, spawns walk in from the Lobby door; D34-D36
