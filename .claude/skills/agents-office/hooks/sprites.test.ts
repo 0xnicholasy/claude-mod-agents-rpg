@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Tier } from './agents'
-import { isValidGlyph, packCells, type Cell } from './raster'
-import { frameCount, nameplate, POSES, SPRITE_PALETTE, sprite, TIER_COLORS, type Pose } from './sprites'
+import { DEFAULT_COLOR, isValidGlyph, packCells, type Cell } from './raster'
+import { frameCount, isTransparent, nameplate, POSES, SPRITE_PALETTE, sprite, TIER_COLORS, type Pose } from './sprites'
 
 const TIERS: Tier[] = ['haiku', 'sonnet', 'opus', 'fable', 'grey']
 const key = (grid: Cell[][]): string => JSON.stringify(grid)
@@ -35,6 +35,7 @@ test('walk and work poses have two distinct frames, idle has one', () => {
 test('tier colors are distinct and an unknown tier maps to grey', () => {
   const colors = TIERS.map((t) => TIER_COLORS[t])
   expect(new Set(colors).size).toBe(TIERS.length)
+  // Deliberate invalid input: exercises the runtime fallback for a tier the type forbids.
   const unknown = sprite('idle', 0, 'mystery' as Tier)
   expect(key(unknown)).toBe(key(sprite('idle', 0, 'grey')))
 })
@@ -55,6 +56,52 @@ test('nameplate trims to its width and the palette stays under 32 colors', () =>
     }
   }
   for (const c of nameplate('abc')) { used.add(c.fg); used.add(c.bg) }
-  used.delete(0x01000000)
-  for (const color of used) expect(SPRITE_PALETTE).toContain(color)
+  used.delete(DEFAULT_COLOR)
+  expect([...used].sort((a, b) => a - b)).toEqual([...SPRITE_PALETTE].sort((a, b) => a - b))
+})
+
+test('out-of-range and negative frames wrap, idle ignores the index', () => {
+  for (const pose of POSES) {
+    if (pose === 'idle') {
+      for (const f of [0, 1, 2, -1, 99, NaN]) expect(key(sprite(pose, f, 'opus'))).toBe(key(sprite(pose, 0, 'opus')))
+      continue
+    }
+    expect(key(sprite(pose, 2, 'opus'))).toBe(key(sprite(pose, 0, 'opus')))
+    expect(key(sprite(pose, -1, 'opus'))).toBe(key(sprite(pose, 1, 'opus')))
+    expect(key(sprite(pose, NaN, 'opus'))).toBe(key(sprite(pose, 0, 'opus')))
+  }
+})
+
+test('sprite returns fresh cells, so mutating one does not leak into the next call', () => {
+  for (const pose of POSES) {
+    const first = sprite(pose, 0, 'opus')
+    const before = key(first)
+    for (const row of first) for (const c of row) { c.ch = 0x58; c.fg = 0x123456; c.bg = 0x654321 }
+    expect(key(sprite(pose, 0, 'opus'))).toBe(before)
+  }
+})
+
+test('transparency convention: only the face has a non-default bg and every space cell is TRANSPARENT', () => {
+  for (const tier of TIERS) {
+    for (const pose of POSES) {
+      for (let frame = 0; frame < frameCount(pose); frame++) {
+        const nonDefault: Cell[] = []
+        for (const row of sprite(pose, frame, tier)) {
+          for (const c of row) {
+            if (c.bg !== DEFAULT_COLOR) nonDefault.push(c)
+            if (c.ch === 0x20) expect(isTransparent(c)).toBe(true)
+          }
+        }
+        expect(nonDefault.length).toBe(1)
+        expect(nonDefault[0]?.ch).toBe(0x2580)
+      }
+    }
+  }
+})
+
+test('nameplate replaces non-BMP and control characters with ? and never emits an invalid glyph', () => {
+  expect(nameplate('a\u{1F600}b', 2).map((c) => c.ch)).toEqual([0x61, 0x3f])
+  expect(nameplate('a\nb').map((c) => c.ch)).toEqual([0x61, 0x3f, 0x62])
+  for (const c of nameplate('a\u{1F600}\nb\tc')) expect(isValidGlyph(c.ch)).toBe(true)
+  expect(nameplate('abc', -3).length).toBe(0)
 })
