@@ -1,0 +1,6 @@
+{
+  "name": "agents-office",
+  "version": "0.1.0",
+  "description": "A pane that shows the session's agents as pixel characters in an office.",
+  "types": "./types/index.d.ts"
+}

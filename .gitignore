@@ -1,0 +1,4 @@
+node_modules/
+.claude/worktrees/
+.claude/skills/agents-office/.claude-plugin/types/
+*.log

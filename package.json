@@ -1,0 +1,13 @@
+{
+  "name": "claude-mod-agents-rpg",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "validate": "claude plugin validate .claude/skills/agents-office",
+    "test": "claude plugin test .claude/skills/agents-office",
+    "check": "npm run validate && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
