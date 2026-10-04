@@ -145,7 +145,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "a spawned agent is at the Lobby door, then one tile further per 100 ms tick" pass)
 
 ### T07 Activity mapping from tool calls to room and pose
-- status: done (#PR, 2026-10-04)
+- status: done (#10, 2026-10-04)
 - needs: T06B
 - size: S
 - scope: `hooks/activity.ts` `activityFor(tool: string): { room, pose }`: Read/Grep/Glob/NotebookRead/Explore-type agents -> Library `read`; Edit/Write/MultiEdit/NotebookEdit -> own desk `type`; Bash/BashOutput/KillShell -> Server Room `run`; WebSearch/WebFetch and `mcp__*` tools whose name contains `fetch|http|search` -> Phone Booth `call`; Agent/TaskStop/SendMessage -> Lobby `talk`; unknown -> own desk `type`. `register.tsx` `tool.call` hook: key = `e.agentId ?? 'main'`, apply activity, then `return next(e)` (log lines arrive in T10).
@@ -233,4 +233,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T05 #7 frame builder and real pane rendering: buildFrame/placeMotion, blit only on change, 5-row strip reserved; D29-D32
 2026-10-04 T06 #8 BFS pathfinding over canStand footprints: findPath returns steps after from through to, empty when unreachable; D33 path convention
 2026-10-04 T06B #9 one-tile-per-tick movement: motion.ts assignTarget/step/drawnPose, spawns walk in from the Lobby door; D34-D36
-2026-10-04 T07 #PR activity mapping: activityFor, per-agent home desk, tool.call hook moves the agent before the tool runs; D37
+2026-10-04 T07 #10 activity mapping: activityFor, per-agent home desk, tool.call hook moves the agent before the tool runs; D37
