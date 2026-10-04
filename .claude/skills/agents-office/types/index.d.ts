@@ -22,8 +22,9 @@ declare module 'claude-code' {
           tier: 'haiku' | 'sonnet' | 'opus' | 'fable' | 'grey'
           parentId?: string
           status: 'working' | 'idle' | 'done' | 'leaving'
-          room: string
-          pose: string
+          room: 'lobby' | 'devbay' | 'library' | 'server' | 'phone' | 'meeting' | 'break'
+          pose: 'idle' | 'walk' | 'read' | 'type' | 'run' | 'call' | 'talk'
+          home: 'lobby' | 'devbay' | 'library' | 'server' | 'phone' | 'meeting' | 'break'
           teammate: boolean
           completedAt?: number
         }

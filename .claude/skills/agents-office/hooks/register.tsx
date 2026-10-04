@@ -1,11 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import { expire, onComplete, onSpawn, seedMain, syncList } from './agents'
+import { activityFor } from './activity'
+import { expire, onActivity, onComplete, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { mapFor, rasterSize } from './loop'
-import { enterAtDoor, step } from './motion'
+import { assignTarget, enterAtDoor, step } from './motion'
 import { DEFAULT_COLOR, packCells } from './raster'
 import type { Cell } from './raster'
 import { LIST_MS, TICK_MS } from './timing'
@@ -59,6 +60,24 @@ const refreshRoster = async ($: EngineInterface): Promise<void> => {
 // snapshot). `entering` is a just-spawned agent that appears at the Lobby door
 // and walks to its room (D34); `advance` moves every walker one tile (the tick).
 // One write at most. Returns the motion it computed, or undefined with no map.
+// Applies a roster reducer to the current atom value inside the updater (so concurrent
+// hooks cannot drop each other's changes) and returns the value it produced. A reducer
+// that returns the same reference writes nothing.
+const applyRoster = async (
+  $: EngineInterface,
+  reduce: (roster: Roster) => Roster,
+): Promise<Roster> => {
+  const stored = await read($, agents)
+  if (reduce(stored) === stored) return stored
+  let next = stored
+  await update($, agents, cur => {
+    next = reduce(cur)
+    return next
+  })
+
+  return next
+}
+
 type SeatOptions = { entering?: string; advance?: boolean }
 
 const seat = async (
@@ -92,11 +111,9 @@ const seat = async (
 
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
-  const stored = await read($, agents)
-  const roster = expire(stored, now)
-  if (roster !== stored) {
-    await guard($, 'expire', undefined, async () => update($, agents, () => roster))
-  }
+  const roster = await guard($, 'expire', await read($, agents), async () =>
+    applyRoster($, cur => expire(cur, now)),
+  )
   const placed = await guard($, 'place', undefined, async () => seat($, roster, { advance: true }))
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
@@ -196,13 +213,30 @@ export const register: Register = on => {
     const result = await next(e)
     await guard($, 'agent.spawn', undefined, async () => {
       if (result.agentId === undefined) return
-      const stored = await read($, agents)
-      const roster = onSpawn(stored, e, result)
-      if (roster !== stored) await update($, agents, () => roster)
+      const roster = await applyRoster($, cur => onSpawn(cur, e, result))
       await seat($, roster, { entering: result.agentId })
     })
 
     return result
+  })
+
+  // The activity is applied before next(e); nothing awaits after it, and a
+  // failure in the pre-work is logged and never blocks the tool (D37).
+  on('tool.call', async ($, e, next) => {
+    await guard($, 'tool.call', undefined, async () => {
+      const id = e.agentId ?? 'main'
+      const activity = activityFor(e.tool)
+      const roster = await applyRoster($, cur => onActivity(cur, id, activity))
+      const room = roster[id]?.room
+      const size = await read($, viewport)
+      const map = mapFor(size.columns, size.rows)
+      if (room === undefined || map === undefined) return
+      const current = await read($, motion)
+      if (assignTarget(current, map, id, room) === current) return
+      await update($, motion, cur => assignTarget(cur, map, id, room))
+    })
+
+    return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {

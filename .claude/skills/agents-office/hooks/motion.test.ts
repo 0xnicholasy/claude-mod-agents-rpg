@@ -27,6 +27,7 @@ const worker = (over: Partial<OfficeAgent> = {}): OfficeAgent => ({
   tier: 'opus',
   status: 'working',
   room: 'devbay',
+  home: 'devbay',
   pose: 'type',
   teammate: false,
   ...over,

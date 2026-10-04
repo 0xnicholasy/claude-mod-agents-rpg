@@ -1,19 +1,22 @@
 import type { AgentInfo, AgentSpawnInput } from 'claude-code'
+import type { Activity } from './activity'
+import type { RoomId } from './map'
+import type { Pose } from './sprites'
 import { DESPAWN_MS } from './timing'
 
 export type Tier = 'haiku' | 'sonnet' | 'opus' | 'fable' | 'grey'
 export type AgentStatus = 'working' | 'idle' | 'done' | 'leaving'
 
-// `room` and `pose` are plain strings for now: map.ts (T03) and sprites.ts (T04)
-// narrow them to their own unions later.
 export type OfficeAgent = {
   id: string
   label: string
   tier: Tier
   parentId?: string
   status: AgentStatus
-  room: string
-  pose: string
+  room: RoomId
+  pose: Pose
+  // The room holding the agent's own desk; activity 'desk' resolves to it (D37).
+  home: RoomId
   // A teammate has several turns: turn.complete makes it idle, never done (D26).
   teammate: boolean
   completedAt?: number
@@ -36,6 +39,9 @@ const tierOf = (text: string | undefined): Tier | undefined => {
   return TIERS.find(tier => lower.includes(tier))
 }
 
+// An Explore-type agent works from the Library, every other spawned agent from the Dev Bay (D37).
+const homeOf = (type: string): RoomId => (type.toLowerCase().includes('explore') ? 'library' : 'devbay')
+
 const labelOf = (name: string | undefined, type: string, description: string): string =>
   name || type || description.slice(0, 12)
 
@@ -52,19 +58,21 @@ export const seedMain = (roster: Roster): Roster =>
     ? roster
     : {
         ...roster,
-        main: { id: 'main', label: 'main', tier: 'grey', status: 'working', room: 'lobby', pose: 'idle', teammate: false },
+        main: { id: 'main', label: 'main', tier: 'grey', status: 'working', room: 'lobby', pose: 'idle', home: 'lobby', teammate: false },
       }
 
 export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult): Roster => {
   const id = result.agentId
   if (id === undefined) return roster
+  const home = homeOf(input.subagentType)
   const agent: OfficeAgent = {
     id,
     label: labelOf(input.name, input.subagentType, input.description),
     tier: tierOf(input.model) ?? tierOf(result.model) ?? 'grey',
     status: 'working',
-    room: 'lobby',
+    room: home,
     pose: 'idle',
+    home,
     teammate: input.isTeammate === true,
   }
   if (input.parentAgentId !== undefined) agent.parentId = input.parentAgentId
@@ -84,6 +92,17 @@ export const onComplete = (roster: Roster, agentId: string, now: number): Roster
   return { ...roster, [agentId]: { ...agent, status: 'done', completedAt: now } }
 }
 
+// Records what a tool call makes the agent do; 'desk' resolves to its home (D37).
+// Returns the same reference when the agent is unknown, done or leaving, or nothing changes.
+export const onActivity = (roster: Roster, agentId: string, activity: Activity): Roster => {
+  const agent = roster[agentId]
+  if (agent === undefined || agent.status === 'done' || agent.status === 'leaving') return roster
+  const room = activity.room === 'desk' ? agent.home : activity.room
+  if (agent.room === room && agent.pose === activity.pose) return roster
+
+  return { ...roster, [agentId]: { ...agent, room, pose: activity.pose } }
+}
+
 // Adds listed agents the roster does not know yet and revives a done agent the list
 // reports running (a new turn); never removes one.
 export const syncList = (roster: Roster, infos: readonly AgentInfo[]): Roster => {
@@ -97,13 +116,15 @@ export const syncList = (roster: Roster, infos: readonly AgentInfo[]): Roster =>
       continue
     }
     if (info.status !== 'running' && info.status !== 'idle' && info.status !== 'waiting') continue
+    const home = homeOf(info.type)
     const agent: OfficeAgent = {
       id: info.id,
       label: labelOf(info.name, info.type, info.description),
       tier: 'grey',
       status: info.status === 'idle' ? 'idle' : 'working',
-      room: 'lobby',
+      room: home,
       pose: 'idle',
+      home,
       teammate: true,
     }
     if (info.parentId !== undefined) agent.parentId = info.parentId

@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { buildMap } from './map'
 import { STRIP_ROWS } from './timing'
@@ -477,5 +478,85 @@ test('a spawned agent is at the Lobby door, then one tile further per 100 ms tic
     const prev = positions[i]
     expect(Math.abs(p.x - (prev?.x ?? 0)) + Math.abs(p.y - (prev?.y ?? 0))).toBe(1)
   }
+  await ui.unmount()
+})
+
+type MotionWrite = Record<string, { x: number; y: number; path: Array<{ x: number; y: number }> }>
+
+// Starts a session with a mounted pane and returns a reader for the latest motion write.
+const startOffice = async ($: Engine, on: On) => {
+  const clock = mock.clock(on)
+  let latest: MotionWrite = {}
+  on('state.set', ($, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the motion atom is read.
+    if (e.key === 'motion') latest = e.value as MotionWrite
+    return next(e)
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('ui.blit', () => ({ value: {} }))
+  on('tool.call', () => ({ result: 'stub' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+
+  return { clock, ui, motion: () => latest }
+}
+
+const endsAtAnchor = (entry: MotionWrite[string] | undefined, room: string): boolean => {
+  const end = entry?.path[entry.path.length - 1]
+  const anchors = buildMap(60, 18).rooms.find(r => r.id === room)?.anchors ?? []
+
+  return end !== undefined && anchors.some(a => a.x === end.x && a.y === end.y)
+}
+
+test('a Read call on the main loop sends main toward the Library and the tool still runs', async ($, on) => {
+  const { ui, motion } = await startOffice($, on)
+  const result = await $.tool.call({ tool: 'Read', file_path: 'x' })
+
+  expect(result).toMatchObject({ result: 'stub' })
+  expect(endsAtAnchor(motion().main, 'library')).toBe(true)
+  await ui.unmount()
+})
+
+test('a subagent-scoped call moves that agent and not main', async ($, on) => {
+  const { clock, ui, motion } = await startOffice($, on)
+  await $.agent.spawn(spawnArgs)
+  await clock.advance(100)
+  const mainBefore = motion().main
+  // ToolCallArgs rejects agentId at compile time, but the runtime delivers it to the
+  // hook (D9, observed in T01B); the cast is a test-only workaround.
+  await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as never)
+
+  expect(endsAtAnchor(motion().a1, 'server')).toBe(true)
+  expect(motion().main).toEqual(mainBefore)
+  await ui.unmount()
+})
+
+test('a repeated tool call does not re-path the agent', async ($, on) => {
+  const { ui, motion } = await startOffice($, on)
+  await $.tool.call({ tool: 'Read', file_path: 'x' })
+  const first = motion()
+  expect(endsAtAnchor(first.main, 'library')).toBe(true)
+  await $.tool.call({ tool: 'Read', file_path: 'y' })
+
+  expect(motion()).toBe(first)
+  await ui.unmount()
+})
+
+test('a spawned Explore agent walks to a Library anchor', async ($, on) => {
+  const { ui, motion } = await startOffice($, on)
+  await $.agent.spawn({ ...spawnArgs, subagentType: 'Explore' })
+
+  expect(endsAtAnchor(motion().a1, 'library')).toBe(true)
+  await ui.unmount()
+})
+
+test('a spawned default agent walks to a Dev Bay anchor', async ($, on) => {
+  const { ui, motion } = await startOffice($, on)
+  await $.agent.spawn(spawnArgs)
+
+  expect(endsAtAnchor(motion().a1, 'devbay')).toBe(true)
   await ui.unmount()
 })

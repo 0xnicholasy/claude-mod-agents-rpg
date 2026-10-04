@@ -15,6 +15,7 @@ const agent = (id: string, over: Partial<OfficeAgent> = {}): OfficeAgent => ({
   tier: 'opus',
   status: 'working',
   room: 'devbay',
+  home: 'devbay',
   pose: 'idle',
   teammate: false,
   ...over,
