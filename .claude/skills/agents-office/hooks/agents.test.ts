@@ -94,3 +94,13 @@ test("onActivity resolves 'desk' to home and ignores unknown, repeated and done 
   const done = onComplete(roster, 'a1', 1000)
   expect(onActivity(done, 'a1', { room: 'server', pose: 'run' })).toBe(done)
 })
+
+test('a second turn.complete on a leaving agent returns the same roster', () => {
+  const roster: Roster = onSpawn(seedMain({}), input(), { agentId: 'a1' })
+  const done = onComplete(roster, 'a1', 100)
+  const base = done.a1
+  if (base === undefined) throw new Error('a1 missing')
+  const leaving: Roster = { ...done, a1: { ...base, status: 'leaving' } }
+
+  expect(onComplete(leaving, 'a1', 999)).toBe(leaving)
+})

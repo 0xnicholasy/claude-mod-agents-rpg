@@ -110,7 +110,7 @@ export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult):
 
 export const onComplete = (roster: Roster, agentId: string, now: number): Roster => {
   const agent = roster[agentId]
-  if (agent === undefined || agent.status === 'done') return roster
+  if (agent === undefined || agent.status === 'done' || agent.status === 'leaving') return roster
   if (agent.teammate) {
     if (agent.status === 'idle') return roster
 
@@ -126,8 +126,13 @@ export const onActivity = (roster: Roster, agentId: string, activity: Activity):
   const agent = roster[agentId]
   if (agent === undefined || agent.status === 'done' || agent.status === 'leaving') return roster
   const room = activity.room === 'desk' ? agent.home : activity.room
-  // A revived agent still walking a report ignores tool activity until the script ends.
-  if (agent.script?.kind === 'report') return roster
+  // A working or idle agent cannot still be reporting (the roster list revived it, or the report
+  // started with no pane): the stale report script is dropped and the activity applies normally.
+  if (agent.script?.kind === 'report') {
+    const bare = { ...agent }
+    delete bare.script
+    return onActivity({ ...roster, [agentId]: bare }, agentId, activity)
+  }
   if (agent.script !== undefined) {
     // Mid-meeting: the agent stays put; the activity is where it goes back to.
     const { script } = agent

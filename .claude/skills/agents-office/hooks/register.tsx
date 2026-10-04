@@ -81,50 +81,22 @@ const applyRoster = async (
 }
 
 // Writes the atoms a choreography step changed (D40). `base` is the triple the caller
-// read (or computed locally, D31); `compute` runs once on it. Each changed atom is
-// written with an updater that returns that result only while the atom still holds
-// the value `base` carried; once any atom differs, that atom and every later one is
-// recomputed from the triple seen so far (earlier atoms as written, this atom as
-// found, later ones as in `base`). The three writes are not atomic. Returns the
-// triple as written.
-// An atom's updater may receive a copy of the stored value (the engine serialises
-// state), so "unchanged since the read" compares by content, not reference.
-const sameValue = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b)
-
+// read (or computed locally, D31); `compute` runs exactly once on it (transitions are
+// not idempotent, so it is never re-run after a partial commit). Each changed atom is
+// then written with its computed value. Accepted v1 risk: last writer wins between
+// dispatches; the 100 ms tick recomputes from current state, so a lost hook write
+// loses only that one event's choreography. The three writes are not atomic.
 const commitChoreo = async (
   $: EngineInterface,
   base: ChoreoState,
   compute: (state: ChoreoState) => ChoreoState,
 ): Promise<ChoreoState> => {
   const next = compute(base)
-  let fresh = base
-  let diverged = false
-  if (next.agents !== base.agents) {
-    await update($, agents, cur => {
-      diverged = !sameValue(cur, base.agents)
-      fresh = { ...fresh, agents: diverged ? compute({ ...fresh, agents: cur }).agents : next.agents }
+  if (next.agents !== base.agents) await update($, agents, () => next.agents)
+  if (next.motion !== base.motion) await update($, motion, () => next.motion)
+  if (next.bubbles !== base.bubbles) await update($, bubbles, () => next.bubbles)
 
-      return fresh.agents
-    })
-  }
-  if (next.motion !== base.motion) {
-    await update($, motion, cur => {
-      diverged = diverged || !sameValue(cur, base.motion)
-      fresh = { ...fresh, motion: diverged ? compute({ ...fresh, motion: cur }).motion : next.motion }
-
-      return fresh.motion
-    })
-  }
-  if (next.bubbles !== base.bubbles) {
-    await update($, bubbles, cur => {
-      diverged = diverged || !sameValue(cur, base.bubbles)
-      fresh = { ...fresh, bubbles: diverged ? compute({ ...fresh, bubbles: cur }).bubbles : next.bubbles }
-
-      return fresh.bubbles
-    })
-  }
-
-  return fresh
+  return next
 }
 
 // SendMessage: both agents walk to the Meeting Room (D38). `to` is `unknown` because

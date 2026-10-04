@@ -5,7 +5,7 @@ import { advanceScripts, bubbleText, expireBubbles, startMeet, startReport } fro
 import type { ChoreoState } from './choreo'
 import { placeMotion } from './frame'
 import { buildMap } from './map'
-import { step } from './motion'
+import { assignTarget, step, targetOf } from './motion'
 import { BUBBLE_MS, TICK_MS } from './timing'
 
 const map = buildMap(60, 18)
@@ -308,4 +308,93 @@ test('main, a teammate and an unknown agent never report; a meeting is released 
   expect(reported.agents.main?.script).toBeUndefined()
   expect(reported.agents.main?.room).toBe('lobby')
   expect(reported.agents.a1?.script?.kind).toBe('report')
+})
+
+const cutOff = (room: 'lobby' | 'break') => ({
+  ...map,
+  rooms: map.rooms.map(r => (r.id === room ? { ...r, anchors: [{ x: 0, y: 0 }] } : r)),
+})
+
+test('a report retargets a path toward another room to a Lobby anchor, also when it resumes on a map', () => {
+  const start = initial()
+  const toLibrary = assignTarget(start.motion, map, 'a1', 'library')
+  expect(onAnchor(map.rooms.find(r => r.id === 'library')?.anchors ?? [], targetOf(toLibrary.a1 ?? { x: 0, y: 0, path: [], frame: 0 }))).toBe(true)
+  const reported = startReport({ ...start, motion: toLibrary }, 'a1', 0, 'answer')
+  const entry = reported.motion.a1
+  expect(entry?.path.length).toBeGreaterThan(0)
+  expect(onAnchor(lobby, entry && targetOf(entry))).toBe(true)
+
+  // Started with no pane: the stale path is kept until a map exists, then retargeted.
+  const noMap = startReport({ ...start, map: undefined, motion: toLibrary }, 'a1', 0, 'answer')
+  expect(noMap.motion).toBe(toLibrary)
+  const resumed = advanceScripts({ ...noMap, map }, TICK_MS)
+  const after = resumed.motion.a1
+  expect(onAnchor(lobby, after && targetOf(after))).toBe(true)
+})
+
+test('an agent revived mid-report goes home, idle, with the script cleared', () => {
+  let state = startReport(initial(), 'a1', 0, 'answer')
+  state = tickOnce(state, TICK_MS)
+  const home = state.agents.a1
+  if (home === undefined) throw new Error('a1 missing')
+  state = advanceScripts({ ...state, agents: { ...state.agents, a1: { ...home, status: 'working' } } }, 2 * TICK_MS)
+  expect(state.agents.a1).toMatchObject({ room: 'devbay', pose: 'idle' })
+  expect(state.agents.a1?.script).toBeUndefined()
+})
+
+test('a report with no map marks the agent done and moves nothing', () => {
+  const start = { ...initial(), map: undefined }
+  const state = startReport(start, 'a1', 5, 'answer')
+  expect(state.agents.a1).toMatchObject({ status: 'done', completedAt: 5 })
+  expect(state.agents.a1?.script).toMatchObject({ kind: 'report', phase: 'toLobby' })
+  expect(state.motion).toBe(start.motion)
+  expect(advanceScripts(state, 100)).toBe(state)
+})
+
+test('an unreachable Lobby shows the bubbles where the agent stands', () => {
+  const blocked = cutOff('lobby')
+  const start = initial()
+  const state = startReport({ ...start, map: blocked }, 'a1', 0, 'answer')
+  expect(state.motion.a1?.path).toEqual([])
+  const shown = advanceScripts(state, TICK_MS)
+  expect(shown.agents.a1?.script).toMatchObject({ kind: 'report', phase: 'reporting' })
+  expect(shown.bubbles).toEqual(expect.arrayContaining([expect.objectContaining({ agentId: 'a1', text: 'done' })]))
+  expect(shown.motion.a1).toMatchObject({ x: start.motion.a1?.x, y: start.motion.a1?.y })
+})
+
+test('an unreachable Break Room ends the script in place', () => {
+  const blocked = cutOff('break')
+  const start = initial()
+  let state = startReport({ ...start, map: blocked }, 'a1', 0, 'answer')
+  state = runUntil(state, 0, s => s.agents.a1?.status === 'leaving').state
+  const from = state.motion.a1
+  state = tickOnce(state, 100000)
+  expect(state.agents.a1?.script).toBeUndefined()
+  expect(state.agents.a1?.status).toBe('leaving')
+  expect(state.motion.a1).toMatchObject({ x: from?.x, y: from?.y, path: [] })
+})
+
+test('a report on a meeting member restores the peer pose and sends it back', () => {
+  const two: Roster = { ...roster, a2: agent('a2', { label: 'other', pose: 'read' }) }
+  const base: ChoreoState = { map, agents: two, motion: placeMotion(map, two, {}), bubbles: [] }
+  const meeting = runUntil(startMeet(base, 'a1', 'a2', 'hi', 0), 0, s => s.agents.a1?.script?.kind === 'meet' && s.agents.a1.script.phase === 'talking')
+  expect(meeting.state.agents.a2?.pose).toBe('idle')
+  const reported = startReport(meeting.state, 'a2', meeting.now, 'answer')
+  expect(reported.agents.a1).toMatchObject({ pose: 'type', room: 'devbay' })
+  expect(reported.agents.a1?.script).toBeUndefined()
+  expect((reported.motion.a1?.path.length ?? 0)).toBeGreaterThan(0)
+})
+
+test('a second turn.complete on a leaving agent changes nothing', () => {
+  let state = startReport(initial(), 'a1', 0, 'answer')
+  state = runUntil(state, 0, s => s.agents.a1?.status === 'leaving').state
+  expect(startReport(state, 'a1', 99999, 'answer')).toBe(state)
+})
+
+test('a tool call clears a stale report script on a working agent', () => {
+  const state = startReport({ ...initial(), map: undefined }, 'a1', 0, 'answer')
+  const revived = { ...state.agents, a1: { ...(state.agents.a1 as OfficeAgent), status: 'working' as const } }
+  const next = onActivity(revived, 'a1', { room: 'library', pose: 'read' })
+  expect(next.a1?.script).toBeUndefined()
+  expect(next.a1).toMatchObject({ room: 'library', pose: 'read' })
 })

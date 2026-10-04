@@ -608,7 +608,11 @@ test('a finished subagent reports, walks to the Break Room, leaves, and never te
     await clock.advance(100)
   }
   expect(roster()).toContain('a1')
-  await $.turn.complete(turnArgs)
+  // Position before the hook runs: the first sample after it must be within one step of it.
+  const before = motion().a1
+  const result = await $.turn.complete(turnArgs)
+  // The hook returns the downstream (stub) result unchanged.
+  expect(result).toEqual({ text: 'done' })
 
   const breakRoom = buildMap(60, 18).rooms.find(r => r.id === 'break')?.bounds
   const inBreak = (at: MotionWrite[string] | undefined): boolean =>
@@ -620,7 +624,8 @@ test('a finished subagent reports, walks to the Break Room, leaves, and never te
     at.y >= breakRoom.y &&
     at.y < breakRoom.y + breakRoom.h
   const texts = new Set<string>()
-  let previous = motion().a1
+  let previous = before
+  expect(previous).toBeDefined()
   let heldSince: number | undefined
   let goneAt: number | undefined
   let ticks = 0

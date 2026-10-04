@@ -73,7 +73,7 @@ const goBack = (motion: Motion, map: OfficeMap, id: string, script: MeetScript):
   return assignTarget(motion, map, id, script.returnRoom)
 }
 
-const onAnchor = (map: OfficeMap, room: RoomId, at: Motion[string]): boolean =>
+const onAnchor = (map: OfficeMap, room: RoomId, at: Point): boolean =>
   map.rooms.find(r => r.id === room)?.anchors.some(a => a.x === at.x && a.y === at.y) ?? false
 
 /**
@@ -181,16 +181,23 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
     const at = motion[agent.id]
     if (agent.status === 'working' || agent.status === 'idle') {
       // Revived by the roster list mid-report: back to its own room, script ended.
-      setAgent({ ...clearScript(agent), room: agent.home })
+      setAgent({ ...clearScript(agent), room: agent.home, pose: 'idle' })
       motion = assignTarget(motion, map, agent.id, agent.home)
       return
     }
     if (script.phase === 'toLobby') {
-      if (at !== undefined && at.path.length > 0) return
-      // A report started with no pane drawn has no path yet: route it now.
+      // Resuming (a report started with no pane, or a path left from before): keep a path only
+      // when it ends on a Lobby anchor, else retarget to the Lobby now.
+      const headsToLobby = (entry: Motion[string]): boolean => entry.path.length > 0 && onAnchor(map, 'lobby', targetOf(entry))
+      if (at !== undefined && headsToLobby(at)) return
       if (at !== undefined && !onAnchor(map, 'lobby', at)) {
         motion = assignTarget(motion, map, agent.id, 'lobby')
-        if ((motion[agent.id]?.path.length ?? 0) > 0) return
+        const routed = motion[agent.id]
+        if (routed !== undefined && headsToLobby(routed)) return
+        // Lobby unreachable: drop the stale path and show the bubbles where it stands.
+        if (routed !== undefined && routed.path.length > 0) motion = { ...motion, [agent.id]: { ...routed, path: [] } }
+      } else if (at !== undefined && at.path.length > 0) {
+        motion = { ...motion, [agent.id]: { ...at, path: [] } }
       }
       const until = now + BUBBLE_MS
       setAgent({ ...agent, pose: 'talk', script: { kind: 'report', phase: 'reporting', stopped: script.stopped, until } })
@@ -338,5 +345,12 @@ export const startReport = (state: ChoreoState, agentId: string, now: number, re
   const agents = { ...released.agents, [agentId]: walking }
   if (map === undefined || released.motion[agentId] === undefined) return { ...released, agents }
 
-  return { ...released, agents, motion: assignTarget(released.motion, map, agentId, 'lobby') }
+  const routed = assignTarget(released.motion, map, agentId, 'lobby')
+  const entry = routed[agentId]
+  // No path to the Lobby: a path left toward another room is dropped, never walked.
+  if (entry !== undefined && entry.path.length > 0 && !onAnchor(map, 'lobby', targetOf(entry))) {
+    return { ...released, agents, motion: { ...routed, [agentId]: { ...entry, path: [] } } }
+  }
+
+  return { ...released, agents, motion: routed }
 }
