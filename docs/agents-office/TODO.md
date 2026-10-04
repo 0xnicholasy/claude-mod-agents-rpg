@@ -221,7 +221,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check`
 
 ### TZZ Cleanup and land
-- status: done (#PRNUM, 2026-10-05)
+- status: done (#17, 2026-10-05)
 - needs: every other todo
 - scope: run `/implement cleanup`
 - done when: skill removed from the branch, TODO.md archived, landing PR into main open (merge commit), owner merges
