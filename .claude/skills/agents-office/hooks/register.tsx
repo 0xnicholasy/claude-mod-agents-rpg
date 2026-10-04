@@ -35,7 +35,7 @@ const log = atom({ plugin: 'agents-office', key: 'log' } as const, EMPTY_LOG)
 const loggedFailures = new Set<string>()
 
 // Runs a hook body; a failure is logged to the debug log as `agents-office: <name> threw`
-// (the line the /implement check greps for) and never thrown. The fallback may be a
+// (the line to grep the debug log for) and never thrown. The fallback may be a
 // thunk so its work (e.g. $.ui.resolve) also runs inside the guard.
 const guard = async <T,>(
   $: EngineInterface,

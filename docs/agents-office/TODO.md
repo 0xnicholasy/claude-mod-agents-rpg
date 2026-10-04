@@ -1,8 +1,8 @@
 # Agents Office: live RPG pane of the session's agents
 
 ultraplan: agents-office | branch: feat/agents-office | base: main | tag: pre-agents-office-main | created: 2026-10-04
-Status: ACTIVE
-Progress: 15/16 done
+Status: COMPLETE 2026-10-05, kept as backlog
+Progress: 16/16 done
 
 ## Goal
 A Claude Code mod at `.claude/skills/agents-office/` that opens a pane (`/office`, id `office`, title `Office`) drawing every running agent of this session (main, Agent-tool subagents, teammates) as a 3x2-cell pixel character in a tiled office with named rooms, rendered into one terminal `Raster` and animated at 10 fps with `$.clock.every` + `$.ui.blit`. Tool calls drive room and pose, spawns walk in, SendMessage meets in the Meeting Room, turn.complete reports in the Lobby and leaves. Every drawn value lives in `$.state` so a hot reload keeps the office populated.
@@ -221,7 +221,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check`
 
 ### TZZ Cleanup and land
-- status: todo
+- status: done (#PRNUM, 2026-10-05)
 - needs: every other todo
 - scope: run `/implement cleanup`
 - done when: skill removed from the branch, TODO.md archived, landing PR into main open (merge commit), owner merges
@@ -254,3 +254,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-05 T11 #14 fallback surfaces and minimum size: terminal-only line off terminal, widen line below 60x23 with no blit, resize redraw blits the new size; D48
 2026-10-05 T12 #15 hot-reload resilience: guard logs `agents-office: <name> threw`; tests for second session.start (one blit per tick), unknown-agent turn.complete, numeric SendMessage `to`, throwing blit; D49
 2026-10-05 T13 #16 README and plan: README sections intro/Run it/Rooms/Tiers/What you will see/Requirements/Develop/Known limits; plan.md matches the built modules and D2-D9 corrections
+2026-10-05 TZZ cleanup: /implement skill removed, landing PR opened
