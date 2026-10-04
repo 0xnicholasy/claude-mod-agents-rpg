@@ -212,7 +212,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "a second session.start keeps the roster and exactly one blit happens per tick" pass)
 
 ### T13 README and docs
-- status: done (#PR, 2026-10-05)
+- status: done (#16, 2026-10-05)
 - needs: T12
 - size: S
 - scope: `README.md`: what the office shows, `/office`, room legend, tier colors, terminal-only note, minimum pane size, how to run `npm run check`, how hot reload behaves. `docs/agents-office/plan.md` kept current with the settled API facts (Decisions D2-D9).
@@ -253,4 +253,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-05 T10 #13 interaction log strip: log.ts, arrival/told/reported lines, five dim Text rows under the Raster; D45-D47
 2026-10-05 T11 #14 fallback surfaces and minimum size: terminal-only line off terminal, widen line below 60x23 with no blit, resize redraw blits the new size; D48
 2026-10-05 T12 #15 hot-reload resilience: guard logs `agents-office: <name> threw`; tests for second session.start (one blit per tick), unknown-agent turn.complete, numeric SendMessage `to`, throwing blit; D49
-2026-10-05 T13 #PR README and plan: README sections intro/Run it/Rooms/Tiers/What you will see/Requirements/Develop/Known limits; plan.md matches the built modules and D2-D9 corrections
+2026-10-05 T13 #16 README and plan: README sections intro/Run it/Rooms/Tiers/What you will see/Requirements/Develop/Known limits; plan.md matches the built modules and D2-D9 corrections
