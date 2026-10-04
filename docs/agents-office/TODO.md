@@ -67,7 +67,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "raster packs the documented orange cell" pass)
 
 ### T01B Spike: blit loop in a mounted pane, /office, and agent.spawn shape
-- status: done (#PR, 2026-10-04)
+- status: done (#3, 2026-10-04)
 - needs: T01
 - size: M
 - scope: Declare atoms `viewport`, `agents` and `motion` (empty defaults) in `types/index.d.ts`. In `register.tsx`: terminal render returns a `Raster` key `office` sized from props (filled with one color) and writes the `viewport` atom; `session.start` starts `startLoop($)` from `hooks/loop.ts` whose tick bumps a counter and blits a frame that differs each tick. `agent.spawn` hook awaits `next(e)` and writes `{ id: agentId }` into `agents`, returning the result unchanged. Keep the skeleton's `/office` command. Record in `## Log`: whether a test's bottom `on('ui.blit')` sees the plugin's blit when the pane is mounted (D8), whether `$.tool.call` can carry `agentId` to the plugin hook (D9), whether redraw-per-tick flickers (D14). If the blit is not observable, switch the assertions to the frame grid and record the fallback as a Decision.
@@ -209,4 +209,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 
 ## Log
 2026-10-04 T01 #2 raster cell codec packs and validates cells (R4: sibling import works; plan vector corrected to iCUAAACI/wAAAAAB)
-2026-10-04 T01B #PR blit loop, /office and agent.spawn roster work in tests; D8 blit observable, D9 agentId reaches tool.call hook via cast, D14 not observable headless; D19 `$` cannot cross imports, D20 render cannot write state
+2026-10-04 T01B #3 blit loop, /office and agent.spawn roster work in tests; D8 blit observable, D9 agentId reaches tool.call hook via cast, D14 not observable headless; D19 `$` cannot cross imports, D20 render cannot write state
