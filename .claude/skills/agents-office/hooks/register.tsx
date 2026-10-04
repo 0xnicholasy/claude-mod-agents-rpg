@@ -111,17 +111,26 @@ const pushLines = async ($: EngineInterface, lines: string[]): Promise<void> => 
   await update($, log, cur => lines.reduce(pushLog, cur))
 }
 
-// One line per agent whose walk ended in this step: it had exactly one tile left and
-// the step moved it onto that tile. A reseat or a retarget is not an arrival (D45).
-const arrivalLines = (map: OfficeMap, roster: Roster, before: Motion, after: Motion): string[] =>
-  Object.keys(after).flatMap(id => {
-    const was = before[id]
-    const now = after[id]
-    const agent = roster[id]
+// Ids of agents whose walk ended in this step: one tile left in `cur`, none in `next`, standing
+// on that tile. A reseat or a retarget is not an arrival (D45).
+const arrivedIds = (cur: Motion, next: Motion): string[] =>
+  Object.keys(next).filter(id => {
+    const was = cur[id]
+    const now = next[id]
     const last = was?.path[0]
-    if (agent === undefined || was === undefined || now === undefined || last === undefined) return []
-    if (was.path.length !== 1 || now.path.length !== 0 || now.x !== last.x || now.y !== last.y) return []
+    if (was === undefined || now === undefined || last === undefined) return false
+
+    return was.path.length === 1 && now.path.length === 0 && now.x === last.x && now.y === last.y
+  })
+
+// Work walks only (D46): an agent under a script (meeting, report, Break Room) logs nothing.
+const arrivalLines = (map: OfficeMap, roster: Roster, motions: Motion, ids: string[]): string[] =>
+  ids.flatMap(id => {
+    const agent = roster[id]
+    const now = motions[id]
+    if (agent === undefined || now === undefined || agent.script !== undefined) return []
     const name = map.rooms.find(room => room.id === roomAt(map, now.x, now.y))?.name
+
     return [arrived(agent.label, name ?? 'office')]
   })
 
@@ -141,16 +150,18 @@ const meet = async ($: EngineInterface, from: string, to: unknown, text: string)
   const speaker = base.agents[from]
   if (speaker === undefined || typeof to !== 'string') return
   const peer = base.agents[to] ?? Object.values(base.agents).find(a => a.label === to)
+  if (peer?.id === speaker.id || to === from) return
   await pushLines($, [told(speaker.label, peer?.label ?? to, text)])
 }
 
 type SeatOptions = { entering?: string; advance?: boolean }
+type SeatResult = { motion: Motion; arrived: string[] }
 
 const seat = async (
   $: EngineInterface,
   roster: Roster,
   { entering, advance = false }: SeatOptions = {},
-): Promise<Motion | undefined> => {
+): Promise<SeatResult | undefined> => {
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
   if (map === undefined) return undefined
@@ -166,13 +177,17 @@ const seat = async (
   // cannot drop each other's entries.
   const current = await read($, motion)
   let next = compute(current)
-  if (next === current) return next
+  if (next === current) return { motion: next, arrived: [] }
+  // Arrivals come from the updater's own cur/next pair (A3), so a concurrent write cannot
+  // make a walk's last step be missed or counted twice.
+  let arrived: string[] = []
   await update($, motion, cur => {
     next = compute(cur)
+    arrived = advance ? arrivedIds(cur, next) : []
     return next
   })
 
-  return next
+  return { motion: next, arrived }
 }
 
 const tick = async ($: EngineInterface): Promise<void> => {
@@ -184,8 +199,8 @@ const tick = async ($: EngineInterface): Promise<void> => {
     const where = await read($, motion)
     return applyRoster($, cur => expire(cur, now, where, viewMap))
   })
-  const movedFrom = await read($, motion)
-  const placed = await guard($, 'place', undefined, async () => seat($, roster, { advance: true }))
+  const seated = await guard($, 'place', undefined, async () => seat($, roster, { advance: true }))
+  const placed = seated?.motion
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
   if (map === undefined) {
@@ -197,8 +212,8 @@ const tick = async ($: EngineInterface): Promise<void> => {
 
     return
   }
-  if (placed !== undefined) {
-    const lines = arrivalLines(map, roster, movedFrom, placed)
+  if (seated !== undefined) {
+    const lines = arrivalLines(map, roster, seated.motion, seated.arrived)
     await guard($, 'log', undefined, async () => pushLines($, lines))
   }
   const before: ChoreoState = {
@@ -434,7 +449,7 @@ export const register: Register = on => {
           <Box flexDirection="column">
             <Raster key="office" columns={columns} rows={rows} cells={cells} />
             {strip.map((line, i) => (
-              <Text key={`log-${i}`} dimColor>
+              <Text key={`log-${i}`} dimColor wrap="truncate-end">
                 {line}
               </Text>
             ))}

@@ -691,6 +691,40 @@ test('the strip shows quick-search arrived in the Library after it reaches the r
   await ui.redraw(paneProps)
 
   expect(await ui.find({ type: 'Text', text: /quick-search arrived in the Library/ })).toBeDefined()
+  // Late ticks must not log the same walk again (A3).
+  await clock.advance(2000)
+  await ui.redraw(paneProps)
+  expect(await ui.findAll({ type: 'Text', text: /arrived/ })).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a SendMessage meeting logs the told line and no arrival in the Meeting Room', async ($, on) => {
+  const { clock, ui } = await startOffice($, on)
+  await $.agent.spawn({ ...spawnArgs, name: 'a1' })
+  await $.tool.call({ tool: 'SendMessage', to: 'a1', message: 'hello' })
+  await clock.advance((longestPath() + 5) * 100)
+  await ui.redraw(paneProps)
+
+  expect(await ui.find({ type: 'Text', text: /main told a1: hello/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /arrived in the Meeting Room/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the strip always renders exactly five truncating rows', async ($, on) => {
+  const { ui } = await startOffice($, on)
+  await $.agent.spawn({ ...spawnArgs, name: 'a1' })
+  const rows = async () => {
+    await ui.redraw(paneProps)
+
+    return ui.findAll({ type: 'Text' })
+  }
+  expect(await rows()).toHaveLength(5)
+  for (let i = 0; i < 3; i += 1) await $.tool.call({ tool: 'SendMessage', to: 'a1', message: `m${i}` })
+  expect(await rows()).toHaveLength(5)
+  for (let i = 0; i < 5; i += 1) await $.tool.call({ tool: 'SendMessage', to: 'a1', message: `n${i}` })
+  const full = await rows()
+  expect(full).toHaveLength(5)
+  expect(full.every(row => row.props.wrap === 'truncate-end')).toBe(true)
   await ui.unmount()
 })
 

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { arrived, pushLog, reported, told } from './log'
+import { arrived, clean, pushLog, reported, told } from './log'
 
 test('pushLog keeps the newest five lines in order', () => {
   let log: string[] = []
@@ -14,4 +14,12 @@ test('log helpers format arrival, message and report lines', () => {
   expect(told('main', 'a1', 'x'.repeat(50))).toBe(`main told a1: ${'x'.repeat(40)}`)
   expect(reported('a1', 'answer')).toBe('a1 reported done')
   expect(reported('a1', 'aborted')).toBe('a1 reported stopped')
+})
+
+test('log lines carry no control characters from labels, targets or text', () => {
+  const evil = '\u001b[31mred\n\r\u009bX'
+  const lines = [arrived(evil, 'Library'), told(evil, evil, evil), reported(evil, 'answer')]
+  for (const line of lines) expect(/[\u0000-\u001f\u007f-\u009f]/.test(line)).toBe(false)
+  expect(clean(' a\tb\n\nc ')).toBe('a b c')
+  expect(told('x'.repeat(30), 'y'.repeat(30), 'z')).toBe(`${'x'.repeat(16)} told ${'y'.repeat(16)}: z`)
 })
