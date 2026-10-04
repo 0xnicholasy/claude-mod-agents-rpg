@@ -157,7 +157,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "a Read call on the main loop sends main toward the Library and the tool still runs" pass)
 
 ### T08 Messaging choreography: SendMessage meets in the Meeting Room
-- status: done (#PR, 2026-10-05)
+- status: done (#11, 2026-10-05)
 - needs: T07
 - size: M
 - scope: `hooks/choreo.ts` pure state machine with scripts stored on the agent (`script: { kind: 'meet', peer, phase, returnRoom }`): `startMeet(state, from, to, text, now)` (narrow `to` to string with a justifying comment, match roster by id or `name`; unknown target -> no script, just a bubble), both walk to Meeting Room anchors, on both arrived bubble over `from` with first 40 chars for 4000 ms, when the bubble expires both walk back to `returnRoom`. `advanceScripts(state, now)` is called from the tick. `register.tsx` `tool.call` for `SendMessage` calls `startMeet`.
@@ -238,4 +238,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T06 #8 BFS pathfinding over canStand footprints: findPath returns steps after from through to, empty when unreachable; D33 path convention
 2026-10-04 T06B #9 one-tile-per-tick movement: motion.ts assignTarget/step/drawnPose, spawns walk in from the Lobby door; D34-D36
 2026-10-04 T07 #10 activity mapping: activityFor, per-agent home desk, tool.call hook moves the agent before the tool runs; D37
-2026-10-05 T08 #PR messaging choreography: SendMessage seats both agents in the Meeting Room, bubble 4 s, both return; choreo.ts, bubbles now expire; D38-D40
+2026-10-05 T08 #11 messaging choreography: SendMessage seats both agents in the Meeting Room, bubble 4 s, both return; choreo.ts, bubbles now expire; D38-D40
