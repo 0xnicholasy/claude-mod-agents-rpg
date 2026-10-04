@@ -193,7 +193,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "the strip shows quick-search arrived in the Library after it reaches the room" pass)
 
 ### T11 Fallback surfaces, minimum size and resize handling
-- status: done (#PR, 2026-10-05)
+- status: done (#14, 2026-10-05)
 - needs: T05
 - size: S
 - scope: Render branches: non-terminal -> one `Text` "Office needs the terminal surface."; terminal below 60x(18+5) -> `Text` "Widen the pane for the office" and no Raster; the tick skips blitting when `viewport` is below minimum or the surface is not terminal. Resize: a new `bodyColumns`/`bodyRows` writes `viewport`, the next tick packs the new size; a blit `deny` is logged once per reason and the loop keeps running. Replaces the skeleton's empty-state test.
@@ -250,4 +250,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-05 T08 #11 messaging choreography: SendMessage seats both agents in the Meeting Room, bubble 4 s, both return; choreo.ts, bubbles now expire; D38-D40
 2026-10-05 T09 #12 completion choreography: finished subagent reports in the Lobby, parent says got it, walks to the Break Room and leaves; expire needs the Break Room; D41-D44
 2026-10-05 T10 #13 interaction log strip: log.ts, arrival/told/reported lines, five dim Text rows under the Raster; D45-D47
-2026-10-05 T11 #PR fallback surfaces and minimum size: terminal-only line off terminal, widen line below 60x23 with no blit, resize redraw blits the new size; D48
+2026-10-05 T11 #14 fallback surfaces and minimum size: terminal-only line off terminal, widen line below 60x23 with no blit, resize redraw blits the new size; D48
