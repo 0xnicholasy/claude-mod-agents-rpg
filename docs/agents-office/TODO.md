@@ -2,7 +2,7 @@
 
 ultraplan: agents-office | branch: feat/agents-office | base: main | tag: pre-agents-office-main | created: 2026-10-04
 Status: ACTIVE
-Progress: 11/16 done
+Progress: 12/16 done
 
 ## Goal
 A Claude Code mod at `.claude/skills/agents-office/` that opens a pane (`/office`, id `office`, title `Office`) drawing every running agent of this session (main, Agent-tool subagents, teammates) as a 3x2-cell pixel character in a tiled office with named rooms, rendered into one terminal `Raster` and animated at 10 fps with `$.clock.every` + `$.ui.blit`. Tool calls drive room and pose, spawns walk in, SendMessage meets in the Meeting Room, turn.complete reports in the Lobby and leaves. Every drawn value lives in `$.state` so a hot reload keeps the office populated.
@@ -77,6 +77,9 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - D42 Who reports (T09): only a non-teammate, non-main agent with a roster entry. `main` and unknown ids change nothing; a teammate's `turn.complete` only makes it `idle` (D26), computed by the same `startReport` call. With no map (viewport 0x0) the agent is marked done with its report script but nothing moves; the walk routes lazily on the first tick that has a map. (settled, T09)
 - D43 Expiry (T09, replaces D15's T02 form): `expire(roster, now, motion, map)` removes a `done` or `leaving` agent with a `completedAt` only when `now - completedAt >= DESPAWN_MS` AND its motion entry has an empty path and its top-left cell inside the Break Room interior bounds. Exception: with no map (no pane drawn) or no motion entry nothing is on screen, so the time alone decides (a closed pane still ages the roster out). `expire` stays pure and does not touch `motion`; the same tick's `placeMotion` drops the entry of an agent that left the roster (D31), so the removal and the dropped entry land in the same tick. A stuck agent (Break Room unreachable) is never removed while a map and its entry exist; the map tests prove every room is reachable, so this is accepted. The tick reads `motion` once before expiring. (settled, T09)
 - D44 Hook wiring (T09): the `turn.complete` hook awaits `next(e)`, then (for an `e.agentId`, inside `guard`) reads viewport, agents, motion and bubbles, computes `startReport(state, agentId, now, e.reason)` locally and writes through `commitChoreo` (D40); it returns the `next(e)` result unchanged. T02's test "a spawned agent leaves the roster 5 s after its turn completes" is deleted; `startOffice` in `office.test.ts` now also records the `agents` atom keys (`roster()`) and stubs `turn.complete`, since a test cannot register a hook after its first `$` call. (settled, T09)
+- D45 Log strip (T10): `hooks/log.ts` is pure: `pushLog` keeps the newest 5 lines oldest first, `arrived(label, roomName)`, `told(from, to, text)` (text through `bubbleText`, D39) and `reported(label, reason)` ("reported done", or "reported stopped" when `reason !== 'answer'`). The `log: string[]` atom is inline in `types/index.d.ts`. Lines are appended with `update($, log, cur => lines.reduce(pushLog, cur))`, an append that commutes, so concurrent dispatches keep each other's lines; this is the one write not computed once from a local triple (D40), because a line is an event, not a state transition. (settled, T10)
+- D46 Line sources (T10): arrival = in a tick, inside `seat`'s updater, an agent whose motion entry had exactly one path tile left in the updater's `cur` and now stands on that tile with an empty path in `next` (a reseat or retarget never matches; the lines come from that pair, not from a read before `seat`). Only work walks log: an agent with a `script` in the roster at that moment (meeting, report, Break Room) logs nothing, to cut noise; main logs work walks too. One line per arrival, in the room under its top-left cell (`Room.name`, "office" if outside every room). Told = `meet()` after `commitChoreo`, for a known speaker, a string `to` and not a self-message (peer matched by id, then label; an unmatched `to` prints as given), including the bubble-only unknown-peer case. Reported = `turn.complete` when the agent gains a report script it did not have, so main, teammates and unknown ids log nothing. Every formatter runs labels, `to` and text through `clean` (C0/C1 controls to spaces, whitespace collapsed), labels and `to` capped at 16 code points, text at 40. (settled, T10)
+- D47 Strip render (T10): under the Raster the terminal branch draws exactly `STRIP_ROWS` dim `Text` lines (`wrap="truncate-end"`) (`log` oldest first, padded with " " so the height is stable). It sits in the same branch as the Raster, so below the minimum size the existing blank-Raster behaviour stays and T11 owns the widen line. A `log` write triggers the engine's throttled redraw, so a line appears on the next redraw, not on a blit. (settled, T10)
 
 ## Todos
 
@@ -180,7 +183,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "a finished subagent reports, walks to the Break Room, leaves, and never teleports" pass)
 
 ### T10 Interaction log strip
-- status: todo
+- status: done (#13, 2026-10-05)
 - needs: T09
 - size: S
 - scope: `hooks/log.ts` `pushLog(log, line)` keeps the last 5; formatting helpers `arrived(label, room)`, `told(from, to, text)`, `reported(label)`. Hooks push lines on arrival (from the tick when a path completes), SendMessage, and report. Render: Raster rows = `bodyRows - 5`, then five `Text` lines (dim). Below 60x18 after subtracting the strip the widen line wins.
@@ -245,3 +248,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T07 #10 activity mapping: activityFor, per-agent home desk, tool.call hook moves the agent before the tool runs; D37
 2026-10-05 T08 #11 messaging choreography: SendMessage seats both agents in the Meeting Room, bubble 4 s, both return; choreo.ts, bubbles now expire; D38-D40
 2026-10-05 T09 #12 completion choreography: finished subagent reports in the Lobby, parent says got it, walks to the Break Room and leaves; expire needs the Break Room; D41-D44
+2026-10-05 T10 #13 interaction log strip: log.ts, arrival/told/reported lines, five dim Text rows under the Raster; D45-D47

@@ -677,3 +677,63 @@ test('a bubble expires on the tick even when no pane was ever drawn', async ($, 
 
   expect(latest).toEqual([])
 })
+
+test('the strip shows quick-search arrived in the Library after it reaches the room', async ($, on) => {
+  const { clock, ui, motion } = await startOffice($, on)
+  const bound = longestPath()
+  await $.agent.spawn({ ...spawnArgs, subagentType: 'quick-search' })
+  // Retarget before it walks anywhere, so the only arrival is the Library one.
+  await $.tool.call({ tool: 'Read', file_path: 'x', agentId: 'a1' } as never)
+  for (let i = 0; i < bound && (motion().a1?.path.length ?? 1) > 0; i += 1) {
+    await clock.advance(100)
+  }
+  expect(motion().a1?.path).toEqual([])
+  await ui.redraw(paneProps)
+
+  expect(await ui.find({ type: 'Text', text: /quick-search arrived in the Library/ })).toBeDefined()
+  // Late ticks must not log the same walk again (A3).
+  await clock.advance(2000)
+  await ui.redraw(paneProps)
+  expect(await ui.findAll({ type: 'Text', text: /arrived/ })).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a SendMessage meeting logs the told line and no arrival in the Meeting Room', async ($, on) => {
+  const { clock, ui } = await startOffice($, on)
+  await $.agent.spawn({ ...spawnArgs, name: 'a1' })
+  await $.tool.call({ tool: 'SendMessage', to: 'a1', message: 'hello' })
+  await clock.advance((longestPath() + 5) * 100)
+  await ui.redraw(paneProps)
+
+  expect(await ui.find({ type: 'Text', text: /main told a1: hello/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /arrived in the Meeting Room/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the strip always renders exactly five truncating rows', async ($, on) => {
+  const { ui } = await startOffice($, on)
+  await $.agent.spawn({ ...spawnArgs, name: 'a1' })
+  const rows = async () => {
+    await ui.redraw(paneProps)
+
+    return ui.findAll({ type: 'Text' })
+  }
+  expect(await rows()).toHaveLength(5)
+  for (let i = 0; i < 3; i += 1) await $.tool.call({ tool: 'SendMessage', to: 'a1', message: `m${i}` })
+  expect(await rows()).toHaveLength(5)
+  for (let i = 0; i < 5; i += 1) await $.tool.call({ tool: 'SendMessage', to: 'a1', message: `n${i}` })
+  const full = await rows()
+  expect(full).toHaveLength(5)
+  expect(full.every(row => row.props.wrap === 'truncate-end')).toBe(true)
+  await ui.unmount()
+})
+
+test('the strip shows main told a1: hello', async ($, on) => {
+  const { ui } = await startOffice($, on)
+  await $.agent.spawn({ ...spawnArgs, name: 'a1' })
+  await $.tool.call({ tool: 'SendMessage', to: 'a1', message: 'hello' })
+  await ui.redraw(paneProps)
+
+  expect(await ui.find({ type: 'Text', text: /main told a1: hello/ })).toBeDefined()
+  await ui.unmount()
+})

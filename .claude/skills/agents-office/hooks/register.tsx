@@ -7,11 +7,14 @@ import { advanceScripts, expireBubbles, startMeet, startReport } from './choreo'
 import type { ChoreoState } from './choreo'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
+import { arrived, pushLog, reported, told } from './log'
 import { mapFor, rasterSize } from './loop'
+import { roomAt } from './map'
+import type { OfficeMap } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { DEFAULT_COLOR, packCells } from './raster'
 import type { Cell } from './raster'
-import { LIST_MS, TICK_MS } from './timing'
+import { LIST_MS, STRIP_ROWS, TICK_MS } from './timing'
 
 const PANE = 'office'
 const opened = atom({ plugin: 'agents-office', key: 'opened' } as const, false)
@@ -25,6 +28,8 @@ const EMPTY_MOTION: Motion = {}
 const motion = atom({ plugin: 'agents-office', key: 'motion' } as const, EMPTY_MOTION)
 const EMPTY_BUBBLES: Bubble[] = []
 const bubbles = atom({ plugin: 'agents-office', key: 'bubbles' } as const, EMPTY_BUBBLES)
+const EMPTY_LOG: string[] = []
+const log = atom({ plugin: 'agents-office', key: 'log' } as const, EMPTY_LOG)
 
 // Runs a hook body; a failure is logged to the debug log and never thrown.
 const guard = async <T,>(
@@ -99,6 +104,36 @@ const commitChoreo = async (
   return next
 }
 
+// Appends lines to the strip log. The updater folds onto the current value, so lines
+// written by concurrent dispatches are all kept (appends commute).
+const pushLines = async ($: EngineInterface, lines: string[]): Promise<void> => {
+  if (lines.length === 0) return
+  await update($, log, cur => lines.reduce(pushLog, cur))
+}
+
+// Ids of agents whose walk ended in this step: one tile left in `cur`, none in `next`, standing
+// on that tile. A reseat or a retarget is not an arrival (D45).
+const arrivedIds = (cur: Motion, next: Motion): string[] =>
+  Object.keys(next).filter(id => {
+    const was = cur[id]
+    const now = next[id]
+    const last = was?.path[0]
+    if (was === undefined || now === undefined || last === undefined) return false
+
+    return was.path.length === 1 && now.path.length === 0 && now.x === last.x && now.y === last.y
+  })
+
+// Work walks only (D46): an agent under a script (meeting, report, Break Room) logs nothing.
+const arrivalLines = (map: OfficeMap, roster: Roster, motions: Motion, ids: string[]): string[] =>
+  ids.flatMap(id => {
+    const agent = roster[id]
+    const now = motions[id]
+    if (agent === undefined || now === undefined || agent.script !== undefined) return []
+    const name = map.rooms.find(room => room.id === roomAt(map, now.x, now.y))?.name
+
+    return [arrived(agent.label, name ?? 'office')]
+  })
+
 // SendMessage: both agents walk to the Meeting Room (D38). `to` is `unknown` because
 // the SendMessage input types it `unknown & unknown`; startMeet narrows it.
 const meet = async ($: EngineInterface, from: string, to: unknown, text: string): Promise<void> => {
@@ -111,15 +146,22 @@ const meet = async ($: EngineInterface, from: string, to: unknown, text: string)
     bubbles: await read($, bubbles),
   }
   await commitChoreo($, base, state => startMeet(state, from, to, text, now))
+  // `to` is narrowed like startMeet does; an unknown speaker or non-string target logs nothing.
+  const speaker = base.agents[from]
+  if (speaker === undefined || typeof to !== 'string') return
+  const peer = base.agents[to] ?? Object.values(base.agents).find(a => a.label === to)
+  if (peer?.id === speaker.id || to === from) return
+  await pushLines($, [told(speaker.label, peer?.label ?? to, text)])
 }
 
 type SeatOptions = { entering?: string; advance?: boolean }
+type SeatResult = { motion: Motion; arrived: string[] }
 
 const seat = async (
   $: EngineInterface,
   roster: Roster,
   { entering, advance = false }: SeatOptions = {},
-): Promise<Motion | undefined> => {
+): Promise<SeatResult | undefined> => {
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
   if (map === undefined) return undefined
@@ -135,13 +177,17 @@ const seat = async (
   // cannot drop each other's entries.
   const current = await read($, motion)
   let next = compute(current)
-  if (next === current) return next
+  if (next === current) return { motion: next, arrived: [] }
+  // Arrivals come from the updater's own cur/next pair (A3), so a concurrent write cannot
+  // make a walk's last step be missed or counted twice.
+  let arrived: string[] = []
   await update($, motion, cur => {
     next = compute(cur)
+    arrived = advance ? arrivedIds(cur, next) : []
     return next
   })
 
-  return next
+  return { motion: next, arrived }
 }
 
 const tick = async ($: EngineInterface): Promise<void> => {
@@ -153,7 +199,8 @@ const tick = async ($: EngineInterface): Promise<void> => {
     const where = await read($, motion)
     return applyRoster($, cur => expire(cur, now, where, viewMap))
   })
-  const placed = await guard($, 'place', undefined, async () => seat($, roster, { advance: true }))
+  const seated = await guard($, 'place', undefined, async () => seat($, roster, { advance: true }))
+  const placed = seated?.motion
   const size = await read($, viewport)
   const map = mapFor(size.columns, size.rows)
   if (map === undefined) {
@@ -164,6 +211,10 @@ const tick = async ($: EngineInterface): Promise<void> => {
     })
 
     return
+  }
+  if (seated !== undefined) {
+    const lines = arrivalLines(map, roster, seated.motion, seated.arrived)
+    await guard($, 'log', undefined, async () => pushLines($, lines))
   }
   const before: ChoreoState = {
     map,
@@ -309,7 +360,11 @@ export const register: Register = on => {
           motion: await read($, motion),
           bubbles: await read($, bubbles),
         }
-        await commitChoreo($, base, state => startReport(state, agentId, now, e.reason))
+        const after = await commitChoreo($, base, state => startReport(state, agentId, now, e.reason))
+        const started = after.agents[agentId]
+        if (started?.script?.kind === 'report' && base.agents[agentId]?.script?.kind !== 'report') {
+          await pushLines($, [reported(started.label, e.reason)])
+        }
       })
     }
 
@@ -386,10 +441,18 @@ export const register: Register = on => {
                 now: await $.clock.now(),
               })
         const cells = packCells(grid)
+        // Newest five lines under the Raster; empty rows keep the height stable.
+        const lines = await read($, log)
+        const strip = Array.from({ length: STRIP_ROWS }, (_, i) => lines[i] ?? ' ')
 
         return (
           <Box flexDirection="column">
             <Raster key="office" columns={columns} rows={rows} cells={cells} />
+            {strip.map((line, i) => (
+              <Text key={`log-${i}`} dimColor wrap="truncate-end">
+                {line}
+              </Text>
+            ))}
           </Box>
         )
       },
