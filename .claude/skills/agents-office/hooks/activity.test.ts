@@ -1,12 +1,16 @@
 import { expect, test } from 'claude-code/testing'
 import { activityFor } from './activity'
 
-test('every built-in tool maps to a room and pose and unknown tools go to the desk', () => {
+test('known tools map to a room and pose and unknown tools go to the desk', () => {
   const table: Array<[string, string, string]> = [
     ['Read', 'library', 'read'],
     ['Grep', 'library', 'read'],
     ['Glob', 'library', 'read'],
     ['NotebookRead', 'library', 'read'],
+    ['LSP', 'library', 'read'],
+    ['ReadMcpResourceTool', 'library', 'read'],
+    ['ListMcpResourcesTool', 'library', 'read'],
+    ['ReadMcpResourceDirTool', 'library', 'read'],
     ['Edit', 'desk', 'type'],
     ['Write', 'desk', 'type'],
     ['MultiEdit', 'desk', 'type'],
@@ -14,6 +18,7 @@ test('every built-in tool maps to a room and pose and unknown tools go to the de
     ['Bash', 'server', 'run'],
     ['BashOutput', 'server', 'run'],
     ['KillShell', 'server', 'run'],
+    ['Monitor', 'server', 'run'],
     ['WebSearch', 'phone', 'call'],
     ['WebFetch', 'phone', 'call'],
     ['mcp__web__fetch_page', 'phone', 'call'],

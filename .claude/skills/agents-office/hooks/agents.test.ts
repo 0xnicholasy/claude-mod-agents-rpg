@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { expire, onComplete, onSpawn, seedMain, syncList } from './agents'
+import { expire, onActivity, onComplete, onSpawn, seedMain, syncList } from './agents'
 import type { Roster, SpawnInput } from './agents'
 
 const input = (over: Partial<SpawnInput> = {}): SpawnInput => ({
@@ -65,4 +65,17 @@ test('syncList revives a done agent the list reports running', async () => {
   const revived = syncList(done, [info('running')])
   expect(revived.a1).toMatchObject({ status: 'working' })
   expect(revived.a1?.completedAt).toBeUndefined()
+})
+
+test("onActivity resolves 'desk' to home and ignores unknown, repeated and done agents", async () => {
+  const desk = { room: 'desk', pose: 'type' } as const
+  const roster = onSpawn(onSpawn({}, input(), { agentId: 'a1' }), input({ subagentType: 'Explore' }), { agentId: 'a2' })
+
+  const typed = onActivity(roster, 'a1', desk)
+  expect(typed.a1).toMatchObject({ room: 'devbay', pose: 'type' })
+  expect(onActivity(roster, 'a2', desk).a2).toMatchObject({ room: 'library', pose: 'type' })
+  expect(onActivity(typed, 'a1', desk)).toBe(typed)
+  expect(onActivity(roster, 'nobody', desk)).toBe(roster)
+  const done = onComplete(roster, 'a1', 1000)
+  expect(onActivity(done, 'a1', { room: 'server', pose: 'run' })).toBe(done)
 })

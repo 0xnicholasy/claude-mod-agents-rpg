@@ -64,14 +64,15 @@ export const seedMain = (roster: Roster): Roster =>
 export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult): Roster => {
   const id = result.agentId
   if (id === undefined) return roster
+  const home = homeOf(input.subagentType)
   const agent: OfficeAgent = {
     id,
     label: labelOf(input.name, input.subagentType, input.description),
     tier: tierOf(input.model) ?? tierOf(result.model) ?? 'grey',
     status: 'working',
-    room: 'lobby',
+    room: home,
     pose: 'idle',
-    home: homeOf(input.subagentType),
+    home,
     teammate: input.isTeammate === true,
   }
   if (input.parentAgentId !== undefined) agent.parentId = input.parentAgentId
@@ -92,10 +93,10 @@ export const onComplete = (roster: Roster, agentId: string, now: number): Roster
 }
 
 // Records what a tool call makes the agent do; 'desk' resolves to its home (D37).
-// Returns the same reference when the agent is unknown or nothing changes.
+// Returns the same reference when the agent is unknown, done or leaving, or nothing changes.
 export const onActivity = (roster: Roster, agentId: string, activity: Activity): Roster => {
   const agent = roster[agentId]
-  if (agent === undefined) return roster
+  if (agent === undefined || agent.status === 'done' || agent.status === 'leaving') return roster
   const room = activity.room === 'desk' ? agent.home : activity.room
   if (agent.room === room && agent.pose === activity.pose) return roster
 
@@ -115,14 +116,15 @@ export const syncList = (roster: Roster, infos: readonly AgentInfo[]): Roster =>
       continue
     }
     if (info.status !== 'running' && info.status !== 'idle' && info.status !== 'waiting') continue
+    const home = homeOf(info.type)
     const agent: OfficeAgent = {
       id: info.id,
       label: labelOf(info.name, info.type, info.description),
       tier: 'grey',
       status: info.status === 'idle' ? 'idle' : 'working',
-      room: 'lobby',
+      room: home,
       pose: 'idle',
-      home: homeOf(info.type),
+      home,
       teammate: true,
     }
     if (info.parentId !== undefined) agent.parentId = info.parentId

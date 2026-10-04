@@ -538,8 +538,25 @@ test('a repeated tool call does not re-path the agent', async ($, on) => {
   const { ui, motion } = await startOffice($, on)
   await $.tool.call({ tool: 'Read', file_path: 'x' })
   const first = motion()
+  expect(endsAtAnchor(first.main, 'library')).toBe(true)
   await $.tool.call({ tool: 'Read', file_path: 'y' })
 
   expect(motion()).toBe(first)
+  await ui.unmount()
+})
+
+test('a spawned Explore agent walks to a Library anchor', async ($, on) => {
+  const { ui, motion } = await startOffice($, on)
+  await $.agent.spawn({ ...spawnArgs, subagentType: 'Explore' })
+
+  expect(endsAtAnchor(motion().a1, 'library')).toBe(true)
+  await ui.unmount()
+})
+
+test('a spawned default agent walks to a Dev Bay anchor', async ($, on) => {
+  const { ui, motion } = await startOffice($, on)
+  await $.agent.spawn(spawnArgs)
+
+  expect(endsAtAnchor(motion().a1, 'devbay')).toBe(true)
   await ui.unmount()
 })
