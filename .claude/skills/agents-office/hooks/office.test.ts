@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { packSpikeFrame } from './loop'
 
 const paneProps = {
   title: 'Office',
@@ -59,6 +60,8 @@ test('office blits a new frame after one 100 ms tick', async ($, on) => {
   expect(seen[0]?.requestId).toBe('office')
   expect(seen[0]?.key).toBe('office')
   expect(seen[0]?.cells?.length).toBe(FRAME_LENGTH)
+  expect(seen[0]?.cells).toBe(packSpikeFrame(60, 18, 1))
+  expect(await ui.find({ type: 'Raster' })).toMatchObject({ props: { columns: 60, rows: 18 } })
   await ui.unmount()
 })
 
@@ -94,7 +97,7 @@ test('agent.spawn result delivers agentId to the roster', async ($, on) => {
     writes.push(e)
     return next(e)
   })
-  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1', teammateId: 'bot@team' }))
   const result = await $.agent.spawn({
     tool_use_id: 't1',
     prompt: 'p',
@@ -105,7 +108,7 @@ test('agent.spawn result delivers agentId to the roster', async ($, on) => {
     background: false,
     fork: false,
   })
-  expect(result.agentId).toBe('a1')
+  expect(result).toEqual({ model: 'claude-sonnet-5-5', agentId: 'a1', teammateId: 'bot@team' })
   expect(writes).toMatchObject([{ plugin: 'agents-office', key: 'agents', value: { a1: { id: 'a1' } } }])
 })
 
@@ -123,4 +126,62 @@ test('/office opens the office pane', async ($, on) => {
   })
 
   expect(opened).toMatchObject([{ id: 'office', title: 'Office' }])
+})
+
+const spawnArgs = {
+  tool_use_id: 't1',
+  prompt: 'p',
+  description: 'd',
+  subagentType: 'general-purpose',
+  provider: { plugin: 'engine', tier: 'core' },
+  parentModel: 'claude-opus-5-5',
+  background: false,
+  fork: false,
+} as const
+
+test('a denied spawn passes the deny through and records no agent', async ($, on) => {
+  const writes: Array<{ plugin: string; key: string }> = []
+  on('state.set', ($, e, next) => {
+    writes.push(e)
+    return next(e)
+  })
+  on('agent.spawn', () => ({ deny: 'x' }))
+  const result = await $.agent.spawn(spawnArgs)
+
+  expect(result).toEqual({ deny: 'x' })
+  expect(writes.filter(w => w.key === 'agents')).toHaveLength(0)
+})
+
+test('rendering twice at the same size writes viewport once', async ($, on) => {
+  const clock = mock.clock(on)
+  const writes: Array<{ plugin: string; key: string }> = []
+  on('state.set', ($, e, next) => {
+    writes.push(e)
+    return next(e)
+  })
+  const props = { plugin: 'agents-office', surface: 'terminal', component: 'Pane', requestId: 'office', props: paneProps } as const
+  const first = await $.ui.mount(props)
+  await clock.advance(1)
+  await first.unmount()
+  const second = await $.ui.mount(props)
+  await clock.advance(1)
+
+  expect(writes.filter(w => w.key === 'viewport')).toHaveLength(1)
+  await second.unmount()
+})
+
+test('no blit happens before the pane renders', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen: string[] = []
+  on('ui.blit', ($, e) => {
+    seen.push(e.key)
+    return { value: {} }
+  })
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: { command: 'office' } }))
+  on('ui.log', () => ({ value: undefined }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(100)
+
+  expect(seen).toHaveLength(0)
 })
