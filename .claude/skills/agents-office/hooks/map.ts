@@ -125,7 +125,8 @@ export const buildMap = (columns: number, rows: number): OfficeMap => {
   const tiles: TileKind[][] = Array.from({ length: rows }, () => Array<TileKind>(columns).fill('wall'))
   const set = (p: Point, kind: TileKind): void => {
     const row = tiles[p.y]
-    if (row) row[p.x] = kind
+    if (!row || p.x < 0 || p.x >= columns) throw new Error(`map: tile (${p.x},${p.y}) is outside ${columns}x${rows}`)
+    row[p.x] = kind
   }
   const fill = (r: Rect): void => {
     for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) set({ x, y }, 'floor')

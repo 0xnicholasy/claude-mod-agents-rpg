@@ -21,6 +21,8 @@ const at = <T>(items: T[], i: number): T => {
 const inside = (r: Rect, p: Point): boolean => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h
 const overlap = (a: Rect, b: Rect): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 
+const SIZES: Array<[number, number]> = [[60, 18], [61, 19], [77, 23], [100, 30], [120, 36]]
+
 const STEPS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 
 // Footprint positions reachable from a start by one-cell steps over canStand.
@@ -41,7 +43,8 @@ const reachable = (map: OfficeMap, start: Point): Set<string> => {
 }
 
 test('every room has a sign inside its bounds and at least two floor anchors', () => {
-  const map = buildMap(60, 18)
+  for (const [columns, rows] of SIZES) {
+  const map = buildMap(columns, rows)
   expect(map.rooms.length).toBe(7)
   for (const room of map.rooms) {
     expect(room.sign.text).toBe(SIGNS[room.id])
@@ -61,10 +64,12 @@ test('every room has a sign inside its bounds and at least two floor anchors', (
       expect(at(room.anchors, i).x - at(room.anchors, i - 1).x).toBeGreaterThanOrEqual(FOOTPRINT_W + 1)
     }
   }
+  }
 })
 
 test('rooms never overlap and every door touches a corridor floor tile', () => {
-  const map = buildMap(60, 18)
+  for (const [columns, rows] of SIZES) {
+  const map = buildMap(columns, rows)
   for (const [i, a] of map.rooms.entries()) {
     for (const b of map.rooms.slice(i + 1)) expect(overlap(a.bounds, b.bounds)).toBe(false)
     expect(a.door.length).toBe(3)
@@ -75,6 +80,7 @@ test('rooms never overlap and every door touches a corridor floor tile', () => {
       const touches = [above, below].some(y => inside(map.corridor, { x: d.x, y }) && tileAt(map, d.x, y) === 'floor')
       expect(touches).toBe(true)
     }
+  }
   }
 })
 
@@ -100,6 +106,29 @@ test('map scales to 120x36 keeping seven rooms and one-cell walls', () => {
   expect(roomAt(map, map.corridor.x, map.corridor.y)).toBe(undefined)
 })
 
+test('tile rows span the full width and rooms in a row fill it with one-cell walls', () => {
+  for (const [columns, rows] of SIZES) {
+    const map = buildMap(columns, rows)
+    expect(map.tiles.length).toBe(rows)
+    for (const row of map.tiles) expect(row.length).toBe(columns)
+    const ys = [...new Set(map.rooms.map(r => r.bounds.y))]
+    expect(ys.length).toBe(2)
+    for (const y of ys) {
+      const row = map.rooms.filter(r => r.bounds.y === y).sort((a, b) => a.bounds.x - b.bounds.x)
+      const first = at(row, 0).bounds
+      const last = at(row, row.length - 1).bounds
+      expect(first.x).toBe(1)
+      expect(last.x + last.w - 1).toBe(columns - 2)
+      for (let i = 1; i < row.length; i++) {
+        const prev = at(row, i - 1).bounds
+        const next = at(row, i).bounds
+        expect(next.x - (prev.x + prev.w)).toBe(1)
+        expect(tileAt(map, prev.x + prev.w, y)).toBe('wall')
+      }
+    }
+  }
+})
+
 test('buildMap throws OfficeTooSmall at 59x18', () => {
   expect(() => buildMap(59, 18)).toThrow(OfficeTooSmall)
   expect(() => buildMap(60, 17)).toThrow(OfficeTooSmall)
@@ -107,7 +136,7 @@ test('buildMap throws OfficeTooSmall at 59x18', () => {
 })
 
 test('every anchor and doorStand is a standable footprint and a footprint fits through every door', () => {
-  for (const [columns = 60, rows = 18] of [[60, 18], [120, 36], [77, 23]]) {
+  for (const [columns, rows] of SIZES) {
     const map = buildMap(columns, rows)
     const corridorStart = { x: map.corridor.x, y: map.corridor.y }
     expect(canStand(map, corridorStart.x, corridorStart.y)).toBe(true)
