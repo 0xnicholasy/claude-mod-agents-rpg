@@ -14,10 +14,8 @@ const viewport = atom(
   { columns: 0, rows: 0 },
 )
 const tickCount = atom({ plugin: 'agents-office', key: 'tick' } as const, 0)
-const agents = atom(
-  { plugin: 'agents-office', key: 'agents' } as const,
-  {} as Roster,
-)
+const EMPTY_ROSTER: Roster = {}
+const agents = atom({ plugin: 'agents-office', key: 'agents' } as const, EMPTY_ROSTER)
 
 // Runs a hook body; a failure is logged to the debug log and never thrown.
 const guard = async <T,>(
@@ -56,7 +54,8 @@ const refreshRoster = async ($: EngineInterface): Promise<void> => {
 }
 
 const tick = async ($: EngineInterface): Promise<void> => {
-  await expireRoster($, await $.clock.now())
+  // Own guard: a failing expiry must not stop the blit below.
+  await guard($, 'expire', undefined, async () => expireRoster($, await $.clock.now()))
   const size = await read($, viewport)
   if (size.columns < 1 || size.rows < 1) return
   const n = await update($, tickCount, count => count + 1)
@@ -79,9 +78,17 @@ const tick = async ($: EngineInterface): Promise<void> => {
     .catch(error => $.ui.log(`agents-office: blit threw ${String(error)}`, { to: 'debug' }))
 }
 
-// One frame loop per session.start; a hot reload drops the old environment's timers.
+type Timer = ReturnType<EngineInterface['clock']['every']>
+
+// Timer handles, not drawn state: a repeated session.start in one environment
+// cancels the previous timer so cadences never stack. A hot reload drops the
+// old environment's timers on its own.
+let loopTimer: Timer | undefined
+let refreshTimer: Timer | undefined
+
 const startLoop = ($: EngineInterface): void => {
-  $.clock.every(TICK_MS, () => {
+  loopTimer?.cancel()
+  loopTimer = $.clock.every(TICK_MS, () => {
     tick($).catch(error =>
       $.ui.log(`agents-office: tick threw ${String(error)}`, { to: 'debug' }),
     )
@@ -89,7 +96,8 @@ const startLoop = ($: EngineInterface): void => {
 }
 
 const startRefresh = ($: EngineInterface): void => {
-  $.clock.every(LIST_MS, () => {
+  refreshTimer?.cancel()
+  refreshTimer = $.clock.every(LIST_MS, () => {
     refreshRoster($).catch(error =>
       $.ui.log(`agents-office: agent.list refresh threw ${String(error)}`, { to: 'debug' }),
     )
@@ -113,11 +121,14 @@ export const register: Register = on => {
       // isInteractive, no fullscreen field (isFullscreen is on command.run
       // presentation and on the ui.render viewport only).
     })
-    // Separate guard: a failing agent.list must not stop the frame loop above.
+    // Own guards: neither a failing first agent.list nor a failing seed may stop
+    // the frame loop above or the 10 s refresh.
+    await guard($, 'session.start refresh timer', undefined, async () => {
+      startRefresh($)
+    })
     await guard($, 'session.start roster', undefined, async () => {
       await update($, agents, seedMain)
       await refreshRoster($)
-      startRefresh($)
     })
 
     return next(e)

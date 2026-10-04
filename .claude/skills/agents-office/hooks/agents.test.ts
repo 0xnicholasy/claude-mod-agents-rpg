@@ -23,6 +23,7 @@ test('tier comes from the alias, then the resolved model, else grey', async () =
 
   expect(tier('haiku', 'claude-opus-5-5')).toBe('haiku')
   expect(tier(undefined, 'claude-sonnet-5-5')).toBe('sonnet')
+  expect(tier('inherit', 'claude-opus-5-5')).toBe('opus')
   expect(tier(undefined, 'some-other-model')).toBe('grey')
 })
 
@@ -44,4 +45,24 @@ test('expire drops a done agent only after 5000 ms', async () => {
   expect(done.a1).toMatchObject({ status: 'done', completedAt: 1000 })
   expect(expire(done, 5999).a1).toBeDefined()
   expect(expire(done, 6000).a1).toBeUndefined()
+})
+
+test("a teammate's turn.complete makes it idle, not done", async () => {
+  const spawned = onSpawn({}, input({ isTeammate: true }), { agentId: 't1' })
+  const idle = onComplete(spawned, 't1', 1000)
+
+  expect(idle.t1).toMatchObject({ status: 'idle', teammate: true })
+  expect(idle.t1?.completedAt).toBeUndefined()
+  expect(onComplete(idle, 't1', 2000)).toBe(idle)
+  expect(expire(idle, 1_000_000).t1).toBeDefined()
+})
+
+test('syncList revives a done agent the list reports running', async () => {
+  const done = onComplete(onSpawn({}, input(), { agentId: 'a1' }), 'a1', 1000)
+  const info = (status: 'running' | 'idle') => ({ id: 'a1', description: 'd', type: 'x', status })
+
+  expect(syncList(done, [info('idle')])).toBe(done)
+  const revived = syncList(done, [info('running')])
+  expect(revived.a1).toMatchObject({ status: 'working' })
+  expect(revived.a1?.completedAt).toBeUndefined()
 })

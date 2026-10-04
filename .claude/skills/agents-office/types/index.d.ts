@@ -24,6 +24,7 @@ declare module 'claude-code' {
           status: 'working' | 'idle' | 'done' | 'leaving'
           room: string
           pose: string
+          teammate: boolean
           completedAt?: number
         }
       >

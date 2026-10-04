@@ -14,6 +14,8 @@ export type OfficeAgent = {
   status: AgentStatus
   room: string
   pose: string
+  // A teammate has several turns: turn.complete makes it idle, never done (D26).
+  teammate: boolean
   completedAt?: number
 }
 
@@ -21,7 +23,7 @@ export type Roster = Record<string, OfficeAgent>
 
 export type SpawnInput = Pick<
   AgentSpawnInput,
-  'name' | 'subagentType' | 'description' | 'model' | 'parentAgentId'
+  'name' | 'subagentType' | 'description' | 'model' | 'parentAgentId' | 'isTeammate'
 >
 // The slice of AgentSpawnResult the reducer reads; a deny carries no agentId.
 export type SpawnResult = { model?: string; agentId?: string }
@@ -37,12 +39,20 @@ const tierOf = (text: string | undefined): Tier | undefined => {
 const labelOf = (name: string | undefined, type: string, description: string): string =>
   name || type || description.slice(0, 12)
 
+// A live status carries no completedAt, so expire never drops the agent.
+const withStatus = (agent: OfficeAgent, status: 'working' | 'idle'): OfficeAgent => {
+  const next: OfficeAgent = { ...agent, status }
+  delete next.completedAt
+
+  return next
+}
+
 export const seedMain = (roster: Roster): Roster =>
   roster.main !== undefined
     ? roster
     : {
         ...roster,
-        main: { id: 'main', label: 'main', tier: 'grey', status: 'working', room: 'lobby', pose: 'idle' },
+        main: { id: 'main', label: 'main', tier: 'grey', status: 'working', room: 'lobby', pose: 'idle', teammate: false },
       }
 
 export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult): Roster => {
@@ -55,6 +65,7 @@ export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult):
     status: 'working',
     room: 'lobby',
     pose: 'idle',
+    teammate: input.isTeammate === true,
   }
   if (input.parentAgentId !== undefined) agent.parentId = input.parentAgentId
 
@@ -64,15 +75,27 @@ export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult):
 export const onComplete = (roster: Roster, agentId: string, now: number): Roster => {
   const agent = roster[agentId]
   if (agent === undefined || agent.status === 'done') return roster
+  if (agent.teammate) {
+    if (agent.status === 'idle') return roster
+
+    return { ...roster, [agentId]: withStatus(agent, 'idle') }
+  }
 
   return { ...roster, [agentId]: { ...agent, status: 'done', completedAt: now } }
 }
 
-// Adds listed agents the roster does not know yet; never removes or edits one.
+// Adds listed agents the roster does not know yet and revives a done agent the list
+// reports running (a new turn); never removes one.
 export const syncList = (roster: Roster, infos: readonly AgentInfo[]): Roster => {
   let next = roster
   for (const info of infos) {
-    if (next[info.id] !== undefined) continue
+    const known = next[info.id]
+    if (known !== undefined) {
+      if (known.status === 'done' && info.status === 'running') {
+        next = { ...next, [info.id]: withStatus(known, 'working') }
+      }
+      continue
+    }
     if (info.status !== 'running' && info.status !== 'idle' && info.status !== 'waiting') continue
     const agent: OfficeAgent = {
       id: info.id,
@@ -81,6 +104,7 @@ export const syncList = (roster: Roster, infos: readonly AgentInfo[]): Roster =>
       status: info.status === 'idle' ? 'idle' : 'working',
       room: 'lobby',
       pose: 'idle',
+      teammate: true,
     }
     if (info.parentId !== undefined) agent.parentId = info.parentId
     next = { ...next, [info.id]: agent }
