@@ -90,7 +90,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "a spawned agent leaves the roster 5 s after its turn completes" pass)
 
 ### T03 Tile map and room layout as data
-- status: done (#PR, 2026-10-04)
+- status: done (#5, 2026-10-04)
 - needs: T01B
 - size: S
 - scope: `hooks/map.ts`: `Room` ids, `buildMap(columns, rows)` returning tiles (`floor | wall | door | sign`), per-room bounds, sign position, door tile, ordered anchor list (desks) and `roomAt(tile)`; scales the fixed 60x18 layout to larger sizes by stretching room widths, keeping walls one cell and every room reachable through a door; throws `OfficeTooSmall` below 60x18.
@@ -218,4 +218,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T01 #2 raster cell codec packs and validates cells (R4: sibling import works; plan vector corrected to iCUAAACI/wAAAAAB)
 2026-10-04 T01B #3 blit loop, /office and agent.spawn roster work in tests; D8 blit observable, D9 agentId reaches tool.call hook via cast, D14 not observable headless; D19 `$` cannot cross imports, D20 render cannot write state
 2026-10-04 T02 #4 agent roster reducer: spawn/turn.complete/agent.list hooks and 5 s expiry; D24 stub shapes, D25 expire runs in tick
-2026-10-04 T03 #PR tile map: seven rooms, 3-wide doors, anchors and doorStands standable and reachable; D27 map contract
+2026-10-04 T03 #5 tile map: seven rooms, 3-wide doors, anchors and doorStands standable and reachable; D27 map contract
