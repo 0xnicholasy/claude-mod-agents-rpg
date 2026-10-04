@@ -100,7 +100,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "rooms never overlap and every door touches a corridor floor tile" pass)
 
 ### T04 Sprite sheet, poses and tier palette
-- status: done (#PR, 2026-10-04)
+- status: done (#6, 2026-10-04)
 - needs: T01
 - size: S
 - scope: `hooks/sprites.ts`: `Pose = 'idle' | 'walk' | 'read' | 'type' | 'run' | 'call' | 'talk'`; `sprite(pose, frame, tier)` returns a 3x2 `Cell[][]` of block/box-drawing glyphs with per-cell fg/bg; `TIER_COLORS` for haiku, sonnet, opus, fable, grey; a `nameplate(text)` row helper trimming to 12 cells.
@@ -221,4 +221,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T01B #3 blit loop, /office and agent.spawn roster work in tests; D8 blit observable, D9 agentId reaches tool.call hook via cast, D14 not observable headless; D19 `$` cannot cross imports, D20 render cannot write state
 2026-10-04 T02 #4 agent roster reducer: spawn/turn.complete/agent.list hooks and 5 s expiry; D24 stub shapes, D25 expire runs in tick
 2026-10-04 T03 #5 tile map: seven rooms, 3-wide doors, anchors and doorStands standable and reachable; D27 map contract
-2026-10-04 T04 #PR sprite sheet: 7 poses, 2-frame walk and work cycles, tier palette, nameplate; D28 transparency convention
+2026-10-04 T04 #6 sprite sheet: 7 poses, 2-frame walk and work cycles, tier palette, nameplate; D28 transparency convention
