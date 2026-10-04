@@ -12,8 +12,7 @@ import { mapFor, rasterSize } from './loop'
 import { roomAt } from './map'
 import type { OfficeMap } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
-import { DEFAULT_COLOR, packCells } from './raster'
-import type { Cell } from './raster'
+import { packCells } from './raster'
 import { LIST_MS, STRIP_ROWS, TICK_MS } from './timing'
 
 const PANE = 'office'
@@ -403,6 +402,18 @@ export const register: Register = on => {
       async () => {
         const { Box, Text } = $.ui.resolve(e)
         if (e.surface !== 'terminal') {
+          // Nothing is mounted off terminal, so zero the viewport (D48); a write
+          // inside the hook is denied, so it runs in a timer closure (D20).
+          $.clock.after(0, () => {
+            read($, viewport)
+              .then(current => {
+                if (current.columns === 0 && current.rows === 0) return current
+                return update($, viewport, () => ({ columns: 0, rows: 0 }))
+              })
+              .catch(error =>
+                $.ui.log(`agents-office: viewport write threw ${String(error)}`, { to: 'debug' }),
+              )
+          })
           return (
             <Box flexDirection="column">
               <Text>Office needs the terminal surface.</Text>
@@ -425,21 +436,22 @@ export const register: Register = on => {
               $.ui.log(`agents-office: viewport write threw ${String(error)}`, { to: 'debug' }),
             )
         })
-        // Below the 60x18 map minimum there is nothing to lay out: a blank floor
-        // keeps the Raster mounted (T11 replaces it with the widen line).
+        // Below the minimum size draw only the widen line (D48).
         const map = mapFor(columns, rows)
-        const grid =
-          map === undefined
-            ? Array.from({ length: rows }, () =>
-                Array.from({ length: columns }, (): Cell => ({ ch: 0x20, fg: DEFAULT_COLOR, bg: DEFAULT_COLOR })),
-              )
-            : buildFrame({
-                map,
-                agents: await read($, agents),
-                motion: await read($, motion),
-                bubbles: await read($, bubbles),
-                now: await $.clock.now(),
-              })
+        if (map === undefined) {
+          return (
+            <Box flexDirection="column">
+              <Text>Widen the pane for the office</Text>
+            </Box>
+          )
+        }
+        const grid = buildFrame({
+          map,
+          agents: await read($, agents),
+          motion: await read($, motion),
+          bubbles: await read($, bubbles),
+          now: await $.clock.now(),
+        })
         const cells = packCells(grid)
         // Newest five lines under the Raster; empty rows keep the height stable.
         const lines = await read($, log)
