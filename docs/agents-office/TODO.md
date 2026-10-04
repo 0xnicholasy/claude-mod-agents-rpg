@@ -2,7 +2,7 @@
 
 ultraplan: agents-office | branch: feat/agents-office | base: main | tag: pre-agents-office-main | created: 2026-10-04
 Status: ACTIVE
-Progress: 3/16 done
+Progress: 4/16 done
 
 ## Goal
 A Claude Code mod at `.claude/skills/agents-office/` that opens a pane (`/office`, id `office`, title `Office`) drawing every running agent of this session (main, Agent-tool subagents, teammates) as a 3x2-cell pixel character in a tiled office with named rooms, rendered into one terminal `Raster` and animated at 10 fps with `$.clock.every` + `$.ui.blit`. Tool calls drive room and pose, spawns walk in, SendMessage meets in the Meeting Room, turn.complete reports in the Lobby and leaves. Every drawn value lives in `$.state` so a hot reload keeps the office populated.
@@ -58,6 +58,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - D24 T02 settled (observed): a bottom `on('agent.list', () => ({ value: [...] }))` (op shape, `{ value }`) is read by `$.agent.list()` in the plugin; `$.turn.complete` in a test needs `{ answer, durationMs, isAborted, turnId, agentId?, reason }` (TurnCompleteFields 12629-12672) and a bottom `on('turn.complete', () => ({ text }))`; the hook receives `e.agentId` unchanged. D3 confirmed: subagent completion is `turn.complete` with `e.agentId`. `onSpawn` sets `parentId` only from `parentAgentId` (a main-spawned agent has none; T09 treats absent as main). `main` seeds as tier grey, room `lobby`. Reducers return the same reference when nothing changes, and `register.tsx` skips the `state.set` in that case. (settled, T02)
 - D25 `expire` and the roster refresh run from the frame loop and the 10 s timer in `register.tsx` (D19); the tick expires before its viewport check, so a roster ages out with the pane closed. `session.start` runs the roster seed/list in its own `guard` after `startLoop`, so a failing `agent.list` cannot stop the frame loop. Expiry drops a done agent when `now - completedAt >= 5000` ms (the `>=` boundary: gone at exactly 5000). Timer handles of the 100 ms loop and the 10 s refresh are module-level in `register.tsx` and cancelled before a repeated `session.start` starts new ones; the refresh timer starts before, and independently of, the first `agent.list`. (settled, T02)
 - D26 Teammates have several turns. `onComplete` marks only non-teammate agents `done` (with `completedAt`); a teammate (spawned with `isTeammate: true`, or first seen via `agent.list`) becomes `idle` with no `completedAt`, so it never expires on `turn.complete`. `syncList` also flips a known agent that is `done` back to `working` (clearing `completedAt`) only when the list reports it `running`. The agent carries `teammate: boolean`. (settled, T02 review)
+- D27 Map contract (T03): `hooks/map.ts` is per terminal cell (1 tile = 1 cell). A character's footprint is 3x2 with its top-left cell as position; the nameplate is on the row above and may overlap walls. `canStand(map, x, y)` is true when all 6 footprint cells are `floor` or `door` (sign tiles block). Doors are 3 cells wide in the wall row, the corridor is 3+ rows, and every door touches corridor floor, so T06 BFS runs over `canStand` positions. `Room.bounds` is the interior rect (walls excluded, so rooms never overlap); `roomAt` returns the id only for interior cells (undefined on wall, door, corridor). Per room: `door` (3 points), `doorStand` (footprint just inside the door), `sign` (`text` + `cells` on the top interior row, left-aligned), `anchors` (one row of desks at interior top + 2, 4-cell pitch, footprint fully inside, nameplate row = anchor y - 1 clear of the sign row). Ids `lobby devbay library server phone meeting break`; signs equal the display names except Phone Booth -> "Phone". 60x18 layout: top row Dev Bay 24 / Library 11 / Server Room 11 / Phone Booth 9 interior wide (5 rows), corridor 3 rows, bottom row Lobby 18 / Meeting Room 20 / Break Room 18 (6 rows); top doors centred, bottom doors right-aligned so the doorStand misses the sign. Larger sizes stretch widths (remainder to the first room), then corridor/room heights; Dev Bay has 6 anchors at 60 and more when wider. `buildMap` throws exported `OfficeTooSmall` below 60x18. Overlap policy: a doorStand footprint may overlap a seated anchor footprint in top-row rooms at small sizes; characters never collide (they walk through each other), so this only means a brief visual overlap at the door. Nameplates: desks are on a 4-cell pitch, so T05 clips each nameplate to the cells not used by a neighbouring nameplate (full labels appear in the log strip); the 12-char cap is the maximum, not a guarantee.
 
 ## Todos
 
@@ -89,7 +90,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "a spawned agent leaves the roster 5 s after its turn completes" pass)
 
 ### T03 Tile map and room layout as data
-- status: todo
+- status: done (#5, 2026-10-04)
 - needs: T01B
 - size: S
 - scope: `hooks/map.ts`: `Room` ids, `buildMap(columns, rows)` returning tiles (`floor | wall | door | sign`), per-room bounds, sign position, door tile, ordered anchor list (desks) and `roomAt(tile)`; scales the fixed 60x18 layout to larger sizes by stretching room widths, keeping walls one cell and every room reachable through a door; throws `OfficeTooSmall` below 60x18.
@@ -211,8 +212,10 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - Hot reload: `startLoop` runs on every `session.start`; idempotence stays in T12.
 - T02 follow-ups: `agents.ts` `room`/`pose` are plain strings until T03/T04 narrow them; the `tick` atom spike still writes every tick (removed in T05); `main` has no model tier (grey) because no event carries it.
 - Walk-cycle easing (two ticks per tile at 10 fps if one tile per tick looks too fast).
+- T03 follow-ups: `agents.ts` `room` is still `string`; narrow it to `RoomId` when T05/T07 touch it. Rooms have one desk row, so tall maps leave empty floor (add rows of anchors if it looks bare). `roomAt` ignores door cells; T06 may want door cells to resolve to their room.
 
 ## Log
 2026-10-04 T01 #2 raster cell codec packs and validates cells (R4: sibling import works; plan vector corrected to iCUAAACI/wAAAAAB)
 2026-10-04 T01B #3 blit loop, /office and agent.spawn roster work in tests; D8 blit observable, D9 agentId reaches tool.call hook via cast, D14 not observable headless; D19 `$` cannot cross imports, D20 render cannot write state
 2026-10-04 T02 #4 agent roster reducer: spawn/turn.complete/agent.list hooks and 5 s expiry; D24 stub shapes, D25 expire runs in tick
+2026-10-04 T03 #5 tile map: seven rooms, 3-wide doors, anchors and doorStands standable and reachable; D27 map contract
