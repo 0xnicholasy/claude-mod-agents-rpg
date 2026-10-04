@@ -4,6 +4,20 @@ import type { RoomId } from './map'
 import type { Pose } from './sprites'
 import { DESPAWN_MS } from './timing'
 
+// A meeting walk (D38). `text` is the speaker's bubble, shown on arrival; `until` is
+// set once both stand in the Meeting Room.
+export type Script = {
+  kind: 'meet'
+  peer: string
+  phase: 'going' | 'talking' | 'returning'
+  returnRoom: RoomId
+  returnPose: Pose
+  // The tile the agent left (its desk), so it sits back on its own anchor (D38).
+  returnAt: { x: number; y: number }
+  until?: number
+  text?: string
+}
+
 export type Tier = 'haiku' | 'sonnet' | 'opus' | 'fable' | 'grey'
 export type AgentStatus = 'working' | 'idle' | 'done' | 'leaving'
 
@@ -20,6 +34,8 @@ export type OfficeAgent = {
   // A teammate has several turns: turn.complete makes it idle, never done (D26).
   teammate: boolean
   completedAt?: number
+  // A running choreography (T08); tool activity is ignored while one runs.
+  script?: Script
 }
 
 export type Roster = Record<string, OfficeAgent>
@@ -93,11 +109,22 @@ export const onComplete = (roster: Roster, agentId: string, now: number): Roster
 }
 
 // Records what a tool call makes the agent do; 'desk' resolves to its home (D37).
-// Returns the same reference when the agent is unknown, done or leaving, or nothing changes.
+// Returns the same reference when the agent is unknown, done, leaving or or nothing changes. Under a script only `script.returnRoom`/`returnPose` change, so the agent finishes the meeting and then goes there.
 export const onActivity = (roster: Roster, agentId: string, activity: Activity): Roster => {
   const agent = roster[agentId]
   if (agent === undefined || agent.status === 'done' || agent.status === 'leaving') return roster
   const room = activity.room === 'desk' ? agent.home : activity.room
+  if (agent.script !== undefined) {
+    // Mid-meeting: the agent stays put; the activity is where it goes back to.
+    const { script } = agent
+    if (script.returnRoom === room && script.returnPose === activity.pose) return roster
+
+    const moved = { ...script, returnRoom: room, returnPose: activity.pose }
+    // Already walking back: the new activity is where it is heading now.
+    if (script.phase === 'returning') return { ...roster, [agentId]: { ...agent, room, pose: activity.pose, script: moved } }
+
+    return { ...roster, [agentId]: { ...agent, script: moved } }
+  }
   if (agent.room === room && agent.pose === activity.pose) return roster
 
   return { ...roster, [agentId]: { ...agent, room, pose: activity.pose } }

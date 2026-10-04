@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { buildMap } from './map'
+import { findPath } from './path'
 import { STRIP_ROWS } from './timing'
 
 const paneProps = {
@@ -487,9 +488,11 @@ type MotionWrite = Record<string, { x: number; y: number; path: Array<{ x: numbe
 const startOffice = async ($: Engine, on: On) => {
   const clock = mock.clock(on)
   let latest: MotionWrite = {}
+  let latestBubbles: Array<{ agentId: string; text: string; until: number }> = []
   on('state.set', ($, e, next) => {
-    // StateWrite types `value` as the union of every atom; only the motion atom is read.
+    // StateWrite types `value` as the union of every atom; only the motion and bubbles atoms are read.
     if (e.key === 'motion') latest = e.value as MotionWrite
+    if (e.key === 'bubbles') latestBubbles = e.value as typeof latestBubbles
     return next(e)
   })
   stubSession(on)
@@ -501,7 +504,7 @@ const startOffice = async ($: Engine, on: On) => {
   const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
   await clock.advance(100)
 
-  return { clock, ui, motion: () => latest }
+  return { clock, ui, motion: () => latest, bubbles: () => latestBubbles }
 }
 
 const endsAtAnchor = (entry: MotionWrite[string] | undefined, room: string): boolean => {
@@ -559,4 +562,75 @@ test('a spawned default agent walks to a Dev Bay anchor', async ($, on) => {
 
   expect(endsAtAnchor(motion().a1, 'devbay')).toBe(true)
   await ui.unmount()
+})
+
+// The most steps any walk on the map can take: BFS between every pair of anchors.
+const longestPath = (): number => {
+  const map = buildMap(60, 18)
+  const anchors = map.rooms.flatMap(r => r.anchors)
+  let longest = 0
+  for (const from of anchors) {
+    for (const to of anchors) longest = Math.max(longest, findPath(map, from, to).length)
+  }
+
+  return longest
+}
+
+test('main messaging a1 meets, shows the bubble for 4 s, then both return to their anchors', async ($, on) => {
+  const { clock, ui, motion, bubbles } = await startOffice($, on)
+  const bound = longestPath()
+  await $.agent.spawn(spawnArgs)
+  for (let i = 0; i < bound && (motion().a1 === undefined || (motion().a1?.path.length ?? 1) > 0); i += 1) {
+    await clock.advance(100)
+  }
+  const homes = { main: motion().main, a1: motion().a1 }
+  expect(homes.a1?.path).toEqual([])
+  const message = 'please review the parser changes and report back to me'
+  await $.tool.call({ tool: 'SendMessage', to: 'a1', message })
+
+  const meeting = buildMap(60, 18).rooms.find(r => r.id === 'meeting')?.anchors ?? []
+  const inMeeting = (id: 'main' | 'a1'): boolean => {
+    const at = motion()[id]
+    return at !== undefined && at.path.length === 0 && meeting.some(a => a.x === at.x && a.y === at.y)
+  }
+  let ticks = 0
+  while (!(inMeeting('main') && inMeeting('a1')) && ticks < bound) {
+    await clock.advance(100)
+    ticks += 1
+  }
+  expect(inMeeting('main') && inMeeting('a1')).toBe(true)
+  expect(bubbles()).toMatchObject([{ agentId: 'main', text: message.slice(0, 40) }])
+
+  await clock.advance(4000)
+  expect(bubbles()).toEqual([])
+
+  const home = (id: 'main' | 'a1'): boolean =>
+    motion()[id]?.x === homes[id]?.x && motion()[id]?.y === homes[id]?.y && motion()[id]?.path.length === 0
+  ticks = 0
+  while (!(home('main') && home('a1')) && ticks < bound) {
+    await clock.advance(100)
+    ticks += 1
+  }
+  expect(home('main')).toBe(true)
+  expect(home('a1')).toBe(true)
+  await ui.unmount()
+})
+
+test('a bubble expires on the tick even when no pane was ever drawn', async ($, on) => {
+  const clock = mock.clock(on)
+  let latest: Array<{ agentId: string; text: string; until: number }> | undefined
+  on('state.set', ($, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the bubbles atom is read.
+    if (e.key === 'bubbles') latest = e.value as NonNullable<typeof latest>
+    return next(e)
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('tool.call', () => ({ result: 'stub' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'SendMessage', to: 'nobody', message: 'hello' })
+  expect(latest).toMatchObject([{ agentId: 'main', text: 'hello' }])
+  await clock.advance(4100)
+
+  expect(latest).toEqual([])
 })
