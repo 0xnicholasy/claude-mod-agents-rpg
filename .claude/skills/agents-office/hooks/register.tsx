@@ -30,7 +30,8 @@ const bubbles = atom({ plugin: 'agents-office', key: 'bubbles' } as const, EMPTY
 const EMPTY_LOG: string[] = []
 const log = atom({ plugin: 'agents-office', key: 'log' } as const, EMPTY_LOG)
 
-// Runs a hook body; a failure is logged to the debug log and never thrown.
+// Runs a hook body; a failure is logged to the debug log as `agents-office: <name> threw`
+// (the line the /implement check greps for) and never thrown.
 const guard = async <T,>(
   $: EngineInterface,
   name: string,
@@ -40,7 +41,7 @@ const guard = async <T,>(
   try {
     return await body()
   } catch (error) {
-    $.ui.log(`${name} failed: ${String(error)}`, { to: 'debug' })
+    $.ui.log(`agents-office: ${name} threw ${String(error)}`, { to: 'debug' })
     return fallback
   }
 }

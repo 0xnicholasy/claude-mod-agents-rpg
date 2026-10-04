@@ -836,3 +836,80 @@ test('the strip shows main told a1: hello', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /main told a1: hello/ })).toBeDefined()
   await ui.unmount()
 })
+
+test('a second session.start keeps the roster and exactly one blit happens per tick', async ($, on) => {
+  const clock = mock.clock(on)
+  stubSession(on)
+  const roster = watchRoster(on)
+  const blits: string[] = []
+  on('ui.blit', ($, e) => {
+    blits.push(e.key)
+    return { value: {} }
+  })
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  await $.agent.spawn(spawnArgs)
+  await clock.advance(100)
+  expect(roster()).toContain('a1')
+
+  // A reload runs session.start again in the same environment; a1 is still walking in.
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(roster()).toContain('a1')
+  blits.length = 0
+  await clock.advance(100)
+
+  expect(roster()).toContain('a1')
+  expect(blits).toHaveLength(1)
+  await clock.advance(100)
+  expect(blits).toHaveLength(2)
+  await ui.unmount()
+})
+
+test('a turn.complete for an unknown agent changes nothing and resolves', async ($, on) => {
+  const { clock, ui, roster, motion, bubbles } = await startOffice($, on)
+  await $.agent.spawn(spawnArgs)
+  await clock.advance(100)
+  const before = { roster: roster(), motion: motion(), bubbles: bubbles() }
+  const result = await $.turn.complete({ ...turnArgs, agentId: 'ghost' })
+  await $.turn.complete({ ...turnArgs, agentId: undefined })
+
+  expect(result).toEqual({ text: 'done' })
+  expect({ roster: roster(), motion: motion(), bubbles: bubbles() }).toEqual(before)
+  await ui.unmount()
+})
+
+test('a SendMessage with a numeric to still runs the tool', async ($, on) => {
+  const { ui, bubbles } = await startOffice($, on)
+  await $.agent.spawn(spawnArgs)
+  const result = await $.tool.call({ tool: 'SendMessage', to: 42, message: 'hello' })
+
+  expect(result).toMatchObject({ result: 'stub' })
+  // Bubble-only path (D39): the speaker shows the text, nobody walks to a meeting.
+  expect(bubbles()).toMatchObject([{ agentId: 'main', text: 'hello' }])
+  await ui.unmount()
+})
+
+test('a ui.blit that throws leaves the frame loop running and repaints next tick', async ($, on) => {
+  const clock = mock.clock(on)
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  let calls = 0
+  on('ui.blit', () => {
+    calls += 1
+    if (calls === 1) throw new Error('blit boom')
+
+    return { value: {} }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  await clock.advance(100)
+  await clock.advance(100)
+
+  // The throwing first blit cleared the frame cache, so the next tick blits the same frame again.
+  expect(calls).toBeGreaterThanOrEqual(2)
+  await ui.unmount()
+})
