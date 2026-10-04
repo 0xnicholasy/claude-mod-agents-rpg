@@ -12,8 +12,7 @@ import { mapFor, rasterSize } from './loop'
 import { roomAt } from './map'
 import type { OfficeMap } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
-import { DEFAULT_COLOR, packCells } from './raster'
-import type { Cell } from './raster'
+import { packCells } from './raster'
 import { LIST_MS, STRIP_ROWS, TICK_MS } from './timing'
 
 const PANE = 'office'
@@ -428,18 +427,20 @@ export const register: Register = on => {
         // Below the 60x18 map minimum there is nothing to lay out: a blank floor
         // keeps the Raster mounted (T11 replaces it with the widen line).
         const map = mapFor(columns, rows)
-        const grid =
-          map === undefined
-            ? Array.from({ length: rows }, () =>
-                Array.from({ length: columns }, (): Cell => ({ ch: 0x20, fg: DEFAULT_COLOR, bg: DEFAULT_COLOR })),
-              )
-            : buildFrame({
-                map,
-                agents: await read($, agents),
-                motion: await read($, motion),
-                bubbles: await read($, bubbles),
-                now: await $.clock.now(),
-              })
+        if (map === undefined) {
+          return (
+            <Box flexDirection="column">
+              <Text>Widen the pane for the office</Text>
+            </Box>
+          )
+        }
+        const grid = buildFrame({
+          map,
+          agents: await read($, agents),
+          motion: await read($, motion),
+          bubbles: await read($, bubbles),
+          now: await $.clock.now(),
+        })
         const cells = packCells(grid)
         // Newest five lines under the Raster; empty rows keep the height stable.
         const lines = await read($, log)

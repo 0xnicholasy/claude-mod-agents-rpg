@@ -18,28 +18,67 @@ const paneProps = {
 // 60 x 18 cells of 12 bytes, base64 encoded.
 const FRAME_LENGTH = 4 * Math.ceil((60 * 18 * 12) / 3)
 
-test('office pane draws a Raster on the terminal and one line elsewhere', async ($, on) => {
+test('desktop and vscode surfaces show the terminal-only line and no Raster', async ($, on) => {
   mock.clock(on)
-  const terminal = await $.ui.mount({
+  for (const surface of ['desktop', 'vscode'] as const) {
+    const ui = await $.ui.mount({
+      plugin: 'agents-office',
+      surface,
+      component: 'Pane',
+      requestId: 'office',
+      props: paneProps,
+    })
+    expect(await ui.find({ type: 'Text', text: 'Office needs the terminal surface.' })).toBeDefined()
+    expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('a 50x12 pane shows the widen line and ticks do not blit', async ($, on) => {
+  const clock = mock.clock(on)
+  const blits: string[] = []
+  on('ui.blit', ($, e) => {
+    blits.push(e.key)
+    return { value: {} }
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({
     plugin: 'agents-office',
     surface: 'terminal',
     component: 'Pane',
     requestId: 'office',
-    props: paneProps,
+    props: { ...paneProps, bodyColumns: 50, scroll: { offset: 0, bodyRows: 12 } },
   })
-  expect(await terminal.find({ type: 'Raster', key: 'office' })).toBeDefined()
-  await terminal.unmount()
+  await clock.advance(300)
 
-  const desktop = await $.ui.mount({
-    plugin: 'agents-office',
-    surface: 'desktop',
-    component: 'Pane',
-    requestId: 'office',
-    props: paneProps,
+  expect(await ui.find({ type: 'Text', text: 'Widen the pane for the office' })).toBeDefined()
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+  expect(await ui.findAll({ type: 'Text', text: /arrived|told|reported/ })).toHaveLength(0)
+  expect(blits).toHaveLength(0)
+  await ui.unmount()
+})
+
+test('after redraw to 100x30 the Raster and the next blit are 100 by 25', async ($, on) => {
+  const clock = mock.clock(on)
+  const lengths: number[] = []
+  on('ui.blit', ($, e) => {
+    if ('cells' in e) lengths.push(e.cells.length)
+    return { value: {} }
   })
-  expect(await desktop.find({ type: 'Text', text: 'Office needs the terminal surface.' })).toBeDefined()
-  expect(await desktop.find({ type: 'Raster' })).toBeUndefined()
-  await desktop.unmount()
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  await ui.redraw({ ...paneProps, bodyColumns: 100, scroll: { offset: 0, bodyRows: 30 } })
+  await clock.advance(100)
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 100, rows: 25 } })
+  expect(lengths).toHaveLength(2)
+  expect(lengths[1]).toBe(4 * Math.ceil((100 * 25 * 12) / 3))
+  await ui.unmount()
 })
 
 test('office blits a new frame after one 100 ms tick', async ($, on) => {
