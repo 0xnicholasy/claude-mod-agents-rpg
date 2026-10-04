@@ -183,7 +183,7 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 - verify: `npm run check` (plus test "a finished subagent reports, walks to the Break Room, leaves, and never teleports" pass)
 
 ### T10 Interaction log strip
-- status: done (#PR, 2026-10-05)
+- status: done (#13, 2026-10-05)
 - needs: T09
 - size: S
 - scope: `hooks/log.ts` `pushLog(log, line)` keeps the last 5; formatting helpers `arrived(label, room)`, `told(from, to, text)`, `reported(label)`. Hooks push lines on arrival (from the tick when a path completes), SendMessage, and report. Render: Raster rows = `bodyRows - 5`, then five `Text` lines (dim). Below 60x18 after subtracting the strip the widen line wins.
@@ -248,4 +248,4 @@ Line numbers cite `vendor/claude-code/claude-code.d.ts` (the vendored copy; the 
 2026-10-04 T07 #10 activity mapping: activityFor, per-agent home desk, tool.call hook moves the agent before the tool runs; D37
 2026-10-05 T08 #11 messaging choreography: SendMessage seats both agents in the Meeting Room, bubble 4 s, both return; choreo.ts, bubbles now expire; D38-D40
 2026-10-05 T09 #12 completion choreography: finished subagent reports in the Lobby, parent says got it, walks to the Break Room and leaves; expire needs the Break Room; D41-D44
-2026-10-05 T10 #PR interaction log strip: log.ts, arrival/told/reported lines, five dim Text rows under the Raster; D45-D47
+2026-10-05 T10 #13 interaction log strip: log.ts, arrival/told/reported lines, five dim Text rows under the Raster; D45-D47
