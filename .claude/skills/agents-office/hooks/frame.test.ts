@@ -526,3 +526,38 @@ test('the +N mark never overwrites a sign in the compact layout', () => {
 
   expect(row.slice(-1 - `+${office.hidden}`.length, -1)).toBe(`+${office.hidden}`)
 })
+
+test('an anon team shows Session N', () => {
+  const anon = session('r2', 20, '', [remoteAgent('main', { label: 'lead', role: 'lead', room: 'team:r2' }), remoteAgent('a1', { label: 'dev', room: 'team:r2' })])
+  const remote: Remote = {
+    r1: session('r1', 10, 'early (main)', []),
+    r2: { ...anon, share: 'anon', team: { label: '', branch: '' } },
+  }
+  const teams = orderedTeams(own, remote)
+  const office = buildOffice(100, 18, teams, own.id)
+  const grid = buildFrame({ map: office, agents: {}, motion: {}, bubbles: [], now: 0 })
+  const drawn = office.rooms
+    .filter(r => r.kind === 'team')
+    .sort((a, b) => a.bounds.x - b.bounds.x)
+    .map(r => String.fromCodePoint(...r.sign.cells.map(p => grid[p.y]?.[p.x]?.ch ?? 0x3f)))
+
+  // Room order is early (10), r2 (20), mine (50): the anonymous session is the 2nd room.
+  expect(drawn).toEqual(['early (main)', 'Session 2', 'mine (main)'])
+  // Its plates carry the role, which is what an anonymous record publishes as the label.
+  const roster = remoteRoster(remote)
+  expect(roster['r2:main']?.label).toBe('lead')
+  expect(roster['r2:a1']?.label).toBe('dev')
+})
+
+test('two sessions of one worktree get distinct signs even with a long label', () => {
+  const long = 'agents-office-v2-t16 (feat/agents-office-v2-t16)'
+  // The twin publishes its label cut to 40 code points; the own label is whole.
+  const twin: Remote = { r1: session('r1', 90, long.slice(0, 40), []) }
+  const teams = orderedTeams({ id: 'team:own', label: long, startedAt: 50 }, twin)
+  const office = buildOffice(78, 18, teams, 'team:own')
+  const signs = office.rooms.filter(r => r.kind === 'team').map(r => r.sign.text)
+
+  expect(signs).toHaveLength(2)
+  expect(signs[0]).not.toBe(signs[1])
+  expect(signs[1]?.endsWith(' 2')).toBe(true)
+})

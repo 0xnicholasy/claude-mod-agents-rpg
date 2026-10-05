@@ -354,19 +354,22 @@ export const remoteRoster = (remote: Remote): Roster => {
 export type OwnTeam = { id: `team:${string}`; label: string; startedAt: number }
 
 // Teams in room order, so every pane agrees: `startedAt`, then id (D4). A label already taken by an earlier
-// room gets " 2", " 3" (D12). A record with no label (anonymous) is `Session` until T17 numbers it.
+// room gets " 2", " 3" (D12). An anonymous record has no label, so its room reads `Session N`, where N is the
+// 1-based room order (D22, D44). The own team always shows its own label.
 export const orderedTeams = (own: OwnTeam | null, remote: Remote): TeamSpec[] => {
   const all = [
-    ...(own === null ? [] : [{ id: own.id, label: own.label, startedAt: own.startedAt }]),
-    ...Object.values(remote).map(record => ({ id: `team:${record.sessionId}` as const, label: record.team.label || 'Session', startedAt: record.startedAt })),
+    // The own label is cut like a published one, so a same-worktree twin gets its " 2" in every pane (D44).
+    ...(own === null ? [] : [{ id: own.id, label: teamText(own.label), startedAt: own.startedAt }]),
+    ...Object.values(remote).map(record => ({ id: `team:${record.sessionId}` as const, label: record.team.label, startedAt: record.startedAt })),
   ].sort((a, b) => a.startedAt - b.startedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   const seen = new Map<string, number>()
 
-  return all.map(team => {
-    const count = (seen.get(team.label) ?? 0) + 1
-    seen.set(team.label, count)
+  return all.map((team, i) => {
+    const label = team.label === '' ? `Session ${i + 1}` : team.label
+    const count = (seen.get(label) ?? 0) + 1
+    seen.set(label, count)
 
-    return { id: team.id, label: count === 1 ? team.label : `${team.label} ${count}` }
+    return { id: team.id, label: count === 1 ? label : `${label} ${count}` }
   })
 }
 
