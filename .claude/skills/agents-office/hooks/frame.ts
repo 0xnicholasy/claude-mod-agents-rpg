@@ -2,7 +2,7 @@
 // speech bubbles into one grid of cells. No `$`; register.tsx reads the atoms
 // and passes plain data in.
 import type { Roster } from './agents'
-import { canStand, FOOTPRINT_W } from './map'
+import { canStand, FOOTPRINT_W, tileAt } from './map'
 import type { OfficeMap, Point, TileKind } from './map'
 import { DEFAULT_COLOR, isValidGlyph } from './raster'
 import type { Cell } from './raster'
@@ -87,6 +87,20 @@ const claimPlateCells = (plates: Plate[]): Map<string, string> => {
   return owners
 }
 
+// A plate stays on the floor run of its row that holds the sprite's centre: it shifts to
+// fit and is cut at the run's end when wider. No floor at the centre (a wall, door or sign
+// row) draws no plate, so a plate never covers a wall, sign or door.
+const fitPlate = (map: OfficeMap, center: number, y: number, cells: Cell[]): { left: number; cells: Cell[] } | undefined => {
+  if (tileAt(map, center, y) !== 'floor') return undefined
+  let lo = center
+  let hi = center
+  while (tileAt(map, lo - 1, y) === 'floor') lo--
+  while (tileAt(map, hi + 1, y) === 'floor') hi++
+  const fitted = cells.slice(0, hi - lo + 1)
+  const natural = center - Math.floor(fitted.length / 2)
+  return { left: Math.min(Math.max(natural, lo), hi - fitted.length + 1), cells: fitted }
+}
+
 export type FrameInput = {
   map: OfficeMap
   agents: Roster
@@ -124,14 +138,9 @@ export const buildFrame = ({ map, agents, motion, bubbles, now }: FrameInput): C
         if (floor !== undefined) put(grid, x, y, overlay(floor, over))
       }),
     )
-    const cells = nameplate(agent.label)
-    plates.push({
-      id: agent.id,
-      left: at.x + Math.floor(FOOTPRINT_W / 2) - Math.floor(cells.length / 2),
-      y: at.y - 1,
-      cells,
-      center: at.x + Math.floor(FOOTPRINT_W / 2),
-    })
+    const center = at.x + Math.floor(FOOTPRINT_W / 2)
+    const fit = fitPlate(map, center, at.y - 1, nameplate(agent.label))
+    if (fit !== undefined) plates.push({ id: agent.id, left: fit.left, y: at.y - 1, cells: fit.cells, center })
   }
 
   const owners = claimPlateCells(plates)

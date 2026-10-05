@@ -76,7 +76,7 @@ test('every room has a sign inside its bounds and at least two floor anchors', (
 test('sign rows are the literal wall or interior rows at 60x11, 60x12 and 60x18', () => {
   // [columns, rows, top-room sign row, bottom-room sign row]
   const expected: Array<[number, number, number, number]> = [
-    [60, 11, 0, 6],
+    [60, 11, 0, 7],
     [60, 12, 0, 7],
     [60, 18, 1, 11],
   ]
@@ -87,6 +87,34 @@ test('sign rows are the literal wall or interior rows at 60x11, 60x12 and 60x18'
       for (const cell of room.sign.cells) expect(cell.y).toBe(isTop ? topY : bottomY)
     }
   }
+})
+
+test("the 76x11 map keeps the top rooms' wall row with door gaps and drops only the outer bottom wall", () => {
+  const map = buildMap(76, 11)
+  const glyph = { wall: '#', floor: '.', door: '+', sign: '=' } as const
+  const rowText = (y: number): string => map.tiles[y]?.map(kind => glyph[kind]).join('') ?? ''
+  const floor = (n: number): string => '.'.repeat(n)
+  const wall = (n: number): string => '#'.repeat(n)
+  const sign = (n: number): string => '='.repeat(n)
+  const door = '+++'
+  const interior = `#${floor(32)}#${floor(14)}#${floor(14)}#${floor(11)}#`
+  const lower = `#${floor(24)}#${floor(25)}#${floor(23)}#`
+  const expected = [
+    `#${sign(7)}${wall(25)}#${sign(7)}${wall(7)}#${sign(11)}${wall(3)}#${sign(5)}${wall(6)}#`,
+    interior,
+    interior,
+    interior,
+    `${wall(15)}${door}${wall(21)}${door}${wall(12)}${door}${wall(11)}${door}${wall(5)}`,
+    `#${floor(74)}#`,
+    `#${floor(74)}#`,
+    `#${sign(5)}${wall(15)}${door}${wall(2)}${sign(12)}${wall(9)}${door}${wall(2)}${sign(10)}${wall(9)}${door}${wall(2)}`,
+    lower,
+    lower,
+    lower,
+  ]
+  expect(map.tiles).toHaveLength(11)
+  expect(expected.map((_, y) => rowText(y))).toEqual(expected)
+  expect(map.corridor).toEqual({ x: 1, y: 5, w: 74, h: 2 })
 })
 
 test('rooms never overlap and every door touches a corridor floor tile', () => {
@@ -163,10 +191,9 @@ test('heights 11 to 18 grow one interior row per step into the unchanged 60x18 l
     const map = buildMap(60, rows)
     const top = at(map.rooms, 0).bounds.h
     const bottom = at(map.rooms.filter(r => r.id === 'lobby'), 0).bounds.h
-    // At 11 rows the corridor is one row; the map exposes it as a 2-row walkable band.
-    const corridor = rows === 11 ? 1 : map.corridor.h
+    const corridor = map.corridor.h
     const bands = [top, corridor, bottom]
-    expect(top + corridor + bottom).toBe(rows - 4)
+    expect(top + corridor + bottom).toBe(rows - (rows === 11 ? 3 : 4))
     if (prev) bands.forEach((h, i) => expect(h).toBeGreaterThanOrEqual(prev?.[i] ?? 0))
     prev = bands
   }

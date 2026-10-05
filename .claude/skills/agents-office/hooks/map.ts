@@ -1,13 +1,14 @@
 // Tile map of the office: one tile is one terminal cell. Pure data and
 // geometry, no `$`. A character occupies a 3x2 footprint whose top-left cell
-// is its position; its nameplate is drawn on the row above (it may overlap
-// walls). Full layout from 18 rows (x right, y down); heights 11-17 use the
+// is its position; its nameplate is drawn on the row above (frame.ts keeps it
+// on that row's floor). Full layout from 18 rows (x right, y down); heights 11-17 use the
 // compact bands below, and a 3-row room puts its sign on the wall row above:
 //
 //   top row      4 rooms  Dev Bay | Library | Server Room | Phone Booth
 //   corridor     3 rows
 //   bottom row   3 rooms  Lobby | Meeting Room | Break Room
 //
+// At 11 rows the map has no outer bottom wall; the pane edge closes the bottom rooms.
 // Larger sizes stretch room widths, then heights; walls stay one cell.
 
 export type RoomId = 'lobby' | 'devbay' | 'library' | 'server' | 'phone' | 'meeting' | 'break'
@@ -66,9 +67,9 @@ const BOTTOM: Spec[] = [
   { id: 'break', name: 'Break Room', sign: 'Break Room', width: 18 },
 ]
 // Interior rows [top, corridor, bottom] for map heights 11..17; each step adds
-// one row, so 18 equals the full layout (5, 3, 6).
+// one row, so 18 equals the full layout (5, 3, 6); 11 is 12 without the outer bottom wall.
 const COMPACT_BANDS: ReadonlyArray<readonly [number, number, number]> = [
-  [3, 1, 3], // 11
+  [3, 2, 3], // 11: no outer bottom wall
   [3, 2, 3], // 12
   [3, 2, 4], // 13
   [4, 2, 4], // 14
@@ -142,12 +143,7 @@ export const buildMap = (columns: number, rows: number): OfficeMap => {
   }
 
   const topBand: RowBand = { interiorTop: 1, interiorRows: topRows, doorRow: topRows + 1 }
-  // A footprint is 2 rows tall, so a 1-row corridor cannot be walked: the top rooms' bottom
-  // wall row opens into it, making a 2-row walkable band (the 11-row map).
-  const corridor: Rect =
-    corridorRows < FOOTPRINT_H
-      ? { x: 1, y: topRows + 1, w: columns - 2, h: FOOTPRINT_H }
-      : { x: 1, y: topRows + 2, w: columns - 2, h: corridorRows }
+  const corridor: Rect = { x: 1, y: topRows + 2, w: columns - 2, h: corridorRows }
   const bottomWall = corridor.y + corridor.h
   const bottomBand: RowBand = { interiorTop: bottomWall + 1, interiorRows: bottomRows, doorRow: bottomWall }
 
