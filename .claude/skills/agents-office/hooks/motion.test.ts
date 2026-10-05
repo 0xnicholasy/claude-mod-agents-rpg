@@ -6,7 +6,7 @@ import type { Point } from './map'
 import { assignTarget, drawnFacing, drawnFrame, drawnPose, enterAtDoor, step } from './motion'
 import { frameCount } from './sprites'
 import type { OfficeMap } from './map'
-const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
+const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }])
 
 const map = buildMap(60, 18)
 

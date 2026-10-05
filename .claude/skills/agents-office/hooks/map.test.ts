@@ -17,7 +17,7 @@ const STEPS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 const BOTTOM_IDS = ['reception', 'conference', 'kitchen', 'lab', 'booths']
 
 const teamsOf = (n: number): TeamSpec[] => Array.from({ length: n }, (_, i) => ({ id: `team:s${i}` as const, label: `project-${i} (branch-${i})` }))
-const layout = (columns: number, rows: number, n = 2): OfficeMap => buildOffice(columns, rows, teamsOf(n), 'team:s0')
+const layout = (columns: number, rows: number, n = 2): OfficeMap => buildOffice(columns, rows, teamsOf(n))
 
 // Footprint positions reachable from a start by one-cell steps over canStand.
 const reachable = (map: OfficeMap, start: Point): Set<string> => {
@@ -164,19 +164,17 @@ test('every anchor and doorStand is a standable footprint and a footprint fits t
 const OFFICE_SIZES: Array<[number, number]> = [[60, 11], [60, 18], [100, 30]]
 const TEAM_COUNTS = [1, 2, 4, 6]
 
-test('four team rooms fit at 60 columns', () => {
+test('every team keeps a room, and the map widens past the pane (D45)', () => {
   for (const rows of [11, 18]) {
-    const office = buildOffice(60, rows, teamsOf(6), 'team:s5')
+    const office = buildOffice(60, rows, teamsOf(6))
     const teamRooms = office.rooms.filter(r => r.kind === 'team')
-    expect(teamRooms.length).toBe(4)
-    expect(office.hidden).toBe(2)
-    // The own team is kept even though it is last in room order.
-    expect(teamRooms.map(r => r.id)).toEqual(['team:s0', 'team:s1', 'team:s2', 'team:s5'])
+    expect(office.columns).toBe(73)
+    expect(teamRooms.map(r => r.id)).toEqual(['team:s0', 'team:s1', 'team:s2', 'team:s3', 'team:s4', 'team:s5'])
     for (const r of teamRooms) expect(r.bounds.w).toBeGreaterThanOrEqual(11)
     expect(office.rooms.filter(r => r.kind !== 'team').map(r => r.id)).toEqual(BOTTOM_IDS)
   }
-  const four = buildOffice(60, 18, teamsOf(4), 'team:s0')
-  expect(four.hidden).toBe(0)
+  const four = buildOffice(60, 18, teamsOf(4))
+  expect(four.columns).toBe(60)
   expect(four.rooms.filter(r => r.kind === 'team').length).toBe(4)
   // Bottom-band interiors are 12/12/10/10/10 at 60 columns.
   expect(four.rooms.filter(r => r.kind !== 'team').map(r => r.bounds.w)).toEqual([12, 12, 10, 10, 10])
@@ -185,7 +183,7 @@ test('four team rooms fit at 60 columns', () => {
 test('team desks are 5 apart', () => {
   for (const [columns, rows] of OFFICE_SIZES) {
     for (const n of TEAM_COUNTS) {
-      const office = buildOffice(columns, rows, teamsOf(n), 'team:s0')
+      const office = buildOffice(columns, rows, teamsOf(n))
       for (const room of office.rooms.filter(r => r.kind === 'team')) {
         expect(room.anchors.length).toBeGreaterThanOrEqual(2)
         for (let i = 1; i < room.anchors.length; i++) expect(at(room.anchors, i).x - at(room.anchors, i - 1).x).toBe(5)
@@ -198,7 +196,7 @@ test('team desks are 5 apart', () => {
 test('every room is reachable from Reception', () => {
   for (const [columns, rows] of OFFICE_SIZES) {
     for (const n of TEAM_COUNTS) {
-      const office = buildOffice(columns, rows, teamsOf(n), 'team:s0')
+      const office = buildOffice(columns, rows, teamsOf(n))
       const reception = at(office.rooms.filter(r => r.id === 'reception'), 0)
       for (const [i, a] of office.rooms.entries()) {
         for (const b of office.rooms.slice(i + 1)) expect(overlap(a.bounds, b.bounds)).toBe(false)
@@ -218,7 +216,7 @@ test('every room is reachable from Reception', () => {
 
 test('a team sign is cut by code point, never inside a surrogate pair', () => {
   const label = '\u{1F600}'.repeat(80)
-  const office = buildOffice(60, 18, [{ id: 'team:a', label }], 'team:a')
+  const office = buildOffice(60, 18, [{ id: 'team:a', label }])
   const team = at(office.rooms, 0)
   expect(Array.from(team.sign.text)).toHaveLength(team.bounds.w)
   expect(team.sign.text).toBe('\u{1F600}'.repeat(team.bounds.w))
@@ -227,7 +225,7 @@ test('a team sign is cut by code point, never inside a surrogate pair', () => {
 test('office signs are cut to the interior width and rooms tile the bands', () => {
   const label = 'a-very-long-project-name (a-very-long-branch-name)'.repeat(2)
   const long = [{ id: 'team:a', label }] as const
-  const office = buildOffice(60, 18, [...long], 'team:a')
+  const office = buildOffice(60, 18, [...long])
   const team = at(office.rooms, 0)
   expect(team.sign.text).toBe(label.slice(0, team.bounds.w))
   expect(team.sign.cells.length).toBe(team.bounds.w)
@@ -235,13 +233,13 @@ test('office signs are cut to the interior width and rooms tile the bands', () =
     expect(room.sign.cells.length).toBe(room.sign.text.length)
     for (const c of room.sign.cells) expect(tileAt(office, c.x, c.y)).toBe('sign')
   }
-  const wide = buildOffice(100, 30, teamsOf(1), 'team:s0')
+  const wide = buildOffice(100, 30, teamsOf(1))
   expect(wide.rooms.filter(r => r.kind !== 'team').map(r => r.sign.text)).toEqual(['Reception', 'Conference', 'Kitchen', 'Test Lab', 'Booths'])
   // At 60 columns the bottom signs share their row with the door or doorStand, so they stop short of it.
-  const compact = buildOffice(60, 11, teamsOf(1), 'team:s0')
+  const compact = buildOffice(60, 11, teamsOf(1))
   expect(compact.rooms.filter(r => r.kind !== 'team').map(r => r.sign.text)).toEqual(['Reception', 'Conferenc', 'Kitchen', 'Test La', 'Booths'])
   for (const room of compact.rooms) for (const d of room.door) expect(tileAt(compact, d.x, d.y)).toBe('door')
-  expect(() => buildOffice(59, 11, teamsOf(1), 'team:s0')).toThrow(OfficeTooSmall)
+  expect(() => buildOffice(59, 11, teamsOf(1))).toThrow(OfficeTooSmall)
 })
 
 test('same-label teams in a narrow room keep distinguishable signs', () => {
@@ -250,7 +248,7 @@ test('same-label teams in a narrow room keep distinguishable signs', () => {
     { id: 'team:a', label },
     { id: 'team:b', label: `${label} 2` },
   ]
-  const map = buildOffice(60, 18, teams, 'team:a')
+  const map = buildOffice(60, 18, teams)
   const signs = map.rooms.filter(r => r.kind === 'team').map(r => r.sign.text)
 
   expect(signs).toHaveLength(2)

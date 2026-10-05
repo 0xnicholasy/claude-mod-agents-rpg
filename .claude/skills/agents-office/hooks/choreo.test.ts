@@ -8,7 +8,7 @@ import { buildOffice } from './map'
 import { assignTarget, step, targetOf } from './motion'
 import { BUBBLE_MS, TICK_MS } from './timing'
 import type { OfficeMap } from './map'
-const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
+const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }])
 
 const map = buildMap(60, 18)
 

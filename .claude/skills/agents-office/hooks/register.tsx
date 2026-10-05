@@ -5,6 +5,7 @@ import { expire, markTool, migrateRoster, onActivity, onSpawn, seedMain, syncLis
 import type { Roster } from './agents'
 import { advanceScripts, expireBubbles, startMeet, startReport } from './choreo'
 import type { ChoreoState } from './choreo'
+import { cropFrame, focusOf, overlaySpan } from './camera'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { arrived, clean, pushLog, reported, told } from './log'
@@ -159,9 +160,9 @@ const teamsOf = async ($: EngineInterface): Promise<{ teams: TeamSpec[]; ownId: 
 const remoteAgentsOf = async ($: EngineInterface): Promise<Roster> => remoteRoster(await read($, remote))
 
 const mapAt = async ($: EngineInterface, columns: number, rows: number): Promise<OfficeMap | undefined> => {
-  const { teams, ownId } = await teamsOf($)
+  const { teams } = await teamsOf($)
 
-  return mapFor(columns, rows, teams, ownId)
+  return mapFor(columns, rows, teams)
 }
 
 // Writes the own team from the session id and cwd (D12). Without `force` an existing team is kept, so
@@ -578,6 +579,9 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const walker = await guard($, 'player', await read($, player), async () => stepPlayerTick($, map, now))
   const shown = await guard($, 'inspect', undefined, async () => inspectTick($, map, now, walker))
   const noStrip = (await read($, viewport)).strip === 0
+  const ownId = (await read($, team))?.id ?? ''
+  const focus = focusOf(map, walker, ownId)
+  const span = overlaySpan(map, size.columns, focus)
   const frame = buildFrame({
     map,
     agents: { ...after.agents, ...(await remoteAgentsOf($)) },
@@ -586,8 +590,10 @@ const tick = async ($: EngineInterface): Promise<void> => {
     now,
     player: walker,
     overlay: noStrip ? shown : undefined,
+    overlayFrom: span.from,
+    overlayWidth: span.width,
   })
-  const cells = packCells(frame)
+  const cells = packCells(cropFrame(frame, map, size.columns, focus))
   if (cells === lastFrameCells) return
   lastFrameCells = cells
   $.ui
@@ -880,16 +886,22 @@ export const register: Register = on => {
         }
         const inspected = await read($, inspect)
         const inspectLine = inspected !== null && inspected.until > (await $.clock.now()) ? inspected.text : undefined
+        const drawnPlayer = await read($, player)
+        const ownTeamId = (await read($, team))?.id ?? ''
+        const focus = focusOf(map, drawnPlayer, ownTeamId)
+        const span = overlaySpan(map, columns, focus)
         const grid = buildFrame({
           map,
           agents: { ...(await read($, agents)), ...(await remoteAgentsOf($)) },
           motion: await read($, motion),
           bubbles: await read($, bubbles),
           now: await $.clock.now(),
-          player: await read($, player),
+          player: drawnPlayer,
           overlay: stripCount === 0 ? inspectLine : undefined,
+          overlayFrom: span.from,
+          overlayWidth: span.width,
         })
-        const cells = packCells(grid)
+        const cells = packCells(cropFrame(grid, map, columns, focus))
         // The newest `stripCount` lines under the Raster, oldest of them first (the log is
         // stored oldest first); empty rows keep the height stable.
         const lines = await read($, log)

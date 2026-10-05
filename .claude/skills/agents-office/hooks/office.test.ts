@@ -5,7 +5,7 @@ import { buildOffice } from './map'
 import { findPath } from './path'
 import { STRIP_ROWS } from './timing'
 import type { OfficeMap } from './map'
-const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
+const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }])
 
 const paneProps = {
   title: 'Office',
@@ -1401,4 +1401,57 @@ test('session.start deletes presence files older than a day', async ($, on) => {
   const { runs } = await startPresence($, on)
 
   expect(runs).toContainEqual(['find', '/home/u/.claude/agents-office/presence', '-maxdepth', '1', '-type', 'f', '-name', '*.json', '-mmin', '+1440', '-delete'])
+})
+
+test('six teams at 60 columns still blit the mounted size', async ($, on) => {
+  const dir = '/home/u/.claude/agents-office/presence'
+  const lengths: number[] = []
+  const clock = mock.clock(on)
+  stubStore(on, { share: 'all' })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', (_$, e) => {
+    if ('cells' in e) lengths.push(e.cells.length)
+    return { value: {} }
+  })
+  on('process.run', (_$, e) => {
+    const stdout = e.argv[0] === 'printenv' ? (e.argv[1] === 'HOME' ? '/home/u\n' : '') : ''
+
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('fs.write', () => ({ value: undefined }))
+  const remotes: unknown[] = []
+  on('state.set', ($$, e, next) => {
+    if (e.key === 'remote') remotes.push(e.value)
+    return next(e)
+  })
+  const ids = ['s1', 's2', 's3', 's4', 's5']
+  on('fs.list', () => ({ value: ids.map(id => ({ name: `${id}.json`, kind: 'file' as const, size: 1, mtimeMs: 900, isLink: false })) }))
+  on('fs.read', (_$, e) => {
+    const id = e.path.slice(dir.length + 1, -'.json'.length)
+
+    return {
+      value: JSON.stringify({
+        v: 1,
+        sessionId: id,
+        startedAt: 1,
+        heartbeatAt: 900,
+        share: 'all',
+        team: { label: `other-${id} (main)`, branch: 'main' },
+        agents: [{ id: 'main', label: 'main', tier: 'opus', role: 'lead', room: `team:${id}`, pose: 'type', status: 'working' }],
+        player: null,
+      }),
+    }
+  })
+  await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(1000)
+  await clock.advance(1000)
+
+  // The virtual office is wider than the pane (5 remote teams plus the own one), but the Raster and the blit stay 60 wide.
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 60, rows: 18 } })
+  expect(Object.keys((remotes[remotes.length - 1] ?? {}) as Record<string, unknown>)).toHaveLength(5)
+  expect(lengths.length).toBeGreaterThan(0)
+  expect(lengths.every(n => n === 4 * Math.ceil((60 * 18 * 12) / 3))).toBe(true)
+  await ui.unmount()
 })
