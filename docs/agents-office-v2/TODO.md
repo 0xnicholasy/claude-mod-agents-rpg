@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 1/26 done
+Progress: 2/26 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -103,7 +103,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `git worktree list`; `git branch --list 'spike/*'`; `test ! -e .claude/worktrees/agents-office-spikes && echo gone`
 
 ### T02 Add the half-block pixel compositor and pair counter
-- status: todo
+- status: done (#25, 2026-10-05)
 - needs: none
 - size: S
 - scope: New pure `pixels.ts`:
@@ -470,3 +470,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 ## Log
 - 2026-10-05 plan written: 26 todos (8 S, 17 M, TZZ).
 - 2026-10-05 T01 done: spike worktree and branch spike/agents-office-v2 removed (only the approved spike edits were present).
+- 2026-10-05 T02 done: pixels.ts compose/countPairs/PAIR_BUDGET with tests; compose also throws on rows of unequal width.
