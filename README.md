@@ -106,14 +106,14 @@ Hair and skin tones come from a hash of the agent's id, so an agent keeps its lo
 - Work: the agent walks to the room its latest tool call names (see "Rooms") and stands there in a working pose; at a desk it sits.
 - Messaging: when an agent calls SendMessage to another known agent, both walk to the Conference room. The sender shows a speech bubble with the first 40 characters of the message for 4 seconds, then both return to what they were doing.
 - Completion: a subagent that finishes its turn walks to Reception and shows "done" (or "stopped" if the turn did not end with an answer). Its parent, or the main session, shows "got it". It then walks to the Kitchen and leaves once at least 5 seconds have passed since it finished.
-- Log: in the 3x2 layout, a pane with rows to spare shows up to five lines under the map with the newest events (arrivals at a room, messages, reports), oldest first. The 5x5 layout puts the map first and shows no log in an inline pane.
+- Log: the map comes first; a pane with more than 23 body rows shows up to five lines under it with the newest events (arrivals at a room, messages, reports), oldest first.
 - Cat: a cat wanders the shared rooms and rests 5 to 15 seconds between walks. It is only drawn in your own pane; it is not published.
 - Night: from 20:00 to 06:00 by your machine's clock, the floors, walls, doors and signs are 35% darker. Figures keep their colours.
 
 ## Figure sizes and the camera
 
-- At 72 pane columns or more (and at least 11 rows), a standing person is 5x5 cells, and a person at a desk takes 8x5 cells (the person plus the monitor). Their plate shows the label, cut to 7 characters.
-- Below 72 columns, down to the 60-column minimum, the pane falls back to 3x2-cell figures and the compact layout.
+- At every pane size the office draws (60 columns and 11 rows or more), a standing person is 5x5 cells, and a person at a desk takes 8x5 cells (the person plus the monitor). Their plate shows the label, cut to 7 characters.
+- A pane narrower or shorter than the 5x5 map (which is at least 71 columns by 23 rows) crops it with the camera below; there is no smaller layout.
 - A map larger than the pane is cropped around your character (or around your own team room when your character is not drawn). Arrows at the pane edges show where more office is hidden: `▲` and `▼` at the middle column of the first and last row, `◀` and `▶` on the first visible corridor row. `^` and `v` replace the vertical marks where the terminal cannot draw triangles.
 - At 80x24 the pane body is 76 columns by 11 rows, so you see one room band at a time and `[` `]` or WASD scroll the view. At 120x40 the whole office fits in the pane and no `▲` or `▼` shows.
 

@@ -6,20 +6,20 @@ import { findPath } from './path'
 import { NUDGE_TEXT } from './pad'
 import { STRIP_ROWS, TICK_MS } from './timing'
 import type { OfficeMap } from './map'
-const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }])
+const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], MID_FOOT)
 
 const paneProps = {
   title: 'Office',
   isFocused: false,
-  bodyColumns: 60,
+  bodyColumns: 76,
   placement: 'inline',
-  // 18 map rows plus the 5 strip rows of a full-height body (D29, D52).
-  scroll: { offset: 0, bodyRows: 18 + STRIP_ROWS },
+  // 23 mid map rows plus the 5 strip rows of a full-height body (D29, D52); the strip shows only past 23 body rows.
+  scroll: { offset: 0, bodyRows: 23 + STRIP_ROWS },
   view: {},
 } as const
 
-// 60 x 18 cells of 12 bytes, base64 encoded.
-const FRAME_LENGTH = 4 * Math.ceil((60 * 18 * 12) / 3)
+// 76 x 23 cells of 12 bytes, base64 encoded.
+const FRAME_LENGTH = 4 * Math.ceil((76 * 23 * 12) / 3)
 
 test('desktop and vscode surfaces show the terminal-only line and no Raster', async ($, on) => {
   mock.clock(on)
@@ -143,7 +143,7 @@ test('after redraw to 100x30 the Raster and the next blit are 100 by 25', async 
   stubSession(on)
   on('agent.list', () => ({ value: [] }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(100)
   await ui.redraw({ ...paneProps, bodyColumns: 100, scroll: { offset: 0, bodyRows: 30 } })
   await clock.advance(100)
@@ -178,7 +178,7 @@ test('office blits a new frame after one 100 ms tick', async ($, on) => {
   expect(seen[0]?.requestId).toBe('office')
   expect(seen[0]?.key).toBe('office')
   expect(seen[0]?.cells?.length).toBe(FRAME_LENGTH)
-  expect(await ui.find({ type: 'Raster' })).toMatchObject({ props: { columns: 60, rows: 18 } })
+  expect(await ui.find({ type: 'Raster' })).toMatchObject({ props: { columns: 76, rows: 23 } })
   await ui.unmount()
 })
 
@@ -228,7 +228,7 @@ test('mounted pane draws a Raster of bodyColumns by bodyRows minus the strip', a
 
 test('the pane draws the pad input', async ($, on) => {
   mock.clock(on)
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
 
   expect(await ui.find({ type: 'Input', key: 'pad-input' })).toBeDefined()
   await ui.unmount()
@@ -242,7 +242,7 @@ test('typing into the pad records a coalesced burst and flips the drawn value', 
     if (e.key === 'pad') pad = e.value as typeof pad
     return next(e)
   })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'wwww', kind: 'change' })
 
   expect(pad).toMatchObject({ handled: 'wwww', clear: ' ', intent: { key: 'w', taps: 4 } })
@@ -264,7 +264,7 @@ test('a pad key walks the player one tile per tick', async ($, on) => {
   on('agent.list', () => ({ value: [] }))
   stubSession(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(100)
   const spawn = xs[0]
   expect(spawn).toBeDefined()
@@ -367,6 +367,40 @@ test('/office opens the pane with focus and the pad asks for focus after 1500 ms
   expect(logs.filter(text => text.startsWith('agents-office: pad focus'))).toHaveLength(1)
   await clock.advance(1500)
   expect(logs).toHaveLength(1)
+})
+
+test('a module loaded over a drawn pane re-opens the pane with focus once, with no /office (D73)', async ($, on) => {
+  const clock = mock.clock(on)
+  const logs: string[] = []
+  stubSession(on, logs)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', () => ({ value: {} }))
+  const opens: Array<{ id: string; focus?: true }> = []
+  on('ui.open', (_$, e) => {
+    opens.push({ id: e.id, focus: e.focus })
+    return { value: { isPlaced: true } }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(1000)
+  expect(opens).toEqual([])
+  // No pane is drawn yet: nothing to focus.
+  expect(logs.filter(text => text.startsWith('agents-office: pad focus'))).toHaveLength(0)
+  const ui = await $.ui.mount({
+    plugin: 'agents-office',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'office',
+    props: paneProps,
+  })
+  await clock.advance(1000)
+  expect(opens).toEqual([{ id: 'office', focus: true }])
+  await clock.advance(1500)
+  // The test engine answers `$.ui.focus` with "no implementation", which the plugin logs once per call made.
+  expect(logs.filter(text => text.startsWith('agents-office: pad focus'))).toHaveLength(1)
+  await clock.advance(5000)
+  expect(opens).toHaveLength(1)
+  expect(logs.filter(text => text.startsWith('agents-office: pad focus'))).toHaveLength(1)
+  await ui.unmount()
 })
 
 const spawnArgs = {
@@ -577,14 +611,14 @@ test('remounting at a different size blits a new frame with the new size', async
   stubSession(on)
   on('agent.list', () => ({ value: [] }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const first = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const first = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(100)
   await first.unmount()
-  const second = await $.ui.mount(paneAt(20 + STRIP_ROWS))
+  const second = await $.ui.mount(paneAt(25 + STRIP_ROWS))
   await clock.advance(100)
 
   expect(lengths).toHaveLength(2)
-  expect(lengths[1]).toBe(4 * Math.ceil((60 * 20 * 12) / 3))
+  expect(lengths[1]).toBe(4 * Math.ceil((76 * 25 * 12) / 3))
   expect(lengths[1]).not.toBe(lengths[0])
   await second.unmount()
 })
@@ -600,7 +634,7 @@ test('a denied blit is retried on the next tick', async ($, on) => {
   stubSession(on)
   on('agent.list', () => ({ value: [] }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(100)
   await clock.advance(100)
 
@@ -619,7 +653,7 @@ test('a spawned agent is drawn on the first tick after the spawn', async ($, on)
   on('agent.list', () => ({ value: [] }))
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(100)
   await $.agent.spawn(spawnArgs)
   await clock.advance(100)
@@ -645,13 +679,13 @@ test('a spawned agent enters at the Reception door, then one tile further per 10
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   on('ui.blit', () => ({ value: {} }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(100)
   await $.agent.spawn(spawnArgs)
   await clock.advance(100)
   await clock.advance(100)
 
-  const reception = buildMap(60, 18).rooms.find(r => r.id === 'reception')
+  const reception = buildMap(76, 23).rooms.find(r => r.id === 'reception')
   expect(positions).toHaveLength(3)
   expect(positions[0]).toEqual(reception?.doorStand)
   for (const [i, p] of positions.slice(1).entries()) {
@@ -667,6 +701,8 @@ type MotionWrite = Record<string, { x: number; y: number; path: Array<{ x: numbe
 // `v1Roster`, when given, replaces the first roster write (the session.start seed), as if a v1 mod had stored it.
 const startOffice = async ($: Engine, on: On, v1Roster?: Record<string, unknown>) => {
   const clock = mock.clock(on)
+  // A mounted pane makes the tick re-open it with focus once (D73).
+  on('ui.open', () => ({ value: { isPlaced: true } }))
   let seedPending = v1Roster !== undefined
   let latest: MotionWrite = {}
   let latestBubbles: Array<{ agentId: string; text: string; until: number }> = []
@@ -700,7 +736,7 @@ const startOffice = async ($: Engine, on: On, v1Roster?: Record<string, unknown>
   on('tool.call', () => ({ result: 'stub' }))
   on('turn.complete', () => ({ text: 'done' }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(100)
 
   return { clock, ui, logs, motion: () => latest, bubbles: () => latestBubbles, roster: () => latestRoster, agents: () => latestAgents }
@@ -708,7 +744,7 @@ const startOffice = async ($: Engine, on: On, v1Roster?: Record<string, unknown>
 
 const endsAtAnchor = (entry: MotionWrite[string] | undefined, room: string): boolean => {
   const end = entry?.path[entry.path.length - 1]
-  const anchors = buildMap(60, 18).rooms.find(r => r.id === room)?.anchors ?? []
+  const anchors = buildMap(76, 23).rooms.find(r => r.id === room)?.anchors ?? []
 
   return end !== undefined && anchors.some(a => a.x === end.x && a.y === end.y)
 }
@@ -716,7 +752,7 @@ const endsAtAnchor = (entry: MotionWrite[string] | undefined, room: string): boo
 test('a Read call seats main at its team desk in the read pose and the tool still runs', async ($, on) => {
   const { ui, motion, agents } = await startOffice($, on)
   const result = await $.tool.call({ tool: 'Read', file_path: 'x' })
-  const desk = buildMap(60, 18).rooms.find(r => r.id === 'team:t1')?.anchors[0]
+  const desk = buildMap(76, 23).rooms.find(r => r.id === 'team:t1')?.anchors[0]
 
   expect(result).toMatchObject({ result: 'stub' })
   expect(agents().main).toMatchObject({ room: 'team:t1', pose: 'read' })
@@ -793,7 +829,7 @@ test('a v1 roster is migrated on the first tick', async ($, on) => {
 
 // The most steps any walk on the map can take: BFS between every pair of anchors.
 const longestPath = (): number => {
-  const map = buildMap(60, 18)
+  const map = buildMap(76, 23)
   const anchors = map.rooms.flatMap(r => r.anchors)
   let longest = 0
   for (const from of anchors) {
@@ -815,7 +851,7 @@ test('main messaging a1 meets, shows the bubble for 4 s, then both return to the
   const message = 'please review the parser changes and report back to me'
   await $.tool.call({ tool: 'SendMessage', to: 'a1', message })
 
-  const meeting = buildMap(60, 18).rooms.find(r => r.id === 'conference')?.anchors ?? []
+  const meeting = buildMap(76, 23).rooms.find(r => r.id === 'conference')?.anchors ?? []
   const inMeeting = (id: 'main' | 'a1'): boolean => {
     const at = motion()[id]
     return at !== undefined && at.path.length === 0 && meeting.some(a => a.x === at.x && a.y === at.y)
@@ -857,7 +893,7 @@ test('a finished subagent reports in Reception, walks to the Kitchen, leaves, an
   // The hook returns the downstream (stub) result unchanged.
   expect(result).toEqual({ text: 'done' })
 
-  const kitchen = buildMap(60, 18).rooms.find(r => r.id === 'kitchen')?.bounds
+  const kitchen = buildMap(76, 23).rooms.find(r => r.id === 'kitchen')?.bounds
   const inKitchen = (at: MotionWrite[string] | undefined): boolean =>
     kitchen !== undefined &&
     at !== undefined &&
@@ -971,11 +1007,11 @@ test('the strip always renders exactly five truncating rows', async ($, on) => {
   await ui.unmount()
 })
 
-test('a 14-row body shows the two newest strip lines', async ($, on) => {
+test('a 25-row body shows the two newest strip lines', async ($, on) => {
   const { ui } = await startOffice($, on)
   await $.agent.spawn({ ...spawnArgs, name: 'a1' })
   for (let i = 0; i < 3; i += 1) await $.tool.call({ tool: 'SendMessage', to: 'a1', message: `m${i}` })
-  await ui.redraw({ ...paneProps, placement: 'dock', scroll: { offset: 0, bodyRows: 14 } })
+  await ui.redraw({ ...paneProps, placement: 'dock', scroll: { offset: 0, bodyRows: 23 + 2 } })
   const rows = await ui.findAll({ type: 'Text' })
 
   expect(rows).toHaveLength(2)
@@ -1010,7 +1046,7 @@ test('a second session.start keeps the roster and exactly one blit happens per t
   on('agent.list', () => ({ value: [] }))
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(100)
   await $.agent.spawn(spawnArgs)
   await clock.advance(100)
@@ -1060,7 +1096,7 @@ test('the loop still blits when the branch lookup fails', async ($, on) => {
     throw new Error('git missing')
   })
   await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(100)
 
   expect(blits.length).toBeGreaterThan(0)
@@ -1104,7 +1140,7 @@ test('a ui.blit that throws leaves the frame loop running and repaints next tick
     return { value: {} }
   })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(100)
   await clock.advance(100)
   await clock.advance(100)
@@ -1174,6 +1210,9 @@ test('a docked pane sizes from bodyRows and ignores the viewport', async ($, on)
   await ui.unmount()
 })
 
+// A room jump walks one tile per tick across the 76-column mid map; this is long enough to arrive.
+const JUMP_MS = 12000
+
 test('inspect shows for 6 s and a messages deny keeps the base text', async ($, on) => {
   const clock = mock.clock(on)
   const lines: Array<string | null> = []
@@ -1187,13 +1226,13 @@ test('inspect shows for 6 s and a messages deny keeps the base text', async ($, 
   on('session.messages', () => ({ value: { deny: 'no transcript' } }))
   stubSession(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(11))
+  const ui = await $.ui.mount(paneAt(23))
   await clock.advance(100)
   // `]` then `[` walks the player out of its room and back onto the first desk, beside main.
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: ']', kind: 'change' })
-  await clock.advance(6000)
+  await clock.advance(JUMP_MS)
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: '[', kind: 'change' })
-  await clock.advance(6000)
+  await clock.advance(JUMP_MS)
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'e', kind: 'change' })
   await clock.advance(100)
   expect(lines.at(-1)).toMatch(/^main \| working \| \w+ \| .+ \| 0s$/)
@@ -1223,18 +1262,18 @@ test('the peek pane draws the lines', async ($, on) => {
   }))
   stubSession(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(11))
+  const ui = await $.ui.mount(paneAt(23))
   await clock.advance(100)
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: ']', kind: 'change' })
-  await clock.advance(6000)
+  await clock.advance(JUMP_MS)
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: '[', kind: 'change' })
-  await clock.advance(6000)
+  await clock.advance(JUMP_MS)
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'E', kind: 'change' })
   await clock.advance(200)
 
   // Opened without focus, titled for the agent; the pad keeps the keys.
   expect(opened.filter(o => o.id === 'office-peek')).toEqual([{ id: 'office-peek', title: 'Peek: main', focus: undefined }])
-  const peek = await $.ui.mount({ ...paneAt(11), requestId: 'office-peek' })
+  const peek = await $.ui.mount({ ...paneAt(23), requestId: 'office-peek' })
   const texts = (await peek.findAll({ type: 'Text' })).map(t => String(t.text))
   expect(texts).toEqual(['> fix the bug', 'Looking at it now', 'Found it'])
   await peek.unmount()
@@ -1249,15 +1288,15 @@ test('a messages deny shows Nothing to show in the peek pane', async ($, on) => 
   on('session.messages', () => ({ value: { deny: 'no transcript' } }))
   stubSession(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(11))
+  const ui = await $.ui.mount(paneAt(23))
   await clock.advance(100)
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: ']', kind: 'change' })
-  await clock.advance(6000)
+  await clock.advance(JUMP_MS)
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: '[', kind: 'change' })
-  await clock.advance(6000)
+  await clock.advance(JUMP_MS)
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'E', kind: 'change' })
   await clock.advance(200)
-  const peek = await $.ui.mount({ ...paneAt(11), requestId: 'office-peek' })
+  const peek = await $.ui.mount({ ...paneAt(23), requestId: 'office-peek' })
 
   expect((await peek.findAll({ type: 'Text' })).map(t => String(t.text))).toEqual(['Nothing to show for main.'])
   await peek.unmount()
@@ -1387,7 +1426,7 @@ test('presence writes on change and every 3 s', async ($, on) => {
 
 test('t, a message and Enter publish the chat line without moving the player', async ($, on) => {
   const { clock, writes } = await startPresence($, on)
-  const ui = await $.ui.mount(paneAt(11))
+  const ui = await $.ui.mount(paneAt(23))
   await clock.advance(1000)
   const playerOf = (): { rx: number; ry: number; chat?: string } =>
     JSON.parse(writes.at(-1)?.text ?? '{}').player as { rx: number; ry: number; chat?: string }
@@ -1488,7 +1527,7 @@ test('session.start deletes presence files older than a day', async ($, on) => {
   expect(runs).toContainEqual(['find', '/home/u/.claude/agents-office/presence', '-maxdepth', '1', '-type', 'f', '-name', '*.json', '-mmin', '+1440', '-delete'])
 })
 
-test('six teams at 60 columns still blit the mounted size', async ($, on) => {
+test('six teams at 76 columns still blit the mounted size', async ($, on) => {
   const dir = '/home/u/.claude/agents-office/presence'
   const lengths: number[] = []
   const clock = mock.clock(on)
@@ -1529,15 +1568,15 @@ test('six teams at 60 columns still blit the mounted size', async ($, on) => {
     }
   })
   await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
   await clock.advance(1000)
   await clock.advance(1000)
 
-  // The virtual office is wider than the pane (5 remote teams plus the own one), but the Raster and the blit stay 60 wide.
-  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 60, rows: 18 } })
+  // The virtual office is wider than the pane (5 remote teams plus the own one), but the Raster and the blit stay as wide as the mounted pane.
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 76, rows: 23 } })
   expect(Object.keys((remotes[remotes.length - 1] ?? {}) as Record<string, unknown>)).toHaveLength(5)
   expect(lengths.length).toBeGreaterThan(0)
-  expect(lengths.every(n => n === 4 * Math.ceil((60 * 18 * 12) / 3))).toBe(true)
+  expect(lengths.every(n => n === 4 * Math.ceil((76 * 23 * 12) / 3))).toBe(true)
   await ui.unmount()
 })
 
@@ -1581,14 +1620,14 @@ const startConfirm = async ($: Engine, on: On, answer: string) => {
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   stubSession(on, calls.logs)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(11))
+  const ui = await $.ui.mount(paneAt(23))
   await clock.advance(100)
   await $.agent.spawn(spawnArgs)
   await clock.advance(6000)
   await pressKey($, ']')
-  await clock.advance(6000)
+  await clock.advance(JUMP_MS)
   await pressKey($, '[')
-  await clock.advance(6000)
+  await clock.advance(JUMP_MS)
 
   return { clock, calls, ui }
 }
@@ -1694,7 +1733,7 @@ test('a finished subagent is never nudged', async ($, on) => {
   await run.ui.unmount()
 })
 
-test('a footprint change reseats the office', async ($, on) => {
+test('a resize between pane sizes keeps the mid footprint and does not reseat the office', async ($, on) => {
   const clock = mock.clock(on)
   const writes: Record<string, unknown> = {}
   on('state.set', ($, e, next) => {
@@ -1705,31 +1744,29 @@ test('a footprint change reseats the office', async ($, on) => {
   on('agent.list', () => ({ value: [] }))
   on('ui.blit', () => ({ value: {} }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const dock = (columns: number) => ({ ...paneProps, placement: 'dock', bodyColumns: columns, scroll: { offset: 0, bodyRows: 20 } }) as const
-  const ui = await $.ui.mount({ plugin: 'agents-office', surface: 'terminal', component: 'Pane', requestId: 'office', props: dock(70) })
+  const dock = (columns: number) => ({ ...paneProps, placement: 'dock', bodyColumns: columns, scroll: { offset: 0, bodyRows: 23 } }) as const
+  const ui = await $.ui.mount({ plugin: 'agents-office', surface: 'terminal', component: 'Pane', requestId: 'office', props: dock(62) })
   await clock.advance(TICK_MS * 3)
   type Entry = { x: number; y: number }
-  const small = (writes.motion as Record<string, Entry>).main
-  expect(small).toBeDefined()
-  expect(writes.seatFoot).toBeUndefined()
+  const narrow = (writes.motion as Record<string, Entry>).main
+  expect(narrow).toBeDefined()
+  expect(writes.viewport).toMatchObject({ columns: 62, foot: MID_FOOT })
 
-  // 70 to 76 columns crosses the mid threshold: within a tick or two every entry stands on the mid map.
+  // 62 to 76 columns: the footprint is the mid one at both sizes, so nothing is reseated.
   await ui.redraw(dock(76))
   await clock.advance(TICK_MS * 3)
   const own = writes.team as { id: `team:${string}`; label: string }
-  const mid = buildOffice(76, 20, [{ id: own.id, label: own.label }], MID_FOOT)
+  const mid = buildOffice(76, 23, [{ id: own.id, label: own.label }], MID_FOOT)
   const motion = writes.motion as Record<string, Entry>
-  expect(writes.seatFoot).toEqual(MID_FOOT)
+  expect(writes.seatFoot).toBeUndefined()
   expect(writes.viewport).toMatchObject({ columns: 76, foot: MID_FOOT })
-  expect(Object.keys(motion)).toContain('main')
+  expect(motion.main).toEqual(narrow)
   for (const entry of Object.values(motion)) expect(canStand(mid, entry.x, entry.y)).toBe(true)
-  expect(motion.main).not.toEqual(small)
 
-  // And back: the small layout reseats the same way.
-  await ui.redraw(dock(70))
+  // And back to the narrow pane: still the mid footprint, still no reseat.
+  await ui.redraw(dock(62))
   await clock.advance(TICK_MS * 3)
-  const small2 = buildOffice(70, 20, [{ id: own.id, label: own.label }])
-  expect(writes.seatFoot).toEqual({ w: 3, h: 2 })
-  for (const entry of Object.values(writes.motion as Record<string, Entry>)) expect(canStand(small2, entry.x, entry.y)).toBe(true)
+  expect(writes.seatFoot).toBeUndefined()
+  expect(writes.viewport).toMatchObject({ columns: 62, foot: MID_FOOT })
   await ui.unmount()
 })
