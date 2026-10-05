@@ -54,6 +54,7 @@ declare module 'claude-code' {
       bubbles: Array<{ agentId: string; text: string; until: number }>
       log: string[]
       team: { id: `team:${string}`; label: string; branch: string; startedAt: number } | null
+      pad: { handled: string; clear: string; intent?: { key: 'w' | 'a' | 's' | 'd'; at: number; taps: number } }
     }
   }
 }

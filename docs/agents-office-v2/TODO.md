@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 7/26 done
+Progress: 8/26 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -94,6 +94,8 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - D31 Layout details settled by T05. Team rooms split the top band evenly (remainder to the first room), at least 11 interior columns, desks 5 apart and centred. Bottom-room doors sit flush right (3 columns from the right edge; v1 was 4) and a bottom room's sign is cut before the door or doorStand, because the 12/12/10/10/10 widths would otherwise let the sign overwrite door cells: at 60 columns the signs read Reception, Conferenc, Kitchen, Test La, Booths; wider maps show them whole. `Room` and `OfficeMap` are generic over the id type (default v1 `RoomId`), and `canStand`, `tileAt` and `findPath` take `OfficeMap<string>` (path.ts changed by one line). At 11 rows a 10-wide bottom room keeps one desk anchor. D10 confirmed. (T05, 2026-10-05)
 - D32 T06 deviations. `V2RoomId` is now just `RoomId`, and `Room`/`OfficeMap` are no longer generic (T05's generics are reverted; path.ts takes `OfficeMap` again); `OfficeMap` carries `hidden` and each `Room` its `kind`. Agent helpers take the own team room as a parameter: `seedMain(roster, home)`, `onSpawn(roster, input, result, home)`, `syncList(roster, infos, home)`. Report phases are `toReception`/`toKitchen`. The `team` atom is `null` until session.start (forced write, label = cwd basename) or the first tick (fills it after a hot reload, from `$.session.id()`/`$.session.cwd()`); before it exists the map has no team room and home is Reception. A failing `$.session.id()` is logged once and leaves the office without a team room; office tests stub `on('session.id')`. `migrateRoster` (agents.ts) runs on the tick and also drops the migrated agents' motion entries so they reseat at their desks. Floor colors: team 0x2b303b, reception 0x3a3430, conference 0x2b3a3a, kitchen 0x3a3a2b, lab 0x2b2f45, booths 0x3a2b3a; corridor 0x2b303b. log.ts needed no change (room names come from `Room.name`). (T06, 2026-10-05) | confirms D11
 - D33 T07 details. `team.ts` exports `baseName`, `branchOf(stdout, ok)` and `teamLabel(cwd, stdout, ok)`; session.start runs the git lookup in its own guard `session.start branch` after the `team` guard, so a failed run keeps the basename. The `team` atom's `branch` field now holds the branch. Beyond the TODO scope, `map.ts` gained `cut(text, n)`, which cuts team and room signs by code point; this closes the T06 backlog item. frame.ts now draws sign glyphs per code point and shows `?` for a glyph the raster refuses, and the git call has a 3 s timeout; both came from the review. These are the deviations. Office tests that start a session must stub `process.run` (without it the engine throws `no implementation for process.run` and the guard logs it). (T07, 2026-10-05) | confirms D12
+
+- D34 T08 details. `pad.ts` exports `readKeys(handled, value, clear)`, `applyKeys`, `onPadInput`, `INITIAL_PAD`; the `pad` atom is `{ handled, clear, intent? }` with `intent = { key, at, taps }` (`taps` counts presses of the same key since it last changed; T09 consumes it). A value equal to the drawn `clear` marker is never a key; a value that does not extend `handled` is a reset field and its text after the marker is all new. Every input event that carried keys flips `clear` between '' and ' '. A value that is a prefix of `handled` is a deletion and yields no keys (review). The hook returns `next(e)` and ignores `submit`; the Input sits in a wrapper Box with the Raster so `bottom={0}` is the map's last row, not a strip line. The Input needs `submitLabel=""`: with the default label it wrapped vertically inside the 2-column Box and covered 6 rows. At 80x24 it still draws `…` and `⏎` over the bottom-left wall cell and the cell above it (the Reception interior, first column); no figure is hidden there. The test engine does not dispatch `$.ui.focus` to an `on('ui.focus')` hook (it answers `no implementation`), so the office test asserts the plugin made the call at 1500 ms by the one `pad focus` debug-log line it writes on that failure. A deny is logged once with `pad focus denied: <reason>`. (T08, 2026-10-05) | confirms D13 so far
 
 ## Todos
 
@@ -205,7 +207,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; team.test.ts: 'label is basename and branch', 'no branch gives the basename'. LIVE: the sign reads `claude-mod-agents-rpg (feat/agents-office-v2)`, cut to the room width.
 
 ### T08 Focus a pad input and decode key bursts
-- status: todo
+- status: done (#31, 2026-10-05)
 - needs: T07
 - size: M
 - scope:
@@ -469,6 +471,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - A 5x3-cell large figure on maps of 18 rows or more (brief, optional).
 - Replace presence polling with `classic.FileChanged` + `watchPaths` once spike S4 is confirmed.
 - Try focusing the pad without the 1500 ms delay (untested in S1b).
+- Pad (T08 review): a typed space can be lost when it equals the pending clear marker (matters when Space becomes a key, T20 chat); cancel or de-dup the focus timer when `/office` runs twice; the pad draws `…` and `⏎` over two cells of the bottom-left corner.
 - Minimap: rejected, because 80x24 has no spare rows.
 - Arrival log lines read `arrived in the <project>` for the own team room (T06); consider `at their desk` wording (T06).
 - Make `roomAt` generic over the room id so it accepts an `Office` (T06). At 60 columns the bottom signs read `Conferenc` and `Test La`; consider shorter sign text (T05 review).
@@ -482,3 +485,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 T05 done: buildOffice/V2RoomId/RoomKind/TeamSpec in map.ts with hidden count and own team kept; v1 buildMap unchanged (shares extracted rowBands/paintTiles helpers). See D31.
 - 2026-10-05 T06 done: v1 rooms and buildMap removed; office runs on team room + Reception/Conference/Kitchen/Test Lab/Booths, per-kind floors, `team` atom, v1 roster migration on the first tick. See D32.
 - 2026-10-05 T07 done: team label is `basename (branch)` from `git branch --show-current` (team.ts); signs cut by code point (`cut` in map.ts). See D33.
+- 2026-10-05 T08 done: pad Input focused 1500 ms after `/office`, `ui.input` decodes key bursts into the `pad` atom (WASD intents only so far). See D34.
