@@ -4,16 +4,16 @@
 import type { Roster } from './agents'
 import { canStand, FOOTPRINT_W, tileAt } from './map'
 import type { OfficeMap, Point, TileKind } from './map'
-import { DEFAULT_COLOR, isValidGlyph } from './raster'
+import { isValidGlyph } from './raster'
 import type { Cell } from './raster'
-import { drawnFrame, drawnPose, targetOf } from './motion'
-import { isTransparent, nameplate, sprite } from './sprites'
+import { drawnFacing, drawnFrame, drawnPose, targetOf } from './motion'
+import { figure, nameplate } from './sprites'
 
 export type Motion = Record<string, { x: number; y: number; path: Point[]; frame: number }>
 export type Bubble = { agentId: string; text: string; until: number }
 
-// Colors of the office itself. With SPRITE_PALETTE (14) they stay under the
-// 32-color budget of D6; frame.test.ts counts the colors of a full frame.
+// Colors of the office itself. frame.test.ts counts the color pairs of a full frame
+// against PAIR_BUDGET (D7).
 export const FLOOR_BG = 0x2b303b
 export const WALL_COLOR = 0x5c6370
 export const DOOR_BG = 0x8a6d46
@@ -55,13 +55,6 @@ const put = (grid: Cell[][], x: number, y: number, cell: Cell): void => {
   if (row === undefined || x < 0 || x >= row.length) return
   row[x] = cell
 }
-
-// Sprite cell over the floor (D28): DEFAULT_COLOR bg keeps the floor bg,
-// TRANSPARENT keeps the whole floor cell.
-const overlay = (floor: Cell, over: Cell): Cell =>
-  isTransparent(over)
-    ? floor
-    : { ch: over.ch, fg: over.fg, bg: over.bg === DEFAULT_COLOR ? floor.bg : over.bg }
 
 type Plate = { id: string; left: number; y: number; cells: Cell[]; center: number }
 
@@ -119,6 +112,9 @@ export const buildFrame = ({ map, agents, motion, bubbles, now }: FrameInput): C
     })
   }
 
+  // Floor colors come from this copy, so an overlapping figure never reads another figure's cell as floor.
+  const base = grid.map(row => row.slice())
+
   // Back to front: a sprite lower on the screen draws over one above it.
   const placed = Object.values(agents)
     .flatMap(agent => {
@@ -130,12 +126,22 @@ export const buildFrame = ({ map, agents, motion, bubbles, now }: FrameInput): C
   const plates: Plate[] = []
   for (const { agent, at } of placed) {
     const pose = drawnPose(agent, at)
-    sprite(pose, drawnFrame(pose, at, now), agent.tier).forEach((row, dy) =>
-      row.forEach((over, dx) => {
+    // `.` pixels take the floor under the figure's top-left cell (D5).
+    const floor = base[at.y]?.[at.x]?.bg ?? FLOOR_BG
+    figure({
+      pose,
+      facing: drawnFacing(at),
+      frame: drawnFrame(pose, at, now),
+      shirt: agent.tier,
+      // A roster entry from before roles existed has none: main was the lead, everyone else a dev.
+      role: agent.role ?? (agent.id === 'main' ? 'lead' : 'dev'),
+      key: agent.id,
+      floor,
+    }).forEach((row, dy) =>
+      row.forEach((cell, dx) => {
         const x = at.x + dx
         const y = at.y + dy
-        const floor = grid[y]?.[x]
-        if (floor !== undefined) put(grid, x, y, overlay(floor, over))
+        if (grid[y]?.[x] !== undefined) put(grid, x, y, cell)
       }),
     )
     const center = at.x + Math.floor(FOOTPRINT_W / 2)

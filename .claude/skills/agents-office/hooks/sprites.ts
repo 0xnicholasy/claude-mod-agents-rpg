@@ -6,16 +6,6 @@ export type Pose = 'idle' | 'walk' | 'read' | 'type' | 'run' | 'call' | 'talk'
 
 export const POSES: readonly Pose[] = ['idle', 'walk', 'read', 'type', 'run', 'call', 'talk']
 
-// Transparency convention (D28): a sprite never carries a floor color. Every
-// sprite cell uses `bg: DEFAULT_COLOR` except the face, which has a skin bg.
-// The frame builder (T05) overlays sprites on the floor: a cell whose bg is
-// DEFAULT_COLOR keeps the floor's bg under the glyph, and TRANSPARENT (a space
-// with DEFAULT_COLOR fg and bg) keeps the whole floor cell.
-export const TRANSPARENT: Readonly<Cell> = Object.freeze({ ch: 0x20, fg: DEFAULT_COLOR, bg: DEFAULT_COLOR })
-
-export const isTransparent = (c: Cell): boolean =>
-  c.ch === TRANSPARENT.ch && c.fg === TRANSPARENT.fg && c.bg === TRANSPARENT.bg
-
 export const TIER_COLORS: Readonly<Record<Tier, number>> = Object.freeze({
   haiku: 0x4fc3f7,
   sonnet: 0x66bb6a,
@@ -24,52 +14,13 @@ export const TIER_COLORS: Readonly<Record<Tier, number>> = Object.freeze({
   grey: 0x9e9e9e,
 })
 
-const HAIR = 0x6d4c41
-const SKIN = 0xffcc9c
-const PROP_BOOK = 0xef5350
-const PROP_KEYS = 0xcfd8dc
 const PROP_TERM = 0x00e676
 const PROP_PHONE = 0x90a4ae
 const PROP_TALK = 0xfff176
 const PLATE_FG = 0xe0e0e0
 const PLATE_BG = 0x202028
 
-export const SPRITE_PALETTE: readonly number[] = Object.freeze([
-  ...Object.values(TIER_COLORS),
-  HAIR, SKIN, PROP_BOOK, PROP_KEYS, PROP_TERM, PROP_PHONE, PROP_TALK, PLATE_FG, PLATE_BG,
-])
-
-export const frameCount = (pose: Pose): number => (pose === 'idle' ? 1 : 2)
-
 const cell = (ch: number, fg: number, bg: number = DEFAULT_COLOR): Cell => ({ ch, fg, bg })
-
-// Props sit beside the head (row 0, right) and alternate between 2 frames.
-const PROPS: Readonly<Record<Exclude<Pose, 'idle' | 'walk'>, readonly [Readonly<Cell>, Readonly<Cell>]>> = Object.freeze({
-  read: [cell(0x25a4, PROP_BOOK), cell(0x25a5, PROP_BOOK)],
-  type: [cell(0x25ac, PROP_KEYS), cell(0x25ad, PROP_KEYS)],
-  run: [cell(0x3e, PROP_TERM), cell(0x5f, PROP_TERM)],
-  call: [cell(0x25ae, PROP_PHONE), cell(0x25af, PROP_PHONE)],
-  talk: [cell(0x22, PROP_TALK), cell(0x2026, PROP_TALK)],
-})
-
-export const sprite = (pose: Pose, frame: number, tier: Tier): Cell[][] => {
-  const color = Object.hasOwn(TIER_COLORS, tier) ? TIER_COLORS[tier] : TIER_COLORS.grey
-  const n = frameCount(pose)
-  const idx = Number.isInteger(frame) ? ((frame % n) + n) % n : 0
-  const f = idx === 0 ? 0 : 1
-  // Head: hair on the top half of the glyph, skin (face) on the bottom half.
-  const head = cell(0x2580, HAIR, SKIN)
-  const top: Cell[] = [{ ...TRANSPARENT }, head, { ...TRANSPARENT }]
-  let bottom: Cell[] = [cell(0x2590, color), cell(0x2588, color), cell(0x258c, color)]
-  if (pose === 'walk') {
-    bottom = f === 0
-      ? [cell(0x259f, color), cell(0x2588, color), cell(0x2598, color)]
-      : [cell(0x259d, color), cell(0x2588, color), cell(0x2599, color)]
-  } else if (pose !== 'idle') {
-    top[2] = { ...PROPS[pose][f] }
-  }
-  return [top, bottom]
-}
 
 export const nameplate = (text: string, maxWidth = 12): Cell[] => {
   const width = Math.max(0, Math.floor(maxWidth))
@@ -99,7 +50,8 @@ const SCREEN_ALT = 0x4fa3c7
 const EYE = 0x1a1a1a
 
 export const ROLE_COLORS: Readonly<Record<Role, number>> = Object.freeze({
-  lead: 0x263238,
+  // D6 gave 0x263238, which is indistinguishable from the floor (0x2b303b): the lead's legs vanished.
+  lead: 0x546e7a,
   dev: 0x2f4a7a,
   research: 0x7a6a4f,
   review: 0x5e3a6e,
@@ -146,7 +98,8 @@ const WALK_LEGS: readonly (readonly [boolean, boolean, boolean])[] = [
   [true, true, false],
 ]
 
-export const figureFrames = (pose: Pose): number => {
+// Frames per pose: 1 idle, 4 walk (0-3), 2 for every work pose.
+export const frameCount = (pose: Pose): number => {
   if (pose === 'idle') return 1
   if (pose === 'walk') return 4
   return 2
@@ -160,7 +113,7 @@ export const figure = (o: FigureOpts): Cell[][] => {
   const h = hashKey(o.key)
   const hair = HAIR_TONES[h % HAIR_TONES.length] ?? HAIR_TONES[0]!
   const skin = SKIN_TONES[Math.floor(h / HAIR_TONES.length) % SKIN_TONES.length] ?? SKIN_TONES[0]!
-  const n = figureFrames(o.pose)
+  const n = frameCount(o.pose)
   const f = Number.isInteger(o.frame) ? ((o.frame % n) + n) % n : 0
 
   if (SEATED.has(o.pose)) {
@@ -197,3 +150,6 @@ export const figure = (o: FigureOpts): Cell[][] => {
   }
   return compose(art, o.floor)
 }
+
+// Every color a figure or nameplate can draw; a frame adds only the office colors.
+export const SPRITE_PALETTE: readonly number[] = Object.freeze([...FIGURE_PALETTE, PLATE_FG, PLATE_BG])

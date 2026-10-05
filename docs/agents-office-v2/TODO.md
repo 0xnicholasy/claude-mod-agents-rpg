@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 3/26 done
+Progress: 4/26 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -90,6 +90,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - D27 Spike cleanup is its own todo, T01. Branch, tag and worktree setup belongs to the /ultraplan seed. (planner, 2026-10-05) | assumed
 - D28 All README edits are batched in T25, so PR #20 (owner, README polish) has one conflict surface. (planner, 2026-10-05) | assumed
 - D29 A remote player's position is published relative to its room (`rx`, `ry` from the room's top-left interior cell). Each pane maps it into its own room bounds and clamps to a standable tile, else the first free anchor. (planner, 2026-10-05) | assumed, confirm by T19
+- D30 Lead pants are 0x546e7a, not 0x263238: the D6 value is within 5 levels per channel of the floor (0x2b303b), so the main agent's legs vanished in the T04 LIVE capture. Other role colors are unchanged. D5, D6, D7 and D8 confirmed by T04. (T04, 2026-10-05)
 
 ## Todos
 
@@ -137,7 +138,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; sprites.test.ts: 'every pose and facing draws 3x2 valid cells', 'walk frames differ', 'seated hides the legs behind the desk', 'hair and skin are stable per key'
 
 ### T04 Draw agents as people in the frame
-- status: todo
+- status: done (#27, 2026-10-05)
 - needs: T03
 - size: M
 - scope:
@@ -472,3 +473,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 T01 done: spike worktree and branch spike/agents-office-v2 removed (only the approved spike edits were present).
 - 2026-10-05 T02 done: pixels.ts compose/countPairs/PAIR_BUDGET with tests; compose also throws on rows of unequal width.
 - 2026-10-05 T03 done: figure()/hashKey/FIGURE_PALETTE in sprites.ts; shirt is `Tier | 'player'`, `Role` and `Facing` types exported from sprites.ts for T04 to import. D9 confirmed (seated figure carries desk and monitor).
+- 2026-10-05 T04 done: agents draw as half-block people (figure() in buildFrame), `role` on agents, drawnFacing, 4 walk frames; v1 sprite/TRANSPARENT/isTransparent removed. The v1 32-color budget test became a color-subset plus pair-budget test (D7). D30 changed the lead pants color.
