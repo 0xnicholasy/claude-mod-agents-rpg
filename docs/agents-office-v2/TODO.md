@@ -94,7 +94,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 ## Todos
 
 ### T01 Delete the spike worktree and branch
-- status: done (#PR, 2026-10-05)
+- status: done (#24, 2026-10-05)
 - needs: none
 - size: S
 - scope: From the main checkout, run `git -C .claude/worktrees/agents-office-spikes status --porcelain`. If it prints anything, stop and report to the owner. Otherwise run `git worktree remove .claude/worktrees/agents-office-spikes`, `git worktree prune` and `git branch -D spike/agents-office-v2`. No tree files change and nothing merges (D27).
