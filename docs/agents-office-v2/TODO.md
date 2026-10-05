@@ -399,7 +399,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; presence.test.ts: 'a remote player is clamped into a narrower room'. LIVE2 as above.
 
 ### T20 Chat with other sessions' players on t
-- status: done (#PR, 2026-10-05)
+- status: done (#43, 2026-10-05)
 - needs: T19
 - size: M
 - scope: Per D23:
