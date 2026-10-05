@@ -8,7 +8,7 @@ import { isValidGlyph } from './raster'
 import type { Cell } from './raster'
 import { drawnFacing, drawnFrame, drawnPose, targetOf } from './motion'
 import { figure, nameplate } from './sprites'
-import type { Pose } from './sprites'
+import type { Facing, Pose } from './sprites'
 import type { Player } from './player'
 
 export type Motion = Record<string, { x: number; y: number; path: Point[]; frame: number }>
@@ -118,6 +118,17 @@ const fitPlate = (map: OfficeMap, center: number, y: number, cells: Cell[]): { l
   return { left: Math.min(Math.max(natural, lo), hi - fitted.length + 1), cells: fitted }
 }
 
+// Another session's player (T19): already placed on this map, drawn with the white shirt and the room's plate.
+export type RemotePlayer = {
+  id: string
+  x: number
+  y: number
+  facing: Facing
+  label: string
+  emote?: string
+  until?: number
+}
+
 export type FrameInput = {
   map: OfficeMap
   agents: Roster
@@ -127,6 +138,8 @@ export type FrameInput = {
   now: number
   // The player avatar, drawn over every agent with the plate "you" (D14).
   player?: Player | null
+  // The other sessions' players (T19), drawn under the own player.
+  others?: readonly RemotePlayer[]
   // Inspect text drawn over the corridor's first row, for panes with no strip rows (D39).
   overlay?: string
   // The columns the overlay may use when the view is cropped (camera.ts overlaySpan); default the whole corridor.
@@ -134,7 +147,7 @@ export type FrameInput = {
   overlayWidth?: number
 }
 
-export const buildFrame = ({ map, agents, motion, bubbles, now, player, overlay, overlayFrom, overlayWidth }: FrameInput): Cell[][] => {
+export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, overlay, overlayFrom, overlayWidth }: FrameInput): Cell[][] => {
   const floors = floorColors(map)
   const grid = map.tiles.map((row, y) => row.map((kind, x) => baseCell(kind, floors[y]?.[x] ?? FLOOR_BG)))
   for (const room of map.rooms) {
@@ -181,6 +194,25 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, overlay,
     const center = at.x + Math.floor(FOOTPRINT_W / 2)
     const fit = fitPlate(map, center, at.y - 1, nameplate(agent.label))
     if (fit !== undefined) plates.push({ id: agent.id, left: fit.left, y: at.y - 1, cells: fit.cells, center })
+  }
+
+  for (const other of [...(others ?? [])].sort((a, b) => a.y - b.y || a.x - b.x)) {
+    figure({
+      pose: 'idle',
+      facing: other.facing,
+      frame: 0,
+      shirt: 'player',
+      role: 'lead',
+      key: `player:${other.id}`,
+      floor: base[other.y]?.[other.x]?.bg ?? FLOOR_BG,
+    }).forEach((row, dy) =>
+      row.forEach((cell, dx) => {
+        if (grid[other.y + dy]?.[other.x + dx] !== undefined) put(grid, other.x + dx, other.y + dy, cell)
+      }),
+    )
+    const center = other.x + Math.floor(FOOTPRINT_W / 2)
+    const fit = fitPlate(map, center, other.y - 1, nameplate(other.label))
+    if (fit !== undefined) plates.push({ id: `player:${other.id}`, left: fit.left, y: other.y - 1, cells: fit.cells, center })
   }
 
   if (player !== undefined && player !== null) {
@@ -232,6 +264,12 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, overlay,
       fg: BUBBLE_FG,
       bg: BUBBLE_BG,
     })
+  }
+
+  for (const other of others ?? []) {
+    if (other.emote === undefined || (other.until ?? 0) <= now) continue
+    const code = other.emote.codePointAt(0) ?? 0x2a
+    put(grid, other.x + Math.floor(FOOTPRINT_W / 2), other.y - 2, { ch: isValidGlyph(code) ? code : 0x2a, fg: BUBBLE_FG, bg: BUBBLE_BG })
   }
 
   // Inspect text (D39): one row over the corridor, cut to the corridor's width, on top of everything.

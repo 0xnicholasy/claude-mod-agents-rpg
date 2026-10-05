@@ -28,9 +28,11 @@ import {
   presencePath,
   PRESENCE_DIR_SUFFIX,
   remoteRoster,
+  remotePlayersOf,
   routeRemote,
   SHARE_USAGE,
   signature,
+  toPresencePlayer,
   toRecord,
   toTombstone,
   writeDue,
@@ -234,7 +236,11 @@ const publishTick = async ($: EngineInterface): Promise<void> => {
   const own = await read($, team)
   if (own === null) return
   const now = await $.clock.now()
+  const size = await read($, viewport)
+  const map = await mapAt($, size.columns, size.rows)
+  const mine = await read($, player)
   const record = toRecord({
+    player: map === undefined || mine === null ? null : toPresencePlayer(map, mine, now),
     sessionId: id.sessionId,
     startedAt: id.startedAt,
     now,
@@ -589,6 +595,7 @@ const tick = async ($: EngineInterface): Promise<void> => {
     bubbles: after.bubbles,
     now,
     player: walker,
+    others: remotePlayersOf(await read($, remote), map, now),
     overlay: noStrip ? shown : undefined,
     overlayFrom: span.from,
     overlayWidth: span.width,
@@ -897,6 +904,7 @@ export const register: Register = on => {
           bubbles: await read($, bubbles),
           now: await $.clock.now(),
           player: drawnPlayer,
+          others: remotePlayersOf(await read($, remote), map, await $.clock.now()),
           overlay: stripCount === 0 ? inspectLine : undefined,
           overlayFrom: span.from,
           overlayWidth: span.width,

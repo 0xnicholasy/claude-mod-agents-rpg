@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { OfficeAgent, Roster } from './agents'
-import { asShare, envValue, MAX_RECORD_BYTES, mergeRemote, parseOfficeArgs, parseRecord, planReads, presenceDir, presencePath, signature, toRecord, toTombstone, writeDue } from './presence'
+import { asShare, placeRemotePlayer, remotePlayersOf, toPresencePlayer, envValue, MAX_RECORD_BYTES, mergeRemote, parseOfficeArgs, parseRecord, planReads, presenceDir, presencePath, signature, toRecord, toTombstone, writeDue } from './presence'
+import { buildOffice, canStand as canStandAt } from './map'
 import type { Parsed, PresenceRecord } from './presence'
 
 test('presence dir prefers CLAUDE_CONFIG_DIR', () => {
@@ -221,4 +222,58 @@ test('a partial file keeps the last snapshot', () => {
   expect(mergeRemote(prev, { a: null }, NOW, ['a'])).toBe(prev)
   expect(mergeRemote(prev, {}, NOW, ['a'])).toBe(prev)
   expect(mergeRemote(prev, {}, NOW, [])).toEqual({})
+})
+
+const teamMap = (columns: number) => buildOffice(columns, 18, [{ id: 'team:s1', label: 'proj' }])
+
+test('a remote player round-trips in a same-size room', () => {
+  const map = teamMap(80)
+  const room = map.rooms.find(r => r.id === 'team:s1')
+  const spot = room?.anchors[1] ?? { x: 0, y: 0 }
+  const published = toPresencePlayer(map, { x: spot.x, y: spot.y, facing: 'left' }, 0)
+
+  expect(published).toEqual({ room: 'team:s1', rx: spot.x - (room?.bounds.x ?? 0), ry: spot.y - (room?.bounds.y ?? 0), facing: 'left' })
+  expect(published === null ? undefined : placeRemotePlayer(map, published)).toEqual(spot)
+  // It survives the file: published, serialized and parsed again.
+  const parsed = recordOf(JSON.stringify({ ...toRecord({ ...input({}), player: published }), heartbeatAt: 20 }))
+  expect(parsed.player).toEqual(published)
+})
+
+test('a remote player is clamped into a narrower room', () => {
+  const wide = teamMap(120)
+  const narrow = teamMap(60)
+  const wideRoom = wide.rooms.find(r => r.id === 'team:s1')
+  const narrowRoom = narrow.rooms.find(r => r.id === 'team:s1')
+  if (wideRoom === undefined || narrowRoom === undefined) throw new Error('no team room')
+  const published = { room: 'team:s1' as const, rx: wideRoom.bounds.w - 3, ry: 0, facing: 'down' as const }
+  const at = placeRemotePlayer(narrow, published)
+
+  expect(narrowRoom.bounds.w).toBeLessThan(wideRoom.bounds.w)
+  expect(at).toBeDefined()
+  expect(at !== undefined && at.x + 3 <= narrowRoom.bounds.x + narrowRoom.bounds.w && at.x >= narrowRoom.bounds.x).toBe(true)
+  expect(at !== undefined && canStandAt(narrow, at.x, at.y)).toBe(true)
+  // A room that is not on the map draws nothing.
+  expect(placeRemotePlayer(narrow, { ...published, room: 'team:gone' })).toBeUndefined()
+})
+
+test('a published emote lasts only until it expires and a player in the corridor lands in a room', () => {
+  const map = teamMap(80)
+  const base = { x: map.corridor.x + 2, y: map.corridor.y, facing: 'down' as const }
+
+  expect(toPresencePlayer(map, { ...base, emote: '!', until: 500 }, 400)?.emote).toBe('!')
+  expect(toPresencePlayer(map, { ...base, emote: '!', until: 500 }, 500)?.emote).toBeUndefined()
+  const room = toPresencePlayer(map, base, 0)?.room
+  expect(map.rooms.some(r => r.id === room)).toBe(true)
+  const remote = { s2: { ...rec('s2', 20), player: { room: 'team:s1' as const, rx: 0, ry: 0, facing: 'up' as const } } }
+  expect(remotePlayersOf(remote, map, 0)).toHaveLength(1)
+  expect(remotePlayersOf({ s2: rec('s2', 20) }, map, 0)).toHaveLength(0)
+})
+
+test('a published player carries only its documented keys and a forged until is capped', () => {
+  const map = teamMap(80)
+  const published = toPresencePlayer(map, { x: 20, y: 3, facing: 'up', emote: '!', until: 900 }, 0)
+  expect(Object.keys(published ?? {}).sort()).toEqual(['emote', 'facing', 'room', 'rx', 'ry', 'until'])
+  const forged = { s2: { ...rec('s2', 20), player: { room: 'team:s1' as const, rx: 0, ry: 0, facing: 'up' as const, emote: '!', until: 9e15 } } }
+
+  expect(remotePlayersOf(forged, map, 1000)[0]?.until).toBe(4000)
 })

@@ -553,3 +553,14 @@ test('the inspect line lands inside a scrolled view', () => {
   const plain = buildFrame({ map: wide, agents: {}, motion: {}, bubbles: [], now: 0, overlay: 'hello' })
   expect(String.fromCodePoint(...(plain[wide.corridor.y] ?? []).map(c => c.ch)).slice(wide.corridor.x, wide.corridor.x + 5)).toBe('hello')
 })
+
+test('another session\'s player draws in a white shirt with its plate and its emote', () => {
+  const other = { id: 's2', x: 10, y: 5, facing: 'down' as const, label: 'proj', emote: '!', until: 3000 }
+  const grid = buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0, others: [other] })
+
+  expect((grid[6] ?? []).slice(10, 13).some(c => c.fg === 0xf5f5f5)).toBe(true)
+  expect((grid[4] ?? []).map(c => String.fromCodePoint(c.ch)).join('')).toContain('proj')
+  expect(grid[3]?.[11]?.ch).toBe(0x21)
+  const late = buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 3000, others: [other] })
+  expect(late[3]?.[11]?.ch).not.toBe(0x21)
+})
