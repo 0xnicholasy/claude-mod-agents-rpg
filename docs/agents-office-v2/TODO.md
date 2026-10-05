@@ -565,7 +565,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; LIVE2 (`ao` at 80x24, `ao2` at 74x24) and LIVE120 for `ao`, with both captures saved
 
 ### T25 Update the README for v2
-- status: done (#PRNUM, 2026-10-05)
+- status: done (#59, 2026-10-05)
 - needs: F09
 - size: M
 - scope: Rebase on `feat/agents-office` first; if PR #20 is still open, flag the overlap to the owner. Rewrite:
@@ -653,4 +653,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 F06 done (#56): `buildFrame` draws `midFigure` (5x5 standing, 8x5 seated at the desk anchor) for agents, the player and remote players when `map.foot` is MID_FOOT, with plates cut to 7 and centred on the person; the small map is unchanged. D68: mouth = darker skin, shoes = `MID_SHOE`; pair test 219 full / 107 crop. Nothing wires mid yet (F08), so LIVE is covered by F08's 120x40 and 74x24 captures.
 - 2026-10-05 F08 done (#57): mid is wired in at 72 columns and 11 rows (D69); `viewport.foot`, `seatFoot` reseat, 0 strip rows for a 23-row mid body, and a retrying viewport write (the 120x40 pane was empty without it). Backlog: the pad Input covers the first cell of the bottom-left room sign ('Reception' reads 'eception' when the view is at the map bottom); the F04 sign cut ('Conferenc') stays.
 - 2026-10-05 F09 done (#58): mixed-size LIVE2 shows both panes drawing each other's team room and moving figure in both directions (D70); no presence.ts change. Fixed the F08 Backlog sign cut under the pad (`Reception` was `eception`). LIVE120 for `ao` shows the whole 116x23 office, no ▲/▼.
-- 2026-10-05 T25 done (#PRNUM): README rewritten for v2 (install and uninstall, rooms, tiers and roles, controls, shared office, figure sizes and camera marks, known limits); two LIVE captures under `docs/images/`. No banner: `figures/readme-banner.png` did not exist at commit time, so the README ships without one (see Backlog).
+- 2026-10-05 T25 done (#59): README rewritten for v2 (install and uninstall, rooms, tiers and roles, controls, shared office, figure sizes and camera marks, known limits); two LIVE captures under `docs/images/`. No banner: `figures/readme-banner.png` did not exist at commit time, so the README ships without one (see Backlog).
