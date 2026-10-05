@@ -485,7 +485,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `git branch --list 'spike/*'` prints nothing; `rtk proxy npm run check`; LIVE and LIVE120 captures of the scratch crop saved in the scratchpad
 
 ### F02 Carry the footprint on the map
-- status: done (#PRNUM, 2026-10-05)
+- status: done (#50, 2026-10-05)
 - needs: F01
 - size: M
 - scope: Add `type Footprint = { w: number; h: number }`, `SMALL_FOOT` (3x2), `MID_FOOT` (5x5) and `OfficeMap.foot`; `buildOffice` sets `SMALL_FOOT`. Every `FOOTPRINT_*` user found by F01 (map.ts, frame.ts, player.ts, presence.ts and the two tests, D63) reads `map.foot`; the cat gets its own `CAT_FOOT` (3x2). No behaviour change.
@@ -633,4 +633,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 T24 done: `npm run install:user` symlinks the mod into `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/agents-office` (idempotent, refuses a real dir or foreign link without `--force`) and `npm run uninstall:user` removes only a link to this repo; the symlink loads once. See D52.
 - 2026-10-05 owner rejected 3x2 figure; F01-F09 inserted (Mid 5x5, D53)
 - 2026-10-05 F01 done (#49): spike measured 76x11, 70x11 and 116x23 bodies; the 11-row vertical crop keeps the Raster size at both call sites; 32 mid figures peak at 185 pairs (day = night), so no D60 shrink; U+25B2 and U+25BC are valid; `FOOTPRINT_*` appears on 34 lines in 6 files. No OWNER CHECK. Corrections to F02, F05, F07, F08 in D63.
-- 2026-10-05 F02 done (#PRNUM): `OfficeMap.foot` (`Footprint`, `SMALL_FOOT`, `MID_FOOT`, `CAT_FOOT`) replaces `FOOTPRINT_*`; map.ts `makeRoom` uses `SMALL_FOOT` until F04 passes the footprint in; the two tests import `SMALL_FOOT`; new test 'canStand checks every cell of the map footprint'. LIVE and LIVE120 show the same 3x2 layout. No behaviour change.
+- 2026-10-05 F02 done (#50): `OfficeMap.foot` (`Footprint`, `SMALL_FOOT`, `MID_FOOT`, `CAT_FOOT`) replaces `FOOTPRINT_*`; map.ts `makeRoom` uses `SMALL_FOOT` until F04 passes the footprint in; the two tests import `SMALL_FOOT`; new test 'canStand checks every cell of the map footprint'. LIVE and LIVE120 show the same 3x2 layout. No behaviour change.
