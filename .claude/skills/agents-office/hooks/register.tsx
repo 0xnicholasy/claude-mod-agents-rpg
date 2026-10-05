@@ -19,12 +19,15 @@ import {
   DEFAULT_SHARE,
   envValue,
   mergeRemote,
+  orderedTeams,
   parseOfficeArgs,
   parseRecord,
   planReads,
   presenceDir,
   presencePath,
   PRESENCE_DIR_SUFFIX,
+  remoteRoster,
+  routeRemote,
   SHARE_USAGE,
   signature,
   toRecord,
@@ -83,7 +86,7 @@ const share = atom({ plugin: 'agents-office', key: 'share' } as const, DEFAULT_S
 type PresenceState = { lastText?: string; lastWriteAt: number; ended: boolean; mtimes?: Record<string, number> }
 const presence = atom({ plugin: 'agents-office', key: 'presence' } as const, { lastWriteAt: 0, ended: false } as PresenceState)
 
-// Other sessions' records keyed by sessionId (D20). Nothing draws them until T16.
+// Other sessions' records keyed by sessionId (D20).
 const remote = atom({ plugin: 'agents-office', key: 'remote' } as const, {} as Remote)
 
 // Log de-dup cache for guard failures, not drawn state (D49): a hook that fails the same
@@ -143,9 +146,17 @@ const homeRoom = async ($: EngineInterface): Promise<RoomId> => (await read($, t
 // The teams `mapFor` lays out (only the own team until presence arrives) and the own team id.
 const teamsOf = async ($: EngineInterface): Promise<{ teams: TeamSpec[]; ownId: string }> => {
   const own = await read($, team)
+  if (own === null) return { teams: [], ownId: '' }
 
-  return own === null ? { teams: [], ownId: '' } : { teams: [{ id: own.id, label: own.label }], ownId: own.id }
+  // The published `startedAt` is the identity's, so every pane orders this session the same way.
+  const started = (await read($, identity))?.startedAt ?? own.startedAt
+
+  return { teams: orderedTeams({ ...own, startedAt: started }, await read($, remote)), ownId: own.id }
 }
+
+// The other sessions' agents as roster entries keyed `sessionId:agentId` (D20); never part of the own roster, so
+// they are never expired or choreographed locally.
+const remoteAgentsOf = async ($: EngineInterface): Promise<Roster> => remoteRoster(await read($, remote))
 
 const mapAt = async ($: EngineInterface, columns: number, rows: number): Promise<OfficeMap | undefined> => {
   const { teams, ownId } = await teamsOf($)
@@ -411,9 +422,11 @@ const seat = async (
   const map = await mapAt($, size.columns, size.rows)
   if (map === undefined) return undefined
   const arriving = entering === undefined ? undefined : roster[entering]
+  const remoteAgents = await remoteAgentsOf($)
+  const everyone: Roster = { ...roster, ...remoteAgents }
   const compute = (cur: Motion): Motion => {
     const entered = arriving === undefined ? cur : enterAtDoor(cur, map, arriving.id, arriving.room)
-    const placed = placeMotion(map, roster, entered)
+    const placed = routeRemote(placeMotion(map, everyone, entered), map, remoteAgents)
 
     return advance ? step(placed) : placed
   }
@@ -567,7 +580,7 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const noStrip = (await read($, viewport)).strip === 0
   const frame = buildFrame({
     map,
-    agents: after.agents,
+    agents: { ...after.agents, ...(await remoteAgentsOf($)) },
     motion: after.motion,
     bubbles: after.bubbles,
     now,
@@ -869,7 +882,7 @@ export const register: Register = on => {
         const inspectLine = inspected !== null && inspected.until > (await $.clock.now()) ? inspected.text : undefined
         const grid = buildFrame({
           map,
-          agents: await read($, agents),
+          agents: { ...(await read($, agents)), ...(await remoteAgentsOf($)) },
           motion: await read($, motion),
           bubbles: await read($, bubbles),
           now: await $.clock.now(),
