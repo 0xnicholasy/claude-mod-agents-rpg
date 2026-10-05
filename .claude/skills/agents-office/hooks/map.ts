@@ -1,7 +1,8 @@
 // Tile map of the office: one tile is one terminal cell. Pure data and
 // geometry, no `$`. A character occupies a 3x2 footprint whose top-left cell
 // is its position; its nameplate is drawn on the row above (it may overlap
-// walls). Layout at the 60x18 minimum (x right, y down):
+// walls). Full layout from 18 rows (x right, y down); heights 12-17 use the
+// compact bands below, and a 3-row room puts its sign on the wall row above:
 //
 //   top row      4 rooms  Dev Bay | Library | Server Room | Phone Booth
 //   corridor     3 rows
@@ -18,7 +19,8 @@ export type Room = {
   name: string
   // Interior rectangle (walls excluded), so rooms never overlap.
   bounds: Rect
-  // Room label drawn on the top interior row; `cells` are its tile positions.
+  // Room label drawn on the top interior row (the wall row above in a 3-row
+  // room); `cells` are its tile positions.
   sign: { text: string; cells: Point[] }
   // The three door cells in the wall row, left to right.
   door: Point[]
@@ -36,7 +38,9 @@ export type OfficeMap = {
 }
 
 export const MIN_COLUMNS = 60
-export const MIN_ROWS = 18
+export const MIN_ROWS = 12
+// Height of the full layout; taller maps stretch it.
+export const FULL_ROWS = 18
 export const FOOTPRINT_W = 3
 export const FOOTPRINT_H = 2
 
@@ -61,6 +65,16 @@ const BOTTOM: Spec[] = [
   { id: 'meeting', name: 'Meeting Room', sign: 'Meeting Room', width: 20 },
   { id: 'break', name: 'Break Room', sign: 'Break Room', width: 18 },
 ]
+// Interior rows [top, corridor, bottom] for map heights 12..17; each step adds
+// one row, so 18 equals the full layout (5, 3, 6).
+const COMPACT_BANDS: ReadonlyArray<readonly [number, number, number]> = [
+  [3, 2, 3], // 12
+  [3, 2, 4], // 13
+  [4, 2, 4], // 14
+  [4, 3, 4], // 15
+  [4, 3, 5], // 16
+  [5, 3, 5], // 17
+]
 const TOP_INTERIOR_ROWS = 5
 const BOTTOM_INTERIOR_ROWS = 6
 const CORRIDOR_ROWS = 3
@@ -79,7 +93,14 @@ const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow
   const { interiorTop, interiorRows, doorRow } = band
   const count = Math.floor((width + 1) / 4)
   const offset = Math.floor((width - (4 * count - 1)) / 2)
-  const anchors = Array.from({ length: count }, (_, i) => ({ x: x + offset + 4 * i, y: interiorTop + 2 }))
+  // Rooms with fewer than FOOTPRINT_H + 2 interior rows put the sign on the wall
+  // row above so the interior's first row stays free for the nameplate.
+  const roomy = interiorRows >= FOOTPRINT_H + 2
+  const signY = roomy ? interiorTop : interiorTop - 1
+  const anchors = Array.from({ length: count }, (_, i) => ({
+    x: x + offset + 4 * i,
+    y: interiorTop + (roomy ? 2 : 1),
+  }))
   // Top-row rooms centre the door; bottom-row rooms put it at the right so the
   // doorStand footprint never stands on the left-aligned sign.
   const doorX = doorBelow ? x + Math.floor((width - FOOTPRINT_W) / 2) : x + width - 4
@@ -88,7 +109,7 @@ const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow
     id: spec.id,
     name: spec.name,
     bounds: { x, y: interiorTop, w: width, h: interiorRows },
-    sign: { text: spec.sign, cells: Array.from(spec.sign, (_, i) => ({ x: x + i, y: interiorTop })) },
+    sign: { text: spec.sign, cells: Array.from(spec.sign, (_, i) => ({ x: x + i, y: signY })) },
     door: [0, 1, 2].map(i => ({ x: doorX + i, y: doorRow })),
     doorStand: { x: doorX, y: doorStandY },
     anchors,
@@ -98,11 +119,20 @@ const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow
 export const buildMap = (columns: number, rows: number): OfficeMap => {
   if (columns < MIN_COLUMNS || rows < MIN_ROWS) throw new OfficeTooSmall(columns, rows)
 
-  const extra = rows - MIN_ROWS
-  const corridorRows = CORRIDOR_ROWS + Math.floor(extra / 3)
-  const rest = extra - Math.floor(extra / 3)
-  const topRows = TOP_INTERIOR_ROWS + Math.floor(rest / 2)
-  const bottomRows = BOTTOM_INTERIOR_ROWS + rest - Math.floor(rest / 2)
+  let topRows: number
+  let corridorRows: number
+  let bottomRows: number
+  if (rows < FULL_ROWS) {
+    const bands = COMPACT_BANDS[rows - MIN_ROWS]
+    if (!bands) throw new Error(`map: no compact bands for ${rows} rows`)
+    ;[topRows, corridorRows, bottomRows] = bands
+  } else {
+    const extra = rows - FULL_ROWS
+    corridorRows = CORRIDOR_ROWS + Math.floor(extra / 3)
+    const rest = extra - Math.floor(extra / 3)
+    topRows = TOP_INTERIOR_ROWS + Math.floor(rest / 2)
+    bottomRows = BOTTOM_INTERIOR_ROWS + rest - Math.floor(rest / 2)
+  }
 
   const topBand: RowBand = { interiorTop: 1, interiorRows: topRows, doorRow: topRows + 1 }
   const corridor: Rect = { x: 1, y: topRows + 2, w: columns - 2, h: corridorRows }

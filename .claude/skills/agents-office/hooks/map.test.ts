@@ -21,7 +21,7 @@ const at = <T>(items: T[], i: number): T => {
 const inside = (r: Rect, p: Point): boolean => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h
 const overlap = (a: Rect, b: Rect): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 
-const SIZES: Array<[number, number]> = [[60, 18], [61, 19], [77, 23], [100, 30], [120, 36]]
+const SIZES: Array<[number, number]> = [[60, 18], [61, 19], [77, 23], [100, 30], [120, 36], [60, 12], [76, 12], [76, 14], [60, 17]]
 
 const STEPS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 
@@ -50,7 +50,9 @@ test('every room has a sign inside its bounds and at least two floor anchors', (
     expect(room.sign.text).toBe(SIGNS[room.id])
     expect(room.sign.cells.length).toBe(room.sign.text.length)
     for (const cell of room.sign.cells) {
-      expect(inside(room.bounds, cell)).toBe(true)
+      // A 3-row room keeps its sign on the wall row above the interior.
+      expect(cell.y).toBe(room.bounds.h >= 4 ? room.bounds.y : room.bounds.y - 1)
+      expect(cell.x >= room.bounds.x && cell.x < room.bounds.x + room.bounds.w).toBe(true)
       expect(tileAt(map, cell.x, cell.y)).toBe('sign')
     }
     expect(room.anchors.length).toBeGreaterThanOrEqual(room.id === 'devbay' ? 6 : 2)
@@ -129,10 +131,31 @@ test('tile rows span the full width and rooms in a row fill it with one-cell wal
   }
 })
 
-test('buildMap throws OfficeTooSmall at 59x18', () => {
-  expect(() => buildMap(59, 18)).toThrow(OfficeTooSmall)
-  expect(() => buildMap(60, 17)).toThrow(OfficeTooSmall)
-  expect(buildMap(60, 18).rows).toBe(18)
+test('buildMap throws OfficeTooSmall at 59x12', () => {
+  expect(() => buildMap(59, 12)).toThrow(OfficeTooSmall)
+  expect(() => buildMap(60, 11)).toThrow(OfficeTooSmall)
+  expect(buildMap(60, 12).rows).toBe(12)
+})
+
+test('heights 12 to 18 grow one interior row per step into the unchanged 60x18 layout', () => {
+  let prev: number[] | undefined
+  for (let rows = 12; rows <= 18; rows++) {
+    const map = buildMap(60, rows)
+    const top = at(map.rooms, 0).bounds.h
+    const bottom = at(map.rooms.filter(r => r.id === 'lobby'), 0).bounds.h
+    const bands = [top, map.corridor.h, bottom]
+    expect(top + map.corridor.h + bottom).toBe(rows - 4)
+    if (prev) bands.forEach((h, i) => expect(h).toBeGreaterThanOrEqual(prev?.[i] ?? 0))
+    prev = bands
+  }
+  const map = buildMap(60, 18)
+  const dev = at(map.rooms.filter(r => r.id === 'devbay'), 0)
+  const lobby = at(map.rooms.filter(r => r.id === 'lobby'), 0)
+  expect([dev.bounds.y, dev.bounds.h]).toEqual([1, 5])
+  expect([map.corridor.y, map.corridor.h]).toEqual([7, 3])
+  expect([lobby.bounds.y, lobby.bounds.h]).toEqual([11, 6])
+  expect(at(dev.anchors, 0).y).toBe(3)
+  expect(at(lobby.anchors, 0).y).toBe(13)
 })
 
 test('every anchor and doorStand is a standable footprint and a footprint fits through every door', () => {
