@@ -134,6 +134,14 @@ test('office and figure colors stay inside the palettes and the pair budget', ()
   expect(countPairs(grid)).toBeLessThan(PAIR_BUDGET)
 })
 
+test('a sign with astral characters draws one valid glyph per cell', () => {
+  const map = buildOffice(60, 18, [{ id: 'team:a', label: 'a\u{1F600}b' }], 'team:a')
+  const grid = buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0 })
+  const team = map.rooms[0]
+  const drawn = (team?.sign.cells ?? []).map(p => String.fromCodePoint(grid[p.y]?.[p.x]?.ch ?? 0))
+  expect(drawn.slice(0, 3)).toEqual(['a', '?', 'b'])
+})
+
 test('each room kind has its own floor color and no sign names a v1 room', () => {
   const grid = buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0 })
   expect(new Set(Object.values(ROOM_FLOORS)).size).toBe(6)

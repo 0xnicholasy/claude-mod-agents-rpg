@@ -63,6 +63,9 @@ type Spec = { id: RoomId; name: string; sign: string; width: number; kind: RoomK
 
 // Interior rows [top, corridor, bottom] for map heights 11..17; each step adds
 // one row, so 18 equals the full layout (5, 3, 6); 11 is 12 without the outer bottom wall.
+// Cuts text to `n` code points, so an astral character is never split into a lone surrogate.
+export const cut = (text: string, n: number): string => Array.from(text).slice(0, Math.max(0, n)).join('')
+
 const COMPACT_BANDS: ReadonlyArray<readonly [number, number, number]> = [
   [3, 2, 3], // 11: no outer bottom wall
   [3, 2, 3], // 12
@@ -113,7 +116,7 @@ const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow
     : allAnchors.filter(a => Math.abs(a.x - doorX) >= FOOTPRINT_W || Math.abs(a.y - doorStandY) >= FOOTPRINT_H)
   // A bottom room's sign shares its row with the door (wall row) or the doorStand (interior row), so it is
   // cut before them.
-  const sign = doorBelow ? spec.sign.slice(0, width) : spec.sign.slice(0, doorX - x)
+  const sign = doorBelow ? cut(spec.sign, width) : cut(spec.sign, doorX - x)
   return {
     id: spec.id,
     name: spec.name,
@@ -226,7 +229,7 @@ export const buildOffice = (columns: number, rows: number, teams: TeamSpec[], ow
     let x = 1
     shown.forEach((team, i) => {
       const width = i === 0 ? base + total - base * shown.length : base
-      const sign = team.label.slice(0, width)
+      const sign = cut(team.label, width)
       const spec: Spec = { id: team.id, name: team.label, sign, width, kind: 'team' }
       placed.push(makeRoom(spec, x, width, topBand, true, TEAM_PITCH, 4))
       x += width + 1
