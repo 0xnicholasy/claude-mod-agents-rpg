@@ -179,13 +179,15 @@ export type FrameInput = {
   // The columns the overlay may use when the view is cropped (camera.ts overlaySpan); default the whole corridor.
   overlayFrom?: number
   overlayWidth?: number
+  // The map row the overlay goes on when the view is cropped (camera.ts overlaySpan); default the corridor's first row.
+  overlayRow?: number
   // The office cat (D24), drawn over the agents and under the players.
   cat?: Cat | null
   // Local hour 0-23; the map is tinted at night (D24). Undefined draws by day.
   hour?: number
 }
 
-export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, cat, hour, overlay, overlayFrom, overlayWidth }: FrameInput): Cell[][] => {
+export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, cat, hour, overlay, overlayFrom, overlayWidth, overlayRow }: FrameInput): Cell[][] => {
   const shade: Shade = color => (hour === undefined ? color : tint(color, hour))
   const floors = floorColors(map, shade)
   const grid = map.tiles.map((row, y) => row.map((kind, x) => baseCell(kind, floors[y]?.[x] ?? shade(FLOOR_BG), shade)))
@@ -330,7 +332,8 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
 
   // Inspect text (D39): one row over the corridor, cut to the corridor's width, on top of everything.
   if (overlay !== undefined && overlay !== '') {
-    const { x, y, w } = map.corridor
+    const { x, y: corridorY, w } = map.corridor
+    const y = overlayRow ?? corridorY
     textCells(overlay, BUBBLE_FG, BUBBLE_BG)
       .slice(0, overlayWidth ?? w)
       .forEach((cell, i) => put(grid, (overlayFrom ?? x) + i, y, cell))

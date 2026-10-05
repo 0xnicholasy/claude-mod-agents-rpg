@@ -741,7 +741,7 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const noStrip = (await read($, viewport)).strip === 0
   const ownId = (await read($, team))?.id ?? ''
   const focus = focusOf(map, walker, ownId)
-  const span = overlaySpan(map, size.columns, focus)
+  const span = overlaySpan(map, size.columns, size.rows, focus)
   const frame = buildFrame({
     map,
     agents: { ...after.agents, ...(await remoteAgentsOf($)) },
@@ -755,8 +755,9 @@ const tick = async ($: EngineInterface): Promise<void> => {
     overlay: noStrip ? shown : undefined,
     overlayFrom: span.from,
     overlayWidth: span.width,
+    overlayRow: span.row,
   })
-  const cells = packCells(cropFrame(frame, map, size.columns, focus))
+  const cells = packCells(cropFrame(frame, map, size.columns, size.rows, focus))
   if (cells === lastFrameCells) return
   lastFrameCells = cells
   $.ui
@@ -1100,7 +1101,7 @@ export const register: Register = on => {
         const drawnPlayer = await read($, player)
         const ownTeamId = (await read($, team))?.id ?? ''
         const focus = focusOf(map, drawnPlayer, ownTeamId)
-        const span = overlaySpan(map, columns, focus)
+        const span = overlaySpan(map, columns, rows, focus)
         const grid = buildFrame({
           map,
           agents: { ...(await read($, agents)), ...(await remoteAgentsOf($)) },
@@ -1114,8 +1115,9 @@ export const register: Register = on => {
           overlay: stripCount === 0 ? inspectLine : undefined,
           overlayFrom: span.from,
           overlayWidth: span.width,
+          overlayRow: span.row,
         })
-        const cells = packCells(cropFrame(grid, map, columns, focus))
+        const cells = packCells(cropFrame(grid, map, columns, rows, focus))
         // The newest `stripCount` lines under the Raster, oldest of them first (the log is
         // stored oldest first); empty rows keep the height stable.
         const lines = await read($, log)
