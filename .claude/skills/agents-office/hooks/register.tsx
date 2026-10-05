@@ -7,12 +7,13 @@ import { advanceScripts, expireBubbles, startMeet, startReport } from './choreo'
 import type { ChoreoState } from './choreo'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
-import { arrived, pushLog, reported, told } from './log'
+import { arrived, clean, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
 import { MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { packCells } from './raster'
+import { baseName, branchOf, teamLabel } from './team'
 import { LIST_MS, TICK_MS } from './timing'
 
 const PANE = 'office'
@@ -95,11 +96,22 @@ const ensureTeam = async ($: EngineInterface, cwd: string | undefined, force: bo
   if (!force && (await read($, team)) !== null) return
   const sessionId = await $.session.id()
   const dir = cwd ?? (await $.session.cwd())
-  const label = dir.split('/').filter(part => part !== '').pop() ?? 'office'
+  const label = clean(baseName(dir))
   const startedAt = await $.clock.now()
   const next: Team = { id: `team:${sessionId}`, label, branch: '', startedAt }
   // Without `force` a team written meanwhile (session.start racing the tick) wins.
   await update($, team, cur => (force ? next : (cur ?? next)))
+}
+
+const GIT_TIMEOUT_MS = 3000
+
+// Reads the branch (D12) and relabels the own team `basename (branch)`. A failed run keeps the basename.
+const labelTeam = async ($: EngineInterface, cwd: string): Promise<void> => {
+  const { exitCode, stdout } = await $.process.run(['git', '-C', cwd, 'branch', '--show-current'], { timeoutMs: GIT_TIMEOUT_MS })
+  const ok = exitCode === 0
+  const label = teamLabel(cwd, stdout, ok)
+  const branch = branchOf(stdout, ok)
+  await update($, team, cur => (cur === null ? cur : { ...cur, label, branch }))
 }
 
 // Drops expired agents; writes only when the roster changed.
@@ -363,6 +375,7 @@ export const register: Register = on => {
     // Own guards: neither a failing first agent.list nor a failing seed may stop
     // the frame loop above or the 10 s refresh.
     await guard($, 'session.start team', undefined, async () => ensureTeam($, e.cwd, true))
+    await guard($, 'session.start branch', undefined, async () => labelTeam($, e.cwd))
     await guard($, 'session.start refresh timer', undefined, async () => {
       startRefresh($)
     })

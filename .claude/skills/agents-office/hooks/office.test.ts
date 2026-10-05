@@ -607,6 +607,10 @@ const startOffice = async ($: Engine, on: On, v1Roster?: Record<string, unknown>
     return next(e)
   })
   stubSession(on, logs)
+  // The branch lookup in session.start: a repo with no branch (detached HEAD).
+  on('process.run', () => ({
+    value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+  }))
   on('agent.list', () => ({ value: [] }))
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   on('ui.blit', () => ({ value: {} }))
@@ -939,6 +943,44 @@ test('a second session.start keeps the roster and exactly one blit happens per t
   expect(blits).toHaveLength(1)
   await clock.advance(100)
   expect(blits).toHaveLength(2)
+  await ui.unmount()
+})
+
+test('session.start labels the team room with the project and branch', async ($, on) => {
+  mock.clock(on)
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('process.run', () => ({
+    value: { exitCode: 0, stdout: 'feat/x\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+  }))
+  let label = ''
+  on('state.set', ($, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the team atom is read.
+    if (e.key === 'team') label = (e.value as { label: string }).label
+    return next(e)
+  })
+  await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
+
+  expect(label).toBe('proj (feat/x)')
+})
+
+test('the loop still blits when the branch lookup fails', async ($, on) => {
+  const clock = mock.clock(on)
+  stubSession(on)
+  const blits: string[] = []
+  on('ui.blit', ($, e) => {
+    blits.push(e.key)
+    return { value: {} }
+  })
+  on('agent.list', () => ({ value: [] }))
+  on('process.run', () => {
+    throw new Error('git missing')
+  })
+  await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+
+  expect(blits.length).toBeGreaterThan(0)
   await ui.unmount()
 })
 

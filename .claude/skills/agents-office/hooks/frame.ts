@@ -126,9 +126,11 @@ export const buildFrame = ({ map, agents, motion, bubbles, now }: FrameInput): C
   const floors = floorColors(map)
   const grid = map.tiles.map((row, y) => row.map((kind, x) => baseCell(kind, floors[y]?.[x] ?? FLOOR_BG)))
   for (const room of map.rooms) {
+    // One glyph per code point (cells are per code point); a glyph the raster refuses draws as ?.
+    const glyphs = Array.from(room.sign.text, g => g.codePointAt(0))
     room.sign.cells.forEach((p, i) => {
-      const ch = room.sign.text.codePointAt(i)
-      if (ch !== undefined) put(grid, p.x, p.y, { ch, fg: SIGN_FG, bg: SIGN_BG })
+      const code = glyphs[i]
+      if (code !== undefined) put(grid, p.x, p.y, { ch: isValidGlyph(code) ? code : 0x3f, fg: SIGN_FG, bg: SIGN_BG })
     })
   }
 

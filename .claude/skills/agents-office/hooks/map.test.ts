@@ -216,6 +216,14 @@ test('every room is reachable from Reception', () => {
   }
 })
 
+test('a team sign is cut by code point, never inside a surrogate pair', () => {
+  const label = '\u{1F600}'.repeat(80)
+  const office = buildOffice(60, 18, [{ id: 'team:a', label }], 'team:a')
+  const team = at(office.rooms, 0)
+  expect(Array.from(team.sign.text)).toHaveLength(team.bounds.w)
+  expect(team.sign.text).toBe('\u{1F600}'.repeat(team.bounds.w))
+})
+
 test('office signs are cut to the interior width and rooms tile the bands', () => {
   const label = 'a-very-long-project-name (a-very-long-branch-name)'.repeat(2)
   const long = [{ id: 'team:a', label }] as const
