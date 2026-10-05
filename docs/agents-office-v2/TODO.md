@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 27/35 done
+Progress: 28/35 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -125,6 +125,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - D61 (assumed, confirm by F07). Inspect in mid uses the footprint-gap distance (2 or less). Plates are cut to 7 and centred on the person. The cat stands at person spot + (1, foot.h-2). The pad-cell skip uses the default view. Amended by D63: the pad-cell skip is relative to the view, not the default view.
 - D62 (assumed, confirm by F09). The presence schema is unchanged; mixed-size panes clamp rx/ry, so positions are approximate.
 - D63 (F01, 2026-10-05). Corrections to F02-F09 from the real code. (a) F02 touches only map.ts, frame.ts, player.ts, presence.ts, map.test.ts and path.test.ts for `FOOTPRINT_*`; path.ts, cat.ts, inspect.ts, camera.ts and register.tsx read `canStand` only, so they leave F02 (the cat and inspect read `map.foot` in F07). (b) `map.test.ts` and `path.test.ts` import `FOOTPRINT_W`/`FOOTPRINT_H`, so "every existing test passes unchanged" cannot hold with "grep matches nothing outside map.ts": the two test files switch to `SMALL_FOOT.w`/`.h` in F02, a mechanical edit. (c) The pad Input draws at the bottom-left of the mounted Raster (register.tsx:1151) while `padRect` (player.ts:30) is the map's last two rows; with a vertical crop the two coincide only when the view is at the map bottom. F05 keeps `padRect` for standing and F07 makes the spawn and jump skip use the cells under the Input at the current view bottom-left; the loss when the view is scrolled up is the 2x1 cells at the view's bottom-left (wall column and room margin), confirmed by F05 LIVE. (d) F08 must change `rasterSize` and `stripRows` in mid so that a 23-row inline body gives a 23-row Raster and 0 strip rows (v1 gives 18 + 5, measured at 120x40); `FULL_ROWS` stays 18 for the small layout. (e) F05 also needs `rows` in `cropFrame` and in both call sites, and `mapAt` (register.tsx) must pass the mid row count through `mapFor`.
+- D64 (F04, 2026-10-05). Amends D56: mid team desks are centred for the 8-cell seated figure (D54), not the 5-cell footprint, so at the 17-column minimum the desks sit at the room's left edge and 9 apart and the second seat ends on the last interior column. Standing positions still use the 5x5 footprint. `buildOffice` throws for a footprint that is neither `SMALL_FOOT` nor `MID_FOOT`.
 
 ## Todos
 
@@ -503,7 +504,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; midArt.test.ts 'grids use only slot letters' and 'the front view has eyes and a tie'; sprites.test.ts 'mid figures recolour by tier and role'; LIVE and LIVE120 unchanged-regression captures (nothing draws the art yet)
 
 ### F04 Lay out the office at mid size
-- status: todo
+- status: done (#PR, 2026-10-05)
 - needs: F02
 - size: M
 - scope: `buildOffice(columns, rows, teams, foot)`. With `MID_FOOT` it follows D56: bands of 7 interior rows, a 5-row corridor, doors 5 wide, team desks 9 apart with the lead first, shared anchors 6 apart, team minimum 17, shared minimum 13, rows max(rows, 23), columns max(pane, teams x 18 + 1, 71). The `SMALL_FOOT` path is unchanged. Not wired yet.
@@ -579,6 +580,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - done when: the skill is removed from the branch, TODO.md is archived, and the landing PR into feat/agents-office (or main, per D3) is open and approved by the owner
 
 ## Backlog
+- F04 follow-up: at the 71-column minimum the shared rooms are 13 wide and the bottom signs stop short of the 5-wide door, so 'Reception' draws as 'Receptio' and 'Conference' as 'Conferen'. Decide in F08 whether to widen Reception or accept the cut.
 - Shoe and eye near-black 0x141414 has about 1.4:1 contrast against the darkest room floor (F03 review); check on real floors in F06 and lighten if the shoes vanish.
 - A 5x3-cell large figure on maps of 18 rows or more (brief, optional).
 - Replace presence polling with `classic.FileChanged` + `watchPaths` once spike S4 is confirmed.
@@ -636,3 +638,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 F01 done (#49): spike measured 76x11, 70x11 and 116x23 bodies; the 11-row vertical crop keeps the Raster size at both call sites; 32 mid figures peak at 185 pairs (day = night), so no D60 shrink; U+25B2 and U+25BC are valid; `FOOTPRINT_*` appears on 34 lines in 6 files. No OWNER CHECK. Corrections to F02, F05, F07, F08 in D63.
 - 2026-10-05 F02 done (#50): `OfficeMap.foot` (`Footprint`, `SMALL_FOOT`, `MID_FOOT`, `CAT_FOOT`) replaces `FOOTPRINT_*`; map.ts `makeRoom` uses `SMALL_FOOT` until F04 passes the footprint in; the two tests import `SMALL_FOOT`; new test 'canStand checks every cell of the map footprint'. LIVE and LIVE120 show the same 3x2 layout. No behaviour change.
 - 2026-10-05 F03 done (#51): `midArt.ts` holds the D54 grids (letters; left walks are mirrors of right); `midFigure` and `midFrameCount` in `sprites.ts`; `FIGURE_PALETTE` gains the near-black, desk body, monitor frame, player shade and five tier shades (the palette size bound in two tests moved from 32 to 48). Seated ignores facing (one grid). Nothing draws it yet; LIVE and LIVE120 unchanged.
+- 2026-10-05 F04 done (#PR): `buildOffice(columns, rows, teams, foot = SMALL_FOOT)` lays out MID_FOOT per D56 (7-row bands, 5-row corridor, 5-wide doors, team desks 9 apart, shared anchors 6 apart; rows above 23 go a third to the corridor, the rest to the two bands). Shared rooms get equal base widths (13 each at the 71-column floor), so the shared anchors at 13 wide keep one anchor beside the door. `makeRoom` takes the footprint; `virtualColumns` takes an optional footprint. Small layout unchanged (snapshot test). Not wired. LIVE and LIVE120 unchanged. No OWNER CHECK.
