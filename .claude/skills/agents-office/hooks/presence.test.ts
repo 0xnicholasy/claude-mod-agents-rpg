@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { OfficeAgent, Roster } from './agents'
-import { asShare, envValue, MAX_RECORD_BYTES, parseOfficeArgs, presenceDir, presencePath, signature, toRecord, toTombstone, writeDue } from './presence'
+import { asShare, envValue, MAX_RECORD_BYTES, mergeRemote, parseOfficeArgs, parseRecord, planReads, presenceDir, presencePath, signature, toRecord, toTombstone, writeDue } from './presence'
+import type { Parsed, PresenceRecord } from './presence'
 
 test('presence dir prefers CLAUDE_CONFIG_DIR', () => {
   expect(presenceDir('/c', '/h')).toBe('/c/agents-office/presence')
@@ -123,4 +124,101 @@ test('the presence path refuses a session id that could leave the dir', () => {
   expect(presencePath('/d', '../x')).toBeUndefined()
   expect(presencePath('/d', '..')).toBeUndefined()
   expect(presencePath('/d', '')).toBeUndefined()
+})
+
+test('the team label and branch keep 40 characters while agent labels keep 16', () => {
+  const label = 'claude-mod-agents-rpg (feat/agents-office-v2-extra-long)'
+  const record = toRecord({ ...input({ main: agentAt('main', { label: 'x'.repeat(30) }) }), team: { label, branch: 'b'.repeat(80) } })
+
+  expect(record.team.label).toBe(label.slice(0, 40))
+  expect(record.team.branch).toBe('b'.repeat(40))
+  expect(record.agents[0]?.label).toBe('x'.repeat(16))
+  expect(toRecord({ ...input({}), team: { label: 'claude-mod-agents-rpg', branch: 'main' } }).team.label).toBe('claude-mod-agents-rpg')
+})
+
+const recordText = (over: Record<string, unknown> = {}): string =>
+  JSON.stringify({ ...toRecord(input({ main: agentAt('main', { role: 'lead' }), a1: agentAt('a1') })), ...over })
+
+const recordOf = (text: string): PresenceRecord => {
+  const parsed = parseRecord(text)
+  if (parsed?.kind !== 'record') throw new Error('expected a record')
+
+  return parsed.record
+}
+
+test('parseRecord accepts a valid record', () => {
+  const record = recordOf(recordText())
+
+  expect(record.sessionId).toBe('s1')
+  expect(record.agents.map(a => a.id)).toEqual(['main', 'a1'])
+  expect(parseRecord(JSON.stringify(toTombstone('s1', 5)))).toEqual({ kind: 'gone', sessionId: 's1' })
+})
+
+test('parseRecord rejects a wrong version, wrong types, oversize and non-JSON input', () => {
+  expect(parseRecord(recordText({ v: 2 }))).toBeUndefined()
+  expect(parseRecord(recordText({ heartbeatAt: '20' }))).toBeUndefined()
+  expect(parseRecord(recordText({ sessionId: '../x' }))).toBeUndefined()
+  expect(parseRecord(recordText({ share: 'off' }))).toBeUndefined()
+  expect(parseRecord(recordText({ team: 'x' }))).toBeUndefined()
+  expect(parseRecord(recordText({ agents: {} }))).toBeUndefined()
+  expect(parseRecord(`${recordText().slice(0, 30)}`)).toBeUndefined()
+  expect(parseRecord('[]')).toBeUndefined()
+  expect(parseRecord(recordText({ pad: 'x'.repeat(MAX_RECORD_BYTES) }))).toBeUndefined()
+})
+
+test('parseRecord clamps lengths and counts and drops unknown tiers and rooms', () => {
+  const agent = (i: number, over: Record<string, unknown> = {}) => ({ id: `a${i}`, label: 'l'.repeat(40), tier: 'opus', role: 'dev', room: 'lab', pose: 'run', status: 'working', ...over })
+  const agents = Array.from({ length: 40 }, (_, i) => agent(i))
+  agents[1] = agent(1, { tier: 'gpt' })
+  agents[2] = agent(2, { room: 'team:' })
+  agents[3] = agent(3, { room: 'nowhere' })
+  agents[4] = agent(4, { id: 'a0' })
+  const record = recordOf(recordText({ agents, team: { label: 'L'.repeat(90), branch: 'B'.repeat(90) } }))
+
+  expect(record.agents).toHaveLength(32 - 4)
+  expect(record.agents.some(a => a.id === 'a1' || a.id === 'a2' || a.id === 'a3')).toBe(false)
+  expect(record.agents[0]?.label).toBe('l'.repeat(16))
+  expect(record.team).toEqual({ label: 'L'.repeat(40), branch: 'B'.repeat(40) })
+})
+
+test('parseRecord validates the published player', () => {
+  const player = { room: 'team:s1', rx: 9999, ry: -4, facing: 'left', chat: 'c'.repeat(90) }
+
+  expect(recordOf(recordText({ player })).player).toEqual({ room: 'team:s1', rx: 200, ry: 0, facing: 'left', chat: 'c'.repeat(40) })
+  expect(recordOf(recordText({ player: { ...player, facing: 'up-left' } })).player).toBeNull()
+})
+
+const NOW = 100000
+const rec = (id: string, heartbeatAt: number): PresenceRecord => recordOf(JSON.stringify({ ...toRecord({ ...input({ main: agentAt('main') }), sessionId: id }), heartbeatAt }))
+const entry = (name: string, mtimeMs: number, size = 100) => ({ name, kind: 'file' as const, size, mtimeMs })
+
+test('planReads skips the own file, stale files, odd names and unchanged mtimes', () => {
+  const entries = [entry('me.json', NOW), entry('a.json', NOW - 1000), entry('b.json', NOW - 20000), entry('c.txt', NOW), entry('d.json', NOW), { name: 'sub', kind: 'dir' as const, size: 0, mtimeMs: 0 }, entry('..json', NOW), entry('constructor.json', NOW), entry('__proto__.json', NOW), entry('big.json', NOW, 9000)]
+  const plan = planReads(entries, 'me', { d: NOW }, NOW)
+
+  expect(plan.listed.sort()).toEqual(['a', 'd'])
+  expect(plan.toRead.map(f => f.sessionId)).toEqual(['a'])
+})
+
+test('a stale or tombstoned session is dropped', () => {
+  const prev = { a: rec('a', NOW - 1000), b: rec('b', NOW - 1000), c: rec('c', NOW - 1000), d: rec('d', NOW - 1000) }
+  const parsed: Record<string, Parsed | null> = {
+    a: { kind: 'record', record: rec('a', NOW - 10001) },
+    b: { kind: 'gone', sessionId: 'b' },
+    c: { kind: 'record', record: rec('c', NOW - 500) },
+  }
+  const next = mergeRemote(prev, parsed, NOW, ['a', 'b', 'c', 'd'])
+
+  expect(Object.keys(next).sort()).toEqual(['c', 'd'])
+  expect(next.d).toBe(prev.d)
+  expect(mergeRemote(prev, {}, NOW + 20000, ['a'])).toEqual({})
+  expect(mergeRemote(prev, { a: { kind: 'record', record: rec('x', NOW) } }, NOW, ['a'])).toEqual({})
+})
+
+test('a partial file keeps the last snapshot', () => {
+  const prev = { a: rec('a', NOW - 2000) }
+
+  expect(mergeRemote(prev, { a: null }, NOW, ['a'])).toBe(prev)
+  expect(mergeRemote(prev, {}, NOW, ['a'])).toBe(prev)
+  expect(mergeRemote(prev, {}, NOW, [])).toEqual({})
 })

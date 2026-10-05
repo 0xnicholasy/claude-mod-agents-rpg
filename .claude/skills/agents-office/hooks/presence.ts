@@ -4,7 +4,7 @@ import { clean } from './log'
 import { cut } from './map'
 import type { RoomId } from './map'
 import type { Facing, Pose, Role } from './sprites'
-import { HEARTBEAT_MS } from './timing'
+import { HEARTBEAT_MS, STALE_MS } from './timing'
 
 export type ShareMode = 'all' | 'anon' | 'off'
 
@@ -48,6 +48,9 @@ export const PRESENCE_VERSION = 1
 export const MAX_RECORD_AGENTS = 32
 export const MAX_RECORD_BYTES = 8192
 export const LABEL_MAX = 16
+// D42: the team label and branch have their own cap, so a real repo name is not cut to an agent label's 16.
+export const TEAM_TEXT_MAX = 40
+export const MAX_REMOTE_SESSIONS = 16
 
 export type PresenceAgent = {
   id: string
@@ -95,6 +98,7 @@ export type RecordInput = {
 }
 
 const labelOf = (text: string): string => cut(clean(text), LABEL_MAX)
+const teamText = (text: string): string => cut(clean(text), TEAM_TEXT_MAX)
 
 const agentOf = (agent: OfficeAgent, share: 'all' | 'anon'): PresenceAgent => {
   const role: Role = agent.role ?? 'dev'
@@ -128,7 +132,7 @@ export const toRecord = (input: RecordInput): PresenceRecord => {
     startedAt: input.startedAt,
     heartbeatAt: input.now,
     share: input.share,
-    team: anon ? { label: '', branch: '' } : { label: labelOf(input.team.label), branch: cut(clean(input.team.branch), 64) },
+    team: anon ? { label: '', branch: '' } : { label: teamText(input.team.label), branch: teamText(input.team.branch) },
     agents,
     player: null,
   }
@@ -151,3 +155,168 @@ export const presencePath = (dir: string, sessionId: string): string | undefined
   /^[A-Za-z0-9._-]+$/.test(sessionId) && sessionId !== '.' && sessionId !== '..' ? `${dir}/${sessionId}.json` : undefined
 
 export const PRESENCE_DIR_SUFFIX = '/agents-office/presence'
+
+// ---- Reader (T15, D18, D20). Every field of a foreign record is untrusted.
+
+export type Remote = Record<string, PresenceRecord>
+
+export type Parsed = { kind: 'record'; record: PresenceRecord } | { kind: 'gone'; sessionId: string }
+
+const TIERS: readonly Tier[] = ['haiku', 'sonnet', 'opus', 'fable', 'grey']
+const ROLES: readonly Role[] = ['lead', 'dev', 'research', 'review']
+const POSES: readonly Pose[] = ['idle', 'walk', 'read', 'type', 'run', 'call', 'talk']
+const STATUSES: readonly AgentStatus[] = ['working', 'idle', 'done', 'leaving']
+const FACINGS: readonly Facing[] = ['down', 'up', 'left', 'right']
+const SHARED_ROOMS: readonly RoomId[] = ['reception', 'conference', 'kitchen', 'lab', 'booths']
+const ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
+const COORD_MAX = 200
+
+// Parsed JSON has no known shape; this is the one place it is narrowed, field by field.
+type Raw = Record<string, unknown> // JSON.parse yields unknown data; every field is checked before use.
+
+const isRaw = (value: unknown): value is Raw => typeof value === 'object' && value !== null && !Array.isArray(value)
+const num = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+const pick = <T extends string>(list: readonly T[], value: unknown): T | undefined => list.find(item => item === value)
+const validId = (value: unknown): string | undefined => {
+  const text = str(value)
+
+  // Names that exist on Object.prototype (constructor, __proto__, ...) would collide with plain-object maps keyed by id.
+  return text !== undefined && ID_PATTERN.test(text) && text !== '.' && text !== '..' && !(text in Object.prototype) ? text : undefined
+}
+
+const roomOf = (value: unknown): RoomId | undefined => {
+  const text = str(value)
+  if (text === undefined) return undefined
+  const shared = SHARED_ROOMS.find(room => room === text)
+  if (shared !== undefined) return shared
+
+  return text.startsWith('team:') && ID_PATTERN.test(text.slice(5)) ? (text as RoomId) : undefined
+}
+
+const agentFrom = (value: unknown): PresenceAgent | undefined => {
+  if (!isRaw(value)) return undefined
+  const id = cut(clean(str(value.id) ?? ''), 64)
+  const tier = pick(TIERS, value.tier)
+  const role = pick(ROLES, value.role)
+  const room = roomOf(value.room)
+  const pose = pick(POSES, value.pose)
+  const status = pick(STATUSES, value.status)
+  // An unknown tier, role, room, pose or status drops the agent rather than throwing.
+  if (id === '' || tier === undefined || role === undefined || room === undefined || pose === undefined || status === undefined) return undefined
+  const label = labelOf(str(value.label) ?? '') || role
+  const parent = cut(clean(str(value.parentId) ?? ''), 64)
+  const base: PresenceAgent = { id, label, tier, role, room, pose, status }
+
+  return parent === '' ? base : { ...base, parentId: parent }
+}
+
+const playerFrom = (value: unknown): PresencePlayer | null => {
+  if (!isRaw(value)) return null
+  const room = roomOf(value.room)
+  const rx = num(value.rx)
+  const ry = num(value.ry)
+  const facing = pick(FACINGS, value.facing)
+  if (room === undefined || rx === undefined || ry === undefined || facing === undefined) return null
+  const base: PresencePlayer = {
+    room,
+    rx: Math.min(COORD_MAX, Math.max(0, Math.round(rx))),
+    ry: Math.min(COORD_MAX, Math.max(0, Math.round(ry))),
+    facing,
+  }
+  const emote = str(value.emote)
+  const chat = str(value.chat)
+  const until = num(value.until)
+
+  return {
+    ...base,
+    ...(emote === undefined ? {} : { emote: cut(clean(emote), 2) }),
+    ...(chat === undefined ? {} : { chat: cut(clean(chat), 40) }),
+    ...(until === undefined ? {} : { until }),
+  }
+}
+
+// Narrows a presence file's text. Undefined means unusable (not JSON, oversize, wrong version or wrong
+// types), and the caller keeps its last good snapshot.
+export const parseRecord = (text: string): Parsed | undefined => {
+  if (text.length > MAX_RECORD_BYTES * 2 || bytesOf(text) > MAX_RECORD_BYTES) return undefined
+  let value: unknown // JSON.parse yields unknown data; narrowed below.
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (!isRaw(value) || value.v !== PRESENCE_VERSION) return undefined
+  const sessionId = validId(value.sessionId)
+  const heartbeatAt = num(value.heartbeatAt)
+  if (sessionId === undefined || heartbeatAt === undefined) return undefined
+  if (value.gone === true) return { kind: 'gone', sessionId }
+  const startedAt = num(value.startedAt)
+  const share = pick(['all', 'anon'] as const, value.share)
+  if (startedAt === undefined || share === undefined || !isRaw(value.team) || !Array.isArray(value.agents)) return undefined
+  const label = str(value.team.label)
+  const branch = str(value.team.branch)
+  if (label === undefined || branch === undefined) return undefined
+  const seen = new Set<string>()
+  const agents: PresenceAgent[] = []
+  for (const item of value.agents.slice(0, MAX_RECORD_AGENTS)) {
+    const agent = agentFrom(item)
+    if (agent === undefined || seen.has(agent.id)) continue
+    seen.add(agent.id)
+    agents.push(agent)
+  }
+
+  return {
+    kind: 'record',
+    record: {
+      v: PRESENCE_VERSION,
+      sessionId,
+      startedAt,
+      heartbeatAt,
+      share,
+      team: { label: teamText(label), branch: teamText(branch) },
+      agents,
+      player: playerFrom(value.player),
+    },
+  }
+}
+
+// A heartbeat more than STALE_MS away from now (either side) is stale; the future side stops a forged
+// heartbeat from keeping a session alive.
+export const isStale = (heartbeatAt: number, now: number): boolean => Math.abs(now - heartbeatAt) > STALE_MS
+
+export type FileEntry = { name: string; kind: 'file' | 'dir' | 'other'; size: number; mtimeMs: number }
+export type ReadPlan = { listed: string[]; toRead: Array<{ sessionId: string; name: string; mtimeMs: number }> }
+
+// Which files of a listing to read: `<id>.json` regular files that are not the own file, were touched within
+// STALE_MS and whose mtime differs from the last read. At most MAX_REMOTE_SESSIONS, newest first.
+export const planReads = (entries: readonly FileEntry[], ownId: string, mtimes: Readonly<Record<string, number>>, now: number): ReadPlan => {
+  const fresh = entries
+    .flatMap(entry => {
+      if (entry.kind !== 'file' || entry.size > MAX_RECORD_BYTES || !entry.name.endsWith('.json')) return []
+      const sessionId = validId(entry.name.slice(0, -5))
+      if (sessionId === undefined || sessionId === ownId || isStale(entry.mtimeMs, now)) return []
+
+      return [{ sessionId, name: entry.name, mtimeMs: entry.mtimeMs }]
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || a.sessionId.localeCompare(b.sessionId))
+    .slice(0, MAX_REMOTE_SESSIONS)
+
+  return { listed: fresh.map(file => file.sessionId), toRead: fresh.filter(file => mtimes[file.sessionId] !== file.mtimeMs) }
+}
+
+// Folds freshly read files into the snapshot. `parsed[id]` is a record or tombstone, or null for a file that
+// could not be read or parsed (the last snapshot is kept). A session leaves when its file is no longer
+// listed, it is tombstoned, its record's id differs from its file name or its heartbeat is stale. Returns
+// `prev` itself when nothing changed.
+export const mergeRemote = (prev: Remote, parsed: Readonly<Record<string, Parsed | null>>, now: number, listed: readonly string[]): Remote => {
+  const next: Remote = {}
+  for (const id of listed) {
+    const fresh = parsed[id]
+    const kept = fresh === undefined || fresh === null ? prev[id] : fresh.kind === 'record' && fresh.record.sessionId === id ? fresh.record : undefined
+    if (kept !== undefined && !isStale(kept.heartbeatAt, now)) next[id] = kept
+  }
+  const same = Object.keys(next).length === Object.keys(prev).length && Object.keys(next).every(id => next[id] === prev[id])
+
+  return same ? prev : next
+}
