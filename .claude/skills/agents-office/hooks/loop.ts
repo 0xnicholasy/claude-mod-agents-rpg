@@ -1,8 +1,8 @@
 // Pure frame pieces only: `claude plugin validate` refuses a `$` passed to a
 // function imported from another file, so `startLoop` and `tick` live in
 // register.tsx and call these (TODO.md D19). Durations live in timing.ts.
-import { buildOffice, FULL_ROWS, MIN_COLUMNS, MIN_ROWS } from './map'
-import type { OfficeMap, TeamSpec } from './map'
+import { buildOffice, FULL_ROWS, isMid, MID_FOOT, MID_MIN_ROWS, MIN_COLUMNS, MIN_ROWS, SMALL_FOOT } from './map'
+import type { Footprint, OfficeMap, TeamSpec } from './map'
 import { STRIP_ROWS, STRIP_SMALL_ROWS } from './timing'
 
 // Rows an inline pane never gets: 9 rows below it, its 2 border rows, and the 2 transcript
@@ -18,22 +18,34 @@ export const bodyRowsFor = (placement: 'dock' | 'inline', bodyRows: number, view
     ? Math.min(INLINE_MAX_ROWS, Math.max(1, viewportRows - INLINE_CHROME_ROWS))
     : bodyRows
 
-// 0-2 strip rows until the map reaches FULL_ROWS, then up to STRIP_ROWS (D52).
-// Neither the map nor the strip shrinks as the body grows.
-export const stripRows = (bodyRows: number): number =>
-  Math.max(0, Math.min(STRIP_ROWS, bodyRows - MIN_ROWS, Math.max(STRIP_SMALL_ROWS, bodyRows - FULL_ROWS)))
+// Mid figures need this many pane columns and MIN_ROWS rows; below it the 3x2 layout stays (D57).
+export const MID_MIN_COLUMNS = 72
+
+export const footFor = (columns: number, rows: number): Footprint =>
+  columns >= MID_MIN_COLUMNS && rows >= MIN_ROWS ? MID_FOOT : SMALL_FOOT
+
+// Small: 0-2 strip rows until the map reaches FULL_ROWS, then up to STRIP_ROWS (D52).
+// Mid: the map comes first, so strip rows appear only past the mid map's MID_MIN_ROWS (D59, D63d); an inline body
+// of at most 23 rows is all map. Neither the map nor the strip shrinks as the body grows.
+export const stripRows = (bodyRows: number, foot: Footprint = SMALL_FOOT): number =>
+  isMid(foot)
+    ? Math.max(0, Math.min(STRIP_ROWS, bodyRows - MID_MIN_ROWS))
+    : Math.max(0, Math.min(STRIP_ROWS, bodyRows - MIN_ROWS, Math.max(STRIP_SMALL_ROWS, bodyRows - FULL_ROWS)))
 
 // Raster size for a pane body (D29, D52): the strip rows stay under the map and the
 // result is clamped to the Raster limits (columns 1-512, rows 1-256).
 export const rasterSize = (
   bodyColumns: number,
   bodyRows: number,
-): { columns: number; rows: number; strip: number } => {
-  const strip = stripRows(bodyRows)
+): { columns: number; rows: number; strip: number; foot: Footprint } => {
+  const columns = Math.min(512, Math.max(1, bodyColumns))
+  const foot = footFor(columns, bodyRows)
+  const strip = stripRows(bodyRows, foot)
   return {
-    columns: Math.min(512, Math.max(1, bodyColumns)),
+    columns,
     rows: Math.min(256, Math.max(1, bodyRows - strip)),
     strip,
+    foot,
   }
 }
 
@@ -44,12 +56,13 @@ export const isOfficeSize = (columns: number, rows: number): boolean =>
 // lastFrameCells (D32), so render, tick and spawn share one map per size.
 let cached: { key: string; map: OfficeMap } | undefined
 
-// The map for a raster size and a team list in room order, or undefined below the 60x11 minimum.
-export const mapFor = (columns: number, rows: number, teams: TeamSpec[]): OfficeMap | undefined => {
+// The map for a raster size and a team list in room order, or undefined below the 60x11 minimum. The footprint
+// follows the size (`footFor`) unless the caller names one.
+export const mapFor = (columns: number, rows: number, teams: TeamSpec[], foot: Footprint = footFor(columns, rows)): OfficeMap | undefined => {
   if (!isOfficeSize(columns, rows)) return undefined
-  const key = `${columns},${rows},${teams.map(t => `${t.id}=${t.label}`).join('|')}`
+  const key = `${columns},${rows},${foot.w}x${foot.h},${teams.map(t => `${t.id}=${t.label}`).join('|')}`
   if (cached?.key === key) return cached.map
-  const map = buildOffice(columns, rows, teams)
+  const map = buildOffice(columns, rows, teams, foot)
   cached = { key, map }
 
   return map

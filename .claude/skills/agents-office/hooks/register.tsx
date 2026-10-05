@@ -12,7 +12,7 @@ import { buildFrame, hourOf, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { arrived, clean, interrupted, interruptFailed, nudged, nudgeFailed, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
-import { MIN_COLUMNS, MIN_ROWS, roomAt, SMALL_FOOT } from './map'
+import { canStand, MIN_COLUMNS, MIN_ROWS, roomAt, SMALL_FOOT } from './map'
 import type { Footprint, OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest, peekLines } from './inspect'
@@ -56,9 +56,12 @@ const PEEK_ROWS = 12
 const opened = atom({ plugin: 'agents-office', key: 'opened' } as const, false)
 const viewport = atom(
   { plugin: 'agents-office', key: 'viewport' } as const,
-  // `strip` is the number of log rows under the map; the tick needs it to place the inspect text (D39).
-  { columns: 0, rows: 0 } as { columns: number; rows: number; strip?: number },
+  // `strip` is the number of log rows under the map; the tick needs it to place the inspect text (D39). `foot` is the
+  // footprint the render drew (D57); a viewport written before it existed has none and counts as small.
+  { columns: 0, rows: 0 } as { columns: number; rows: number; strip?: number; foot?: Footprint },
 )
+// The footprint the motion, the player and the cat were last seated for; a change reseats them (D57). Null reads as small.
+const seatFoot = atom({ plugin: 'agents-office', key: 'seatFoot' } as const, null as Footprint | null)
 const EMPTY_ROSTER: Roster = {}
 const agents = atom({ plugin: 'agents-office', key: 'agents' } as const, EMPTY_ROSTER)
 const EMPTY_MOTION: Motion = {}
@@ -186,11 +189,47 @@ const mapAt = async ($: EngineInterface, columns: number, rows: number): Promise
   return mapFor(columns, rows, teams)
 }
 
-// The footprint of the map the pane draws, for the hook calls that have no map of their own (small before a map exists).
-const footOf = async ($: EngineInterface): Promise<Footprint> => {
-  const size = await read($, viewport)
+// The footprint of the map the pane draws, for the hook calls that have no map of their own (D67): the render's own
+// record, small before one exists.
+const footOf = async ($: EngineInterface): Promise<Footprint> => (await read($, viewport)).foot ?? SMALL_FOOT
 
-  return (await mapAt($, size.columns, size.rows))?.foot ?? SMALL_FOOT
+// A footprint change (a resize across 72 columns) drops every motion entry so `seat` places the agents at the new
+// layout's desks, clears the player's path (or respawns a player who no longer stands) and respawns the cat (D57).
+const reseatOnFootChange = async ($: EngineInterface, map: OfficeMap): Promise<void> => {
+  const last = (await read($, seatFoot)) ?? SMALL_FOOT
+  if (last.w === map.foot.w && last.h === map.foot.h) return
+  await update($, motion, () => ({}))
+  await update($, cat, () => null)
+  await update($, player, cur => (cur === null || !canStand(map, cur.x, cur.y) ? null : { ...cur, path: [] }))
+  // Last, so a denied write above is retried by the next tick.
+  await update($, seatFoot, () => map.foot)
+}
+
+// A render that awaits (a bigger frame takes longer) can still be dispatching when the 0 ms timer fires, and the host
+// denies a state write made then. A denied write is retried after VIEWPORT_RETRY_MS, up to VIEWPORT_RETRIES times;
+// without it the viewport stayed unwritten at 120x40, the tick saw no pane and the office drew empty (F08 LIVE, D69).
+const VIEWPORT_RETRY_MS = 50
+const VIEWPORT_RETRIES = 6
+// The newest request's number: a retry of an older request drops itself (a pure cache, like lastFrameCells).
+let viewportRequest = 0
+const writeViewport = ($: EngineInterface, next: { columns: number; rows: number; strip: number; foot: Footprint }, attempt = 0, request = ++viewportRequest): void => {
+  $.clock.after(attempt === 0 ? 0 : VIEWPORT_RETRY_MS, () => {
+    if (request !== viewportRequest) return
+    read($, viewport)
+      .then(current => {
+        if (request !== viewportRequest) return current
+        if (current.columns === next.columns && current.rows === next.rows && current.strip === next.strip && current.foot?.w === next.foot.w && current.foot.h === next.foot.h) return current
+        lastFrameCells = null
+        return update($, viewport, () => next)
+      })
+      .catch(error => {
+        if (attempt < VIEWPORT_RETRIES) {
+          writeViewport($, next, attempt + 1, request)
+          return
+        }
+        $.ui.log(`agents-office: viewport write threw ${String(error)}`, { to: 'debug' })
+      })
+  })
 }
 
 // Writes the own team from the session id and cwd (D12). Without `force` an existing team is kept, so
@@ -711,6 +750,7 @@ const tick = async ($: EngineInterface): Promise<void> => {
   })
   const viewSize = await read($, viewport)
   const viewMap = await mapAt($, viewSize.columns, viewSize.rows)
+  if (viewMap !== undefined) await guard($, 'reseat', undefined, async () => reseatOnFootChange($, viewMap))
   const roster = await guard($, 'expire', await read($, agents), async () => {
     // A finished agent leaves only from the Kitchen (D15); motion is read once for it.
     const where = await read($, motion)
@@ -1080,20 +1120,10 @@ export const register: Register = on => {
 
         const { Raster, Input } = $.ui.resolve(e)
         const bodyRows = bodyRowsFor(e.props.placement, e.props.scroll.bodyRows, e.viewport?.rows)
-        const { columns, rows, strip: stripCount } = rasterSize(e.props.bodyColumns, bodyRows)
+        const { columns, rows, strip: stripCount, foot } = rasterSize(e.props.bodyColumns, bodyRows)
         // Drawing is pure: a state write inside the hook is denied. A timer closure
         // runs in its own dispatch, where the write is allowed (TODO.md D20).
-        $.clock.after(0, () => {
-          read($, viewport)
-            .then(current => {
-              if (current.columns === columns && current.rows === rows && current.strip === stripCount) return current
-              lastFrameCells = null
-              return update($, viewport, () => ({ columns, rows, strip: stripCount }))
-            })
-            .catch(error =>
-              $.ui.log(`agents-office: viewport write threw ${String(error)}`, { to: 'debug' }),
-            )
-        })
+        writeViewport($, { columns, rows, strip: stripCount, foot })
         // Below the minimum size draw only the size line (D48).
         const map = await mapAt($, columns, rows)
         if (map === undefined) {
