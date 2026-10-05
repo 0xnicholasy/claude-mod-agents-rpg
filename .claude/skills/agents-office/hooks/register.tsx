@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import { activityFor } from './activity'
-import { expire, migrateRoster, onActivity, onSpawn, seedMain, syncList } from './agents'
+import { expire, markTool, migrateRoster, onActivity, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
 import { advanceScripts, expireBubbles, startMeet, startReport } from './choreo'
 import type { ChoreoState } from './choreo'
@@ -12,20 +12,22 @@ import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
 import { MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
+import { inspectText, lastTextOf, nearest } from './inspect'
 import { INITIAL_PAD, onPadInput } from './pad'
 import type { PadState } from './pad'
 import { settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
 import { baseName, branchOf, teamLabel } from './team'
-import { LIST_MS, PAD_FOCUS_MS, TICK_MS } from './timing'
+import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, TICK_MS } from './timing'
 
 const PANE = 'office'
 const PAD_KEY = 'pad-input'
 const opened = atom({ plugin: 'agents-office', key: 'opened' } as const, false)
 const viewport = atom(
   { plugin: 'agents-office', key: 'viewport' } as const,
-  { columns: 0, rows: 0 },
+  // `strip` is the number of log rows under the map; the tick needs it to place the inspect text (D39).
+  { columns: 0, rows: 0 } as { columns: number; rows: number; strip?: number },
 )
 const EMPTY_ROSTER: Roster = {}
 const agents = atom({ plugin: 'agents-office', key: 'agents' } as const, EMPTY_ROSTER)
@@ -44,6 +46,10 @@ const pad = atom({ plugin: 'agents-office', key: 'pad' } as const, INITIAL_PAD a
 
 // The player avatar (D14); null until the first tick that has a map and a team.
 const player = atom({ plugin: 'agents-office', key: 'player' } as const, null as Player | null)
+
+// The inspect line (D39): which agent, the text and when it stops showing; null when nothing is inspected.
+type Inspect = { agentId: string; text: string; until: number }
+const inspect = atom({ plugin: 'agents-office', key: 'inspect' } as const, null as Inspect | null)
 
 // Log de-dup cache for guard failures, not drawn state (D49): a hook that fails the same
 // way every tick logs once per distinct name + message.
@@ -312,6 +318,47 @@ const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number): 
   return next ?? current
 }
 
+// `e` (D16, D39): finds the nearest agent within 2 tiles of the player and writes the `inspect` atom for
+// INSPECT_MS; an expired line is cleared. Every roster agent belongs to this session until presence arrives
+// (T16), so each one gets the tail of its last text; a messages deny or throw keeps the base text. Returns the
+// line to show, or undefined.
+// An `e` press older than this when the tick reaches it is dropped.
+const INSPECT_PRESS_MS = 1000
+
+const inspectTick = async ($: EngineInterface, map: OfficeMap, now: number, at: Player | null | undefined): Promise<string | undefined> => {
+  const padNow = await read($, pad)
+  const pending = padNow.inspect
+  if (pending !== undefined && at !== null && at !== undefined) {
+    await update($, pad, cur => (cur.inspect?.at === pending.at ? { ...cur, inspect: undefined } : cur))
+    // A press that waited (no player or map yet) is stale, not a phantom inspect later.
+    if (now - pending.at > INSPECT_PRESS_MS) return undefined
+    const roster = await read($, agents)
+    const target = nearest(roster, await read($, motion), at)
+    let text = 'Nobody within 2 tiles.'
+    if (target !== undefined) {
+      let lastText: string | undefined
+      try {
+        const rows = target.id === 'main' ? await $.session.messages() : await $.session.messages({ agentId: target.id })
+        if (Array.isArray(rows)) lastText = lastTextOf(rows)
+      } catch (error) {
+        $.ui.log(`agents-office: inspect messages threw ${String(error)}`, { to: 'debug' })
+      }
+      const roomName = map.rooms.find(room => room.id === target.room)?.name ?? target.room
+      text = inspectText(target, roomName, now, { own: true, lastText })
+    }
+    await update($, inspect, () => ({ agentId: target?.id ?? '', text: clean(text), until: now + INSPECT_MS }))
+  }
+  const shown = await read($, inspect)
+  if (shown === null) return undefined
+  if (shown.until <= now) {
+    await update($, inspect, () => null)
+
+    return undefined
+  }
+
+  return shown.text
+}
+
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
   await guard($, 'team', undefined, async () => ensureTeam($, undefined, false))
@@ -360,7 +407,17 @@ const tick = async ($: EngineInterface): Promise<void> => {
     commitChoreo($, before, state => advanceScripts(state, now)),
   )
   const walker = await guard($, 'player', await read($, player), async () => stepPlayerTick($, map, now))
-  const frame = buildFrame({ map, agents: after.agents, motion: after.motion, bubbles: after.bubbles, now, player: walker })
+  const shown = await guard($, 'inspect', undefined, async () => inspectTick($, map, now, walker))
+  const noStrip = (await read($, viewport)).strip === 0
+  const frame = buildFrame({
+    map,
+    agents: after.agents,
+    motion: after.motion,
+    bubbles: after.bubbles,
+    now,
+    player: walker,
+    overlay: noStrip ? shown : undefined,
+  })
   const cells = packCells(frame)
   if (cells === lastFrameCells) return
   lastFrameCells = cells
@@ -483,6 +540,8 @@ export const register: Register = on => {
         return
       }
       const activity = activityFor(e.tool)
+      const seenAt = await $.clock.now()
+      await applyRoster($, cur => markTool(cur, id, e.tool, seenAt))
       const roster = await applyRoster($, cur => onActivity(cur, id, activity))
       const room = roster[id]?.room
       const size = await read($, viewport)
@@ -592,9 +651,9 @@ export const register: Register = on => {
         $.clock.after(0, () => {
           read($, viewport)
             .then(current => {
-              if (current.columns === columns && current.rows === rows) return current
+              if (current.columns === columns && current.rows === rows && current.strip === stripCount) return current
               lastFrameCells = null
-              return update($, viewport, () => ({ columns, rows }))
+              return update($, viewport, () => ({ columns, rows, strip: stripCount }))
             })
             .catch(error =>
               $.ui.log(`agents-office: viewport write threw ${String(error)}`, { to: 'debug' }),
@@ -611,6 +670,8 @@ export const register: Register = on => {
             </Box>
           )
         }
+        const inspected = await read($, inspect)
+        const inspectLine = inspected !== null && inspected.until > (await $.clock.now()) ? inspected.text : undefined
         const grid = buildFrame({
           map,
           agents: await read($, agents),
@@ -618,6 +679,7 @@ export const register: Register = on => {
           bubbles: await read($, bubbles),
           now: await $.clock.now(),
           player: await read($, player),
+          overlay: stripCount === 0 ? inspectLine : undefined,
         })
         const cells = packCells(grid)
         // The newest `stripCount` lines under the Raster, oldest of them first (the log is
@@ -625,6 +687,8 @@ export const register: Register = on => {
         const lines = await read($, log)
         const newest = stripCount > 0 ? lines.slice(-stripCount) : []
         const strip = Array.from({ length: stripCount }, (_, i) => newest[i] ?? ' ')
+        // The inspect line takes the newest strip row while it shows (D16).
+        if (stripCount > 0 && inspectLine !== undefined) strip[stripCount - 1] = inspectLine
 
         const padState = await read($, pad)
 

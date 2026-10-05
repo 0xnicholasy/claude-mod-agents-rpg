@@ -13,7 +13,7 @@ declare module 'claude-code' {
   interface PluginState {
     'agents-office': {
       opened: boolean
-      viewport: { columns: number; rows: number }
+      viewport: { columns: number; rows: number; strip?: number }
       agents: Record<
         string,
         {
@@ -65,6 +65,7 @@ declare module 'claude-code' {
         chat?: string
         until?: number
       } | null
+      inspect: { agentId: string; text: string; until: number } | null
       pad: {
         handled: string
         clear: string
@@ -72,6 +73,7 @@ declare module 'claude-code' {
         emote?: { glyph: string; at: number }
         jump?: { dir: 'next' | 'prev'; at: number }
         epoch?: number
+        inspect?: { at: number }
       }
     }
   }

@@ -127,9 +127,11 @@ export type FrameInput = {
   now: number
   // The player avatar, drawn over every agent with the plate "you" (D14).
   player?: Player | null
+  // Inspect text drawn over the corridor's first row, for panes with no strip rows (D39).
+  overlay?: string
 }
 
-export const buildFrame = ({ map, agents, motion, bubbles, now, player }: FrameInput): Cell[][] => {
+export const buildFrame = ({ map, agents, motion, bubbles, now, player, overlay }: FrameInput): Cell[][] => {
   const floors = floorColors(map)
   const grid = map.tiles.map((row, y) => row.map((kind, x) => baseCell(kind, floors[y]?.[x] ?? FLOOR_BG)))
   for (const room of map.rooms) {
@@ -227,6 +229,14 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player }: FrameI
       fg: BUBBLE_FG,
       bg: BUBBLE_BG,
     })
+  }
+
+  // Inspect text (D39): one row over the corridor, cut to the corridor's width, on top of everything.
+  if (overlay !== undefined && overlay !== '') {
+    const { x, y, w } = map.corridor
+    textCells(overlay, BUBBLE_FG, BUBBLE_BG)
+      .slice(0, w)
+      .forEach((cell, i) => put(grid, x + i, y, cell))
   }
 
   return grid

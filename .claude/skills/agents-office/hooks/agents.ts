@@ -48,6 +48,9 @@ export type OfficeAgent = {
   // A teammate has several turns: turn.complete makes it idle, never done (D26).
   teammate: boolean
   completedAt?: number
+  // The last tool this agent called, and when that tool began (D39); undefined before its first tool.
+  tool?: string
+  seenAt?: number
   // A running choreography (T08); tool activity is ignored while one runs.
   script?: Script
 }
@@ -87,6 +90,14 @@ const withStatus = (agent: OfficeAgent, status: 'working' | 'idle'): OfficeAgent
   delete next.completedAt
 
   return next
+}
+
+// Records the tool an agent just called; `seenAt` restarts only when the tool changes (D39).
+export const markTool = (roster: Roster, agentId: string, tool: string, now: number): Roster => {
+  const agent = roster[agentId]
+  if (agent === undefined || agent.tool === tool) return roster
+
+  return { ...roster, [agentId]: { ...agent, tool, seenAt: now } }
 }
 
 // `home` is the own team room (D12): every agent works from its desk there.
