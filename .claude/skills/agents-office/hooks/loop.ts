@@ -1,7 +1,7 @@
 // Pure frame pieces only: `claude plugin validate` refuses a `$` passed to a
 // function imported from another file, so `startLoop` and `tick` live in
 // register.tsx and call these (TODO.md D19). Durations live in timing.ts.
-import { buildOffice, FULL_ROWS, isMid, MID_FOOT, MID_MIN_ROWS, MIN_COLUMNS, MIN_ROWS, SMALL_FOOT } from './map'
+import { buildOffice, FULL_ROWS, isMid, MID_FOOT, MID_MIN_ROWS, MIN_COLUMNS, MIN_ROWS } from './map'
 import type { Footprint, OfficeMap, TeamSpec } from './map'
 import { STRIP_ROWS, STRIP_SMALL_ROWS } from './timing'
 
@@ -18,12 +18,11 @@ export const bodyRowsFor = (placement: 'dock' | 'inline', bodyRows: number, view
     ? Math.min(INLINE_MAX_ROWS, Math.max(1, viewportRows - INLINE_CHROME_ROWS))
     : bodyRows
 
-// Mid figures need this many pane columns and MIN_ROWS rows; below it the 3x2 layout stays (D57).
 // Every pane that passes `isOfficeSize` draws the mid 5x5 figures (D72). A pane narrower than the mid map's
 // virtual width crops it with the camera instead of falling back to the small layout (supersedes D57).
 export const footFor = (): Footprint => MID_FOOT
 
-export const stripRows = (bodyRows: number, foot: Footprint = SMALL_FOOT): number =>
+export const stripRows = (bodyRows: number, foot: Footprint = MID_FOOT): number =>
   isMid(foot)
     ? Math.max(0, Math.min(STRIP_ROWS, bodyRows - MID_MIN_ROWS))
     : Math.max(0, Math.min(STRIP_ROWS, bodyRows - MIN_ROWS, Math.max(STRIP_SMALL_ROWS, bodyRows - FULL_ROWS)))

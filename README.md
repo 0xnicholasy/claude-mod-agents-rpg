@@ -106,7 +106,7 @@ Hair and skin tones come from a hash of the agent's id, so an agent keeps its lo
 - Work: the agent walks to the room its latest tool call names (see "Rooms") and stands there in a working pose; at a desk it sits.
 - Messaging: when an agent calls SendMessage to another known agent, both walk to the Conference room. The sender shows a speech bubble with the first 40 characters of the message for 4 seconds, then both return to what they were doing.
 - Completion: a subagent that finishes its turn walks to Reception and shows "done" (or "stopped" if the turn did not end with an answer). Its parent, or the main session, shows "got it". It then walks to the Kitchen and leaves once at least 5 seconds have passed since it finished.
-- Log: in the 3x2 layout, a pane with rows to spare shows up to five lines under the map with the newest events (arrivals at a room, messages, reports), oldest first. The 5x5 layout puts the map first and shows no log in an inline pane.
+- Log: the map comes first; a pane with more than 23 body rows shows up to five lines under it with the newest events (arrivals at a room, messages, reports), oldest first.
 - Cat: a cat wanders the shared rooms and rests 5 to 15 seconds between walks. It is only drawn in your own pane; it is not published.
 - Night: from 20:00 to 06:00 by your machine's clock, the floors, walls, doors and signs are 35% darker. Figures keep their colours.
 

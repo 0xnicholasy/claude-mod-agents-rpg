@@ -57,10 +57,10 @@ const opened = atom({ plugin: 'agents-office', key: 'opened' } as const, false)
 const viewport = atom(
   { plugin: 'agents-office', key: 'viewport' } as const,
   // `strip` is the number of log rows under the map; the tick needs it to place the inspect text (D39). `foot` is the
-  // footprint the render drew (D57); a viewport written before it existed has none and counts as small.
+  // footprint the render drew (D57); a viewport written before it existed has none and counts as mid.
   { columns: 0, rows: 0 } as { columns: number; rows: number; strip?: number; foot?: Footprint },
 )
-// The footprint the motion, the player and the cat were last seated for; a change reseats them (D57). Null reads as small.
+// The footprint the motion, the player and the cat were last seated for; a change reseats them (D57). Null reads as mid.
 const seatFoot = atom({ plugin: 'agents-office', key: 'seatFoot' } as const, null as Footprint | null)
 const EMPTY_ROSTER: Roster = {}
 const agents = atom({ plugin: 'agents-office', key: 'agents' } as const, EMPTY_ROSTER)
@@ -190,10 +190,10 @@ const mapAt = async ($: EngineInterface, columns: number, rows: number): Promise
 }
 
 // The footprint of the map the pane draws, for the hook calls that have no map of their own (D67): the render's own
-// record, small before one exists.
+// record, mid before one exists.
 const footOf = async ($: EngineInterface): Promise<Footprint> => (await read($, viewport)).foot ?? MID_FOOT
 
-// A footprint change (a resize across the 11-row minimum) drops every motion entry so `seat` places the agents at the new
+// A footprint change (only a pre-D72 stored 3x2 footprint after a reload still differs) drops every motion entry so `seat` places the agents at the new
 // layout's desks, clears the player's path (or respawns a player who no longer stands) and respawns the cat (D57).
 const reseatOnFootChange = async ($: EngineInterface, map: OfficeMap): Promise<void> => {
   const last = (await read($, seatFoot)) ?? MID_FOOT
@@ -851,7 +851,6 @@ let padFocusAsked = false
 const startLoop = ($: EngineInterface): void => {
   loopTimer?.cancel()
   lastFrameCells = null
-  padFocusAsked = false
   loopTimer = $.clock.every(TICK_MS, () => {
     tick($).catch(error =>
       $.ui.log(`agents-office: tick threw ${String(error)}`, { to: 'debug' }),
@@ -884,11 +883,12 @@ const startPresence = ($: EngineInterface): void => {
 const openOffice = async ($: EngineInterface): Promise<void> => {
   // Without rows an inline pane opens a third of the terminal tall. The inline height
   // follows the tree, so this caps it; the render sizes itself from the viewport (D50).
+  // Set before the first await: the tick must not open a second time while this open is in flight.
+  padFocusAsked = true
   await $.ui.open({ id: PANE, title: 'Office', rows: INLINE_MAX_ROWS, columns: MIN_COLUMNS, focus: true })
   await update($, opened, () => true)
   // The Input is drawn only after the pane mounts, and a focus request before then is waited for only
   // briefly, so the pad takes focus after PAD_FOCUS_MS (spike S1b). A deny is logged once.
-  padFocusAsked = true
   $.clock.after(PAD_FOCUS_MS, () => requestPadFocus($))
 }
 
