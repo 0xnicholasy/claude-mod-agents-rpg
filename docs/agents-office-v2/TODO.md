@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 2/26 done
+Progress: 3/26 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -117,7 +117,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; pixels.test.ts: 'a 3x4 figure composes to 3x2 upper-half cells', 'a dot pixel takes the floor color', 'countPairs counts distinct fg/bg pairs'
 
 ### T03 Draw people figures
-- status: todo
+- status: done (#26, 2026-10-05)
 - needs: T02
 - size: M
 - scope: Add `figure({ pose, facing, frame, shirt, role, key, floor }): Cell[][]` to `sprites.ts`, next to the v1 `sprite()` (which stays until T04).
@@ -471,3 +471,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 plan written: 26 todos (8 S, 17 M, TZZ).
 - 2026-10-05 T01 done: spike worktree and branch spike/agents-office-v2 removed (only the approved spike edits were present).
 - 2026-10-05 T02 done: pixels.ts compose/countPairs/PAIR_BUDGET with tests; compose also throws on rows of unequal width.
+- 2026-10-05 T03 done: figure()/hashKey/FIGURE_PALETTE in sprites.ts; shirt is `Tier | 'player'`, `Role` and `Facing` types exported from sprites.ts for T04 to import. D9 confirmed (seated figure carries desk and monitor).
