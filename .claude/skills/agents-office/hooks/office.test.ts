@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { buildOffice } from './map'
 import { findPath } from './path'
+import { NUDGE_TEXT } from './pad'
 import { STRIP_ROWS } from './timing'
 import type { OfficeMap } from './map'
 const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }])
@@ -1537,4 +1538,157 @@ test('six teams at 60 columns still blit the mounted size', async ($, on) => {
   expect(lengths.length).toBeGreaterThan(0)
   expect(lengths.every(n => n === 4 * Math.ceil((60 * 18 * 12) / 3))).toBe(true)
   await ui.unmount()
+})
+
+const pressKey = async ($: Engine, text: string) => $.ui.input({ plugin: 'agents-office', key: 'pad-input', text, kind: 'change' })
+
+// A session with main and one spawned subagent `a1` (label `general-purpose`); the player starts beside main, 5 tiles to its left.
+// `answer` is what the confirm dialog gives back; 'dismiss' makes `ui.ask` reject. `calls` collects every ask, send and abort.
+const startConfirm = async ($: Engine, on: On, answer: string) => {
+  const clock = mock.clock(on)
+  const calls = { asks: [] as string[], sends: [] as Array<{ to: unknown; text: string }>, aborts: [] as string[], strip: [] as string[], logs: [] as string[] }
+  // `$.ui.ask` is a tool.call of AskUserQuestion; a deny is a dismissed dialog.
+  on('tool.call', (_$, e) => {
+    if (e.tool !== 'AskUserQuestion') return { result: 'stub' }
+    const question = e.questions[0]?.question ?? ''
+    calls.asks.push(question)
+    if (answer === 'dismiss') return { deny: 'dismissed' }
+
+    return { result: { questions: e.questions.map(q => ({ ...q, options: q.options })), answers: { [question]: answer } } }
+  })
+  on('session.send', (_$, e) => {
+    calls.sends.push({ to: e.to, text: e.text })
+
+    return { isDelivered: true }
+  })
+  on('turn.abort', (_$, e) => {
+    calls.aborts.push(e.turnId)
+
+    return { value: undefined }
+  })
+  on('state.set', ($$, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the log atom is read.
+    if (e.key === 'log') calls.strip = e.value as string[]
+
+    return next(e)
+  })
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: 'done' }))
+  on('ui.blit', () => ({ value: {} }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  stubSession(on, calls.logs)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(11))
+  await clock.advance(100)
+  await $.agent.spawn(spawnArgs)
+  await clock.advance(6000)
+  await pressKey($, ']')
+  await clock.advance(6000)
+  await pressKey($, '[')
+  await clock.advance(6000)
+
+  return { clock, calls, ui }
+}
+
+const walkToSubagent = async ($: Engine, clock: ReturnType<typeof mock.clock>) => {
+  await pressKey($, 'ddddd')
+  await clock.advance(1000)
+}
+
+test('a nudge needs a Yes', async ($, on) => {
+  const yes = await startConfirm($, on, 'Yes')
+  await walkToSubagent($, yes.clock)
+  await pressKey($, 'm')
+  await yes.clock.advance(200)
+
+  expect(yes.calls.asks).toEqual(['Nudge general-purpose?'])
+  expect(yes.calls.sends).toEqual([{ to: 'a1', text: NUDGE_TEXT }])
+  expect(yes.calls.strip.at(-1)).toBe('You nudged general-purpose')
+  await yes.ui.unmount()
+})
+
+for (const answer of ['No', 'dismiss', 'yes']) {
+  test(`a nudge answered ${answer} sends nothing`, async ($, on) => {
+    const run = await startConfirm($, on, answer)
+    await walkToSubagent($, run.clock)
+    await pressKey($, 'm')
+    await run.clock.advance(200)
+
+    expect(run.calls.asks).toEqual(['Nudge general-purpose?'])
+    expect(run.calls.sends).toEqual([])
+    expect(run.calls.strip).not.toContain('You nudged general-purpose')
+    await run.ui.unmount()
+  })
+}
+
+test('m near main asks nothing and sends nothing', async ($, on) => {
+  const run = await startConfirm($, on, 'Yes')
+  await pressKey($, 'm')
+  await run.clock.advance(200)
+
+  expect(run.calls.asks).toEqual([])
+  expect(run.calls.sends).toEqual([])
+  await run.ui.unmount()
+})
+
+test('x aborts main only after Yes', async ($, on) => {
+  const yes = await startConfirm($, on, 'Yes')
+  await $.turn.start({ text: 'go', turnId: 'turn-7' })
+  await pressKey($, 'x')
+  await yes.clock.advance(200)
+
+  expect(yes.calls.asks).toEqual(['Interrupt main?'])
+  expect(yes.calls.aborts).toEqual(['turn-7'])
+  expect(yes.calls.strip.at(-1)).toBe('You interrupted main')
+  await yes.ui.unmount()
+})
+
+for (const answer of ['No', 'dismiss', 'yes']) {
+  test(`x answered ${answer} aborts nothing`, async ($, on) => {
+    const run = await startConfirm($, on, answer)
+    await $.turn.start({ text: 'go', turnId: 'turn-8' })
+    await pressKey($, 'x')
+    await run.clock.advance(200)
+
+    expect(run.calls.asks).toEqual(['Interrupt main?'])
+    expect(run.calls.aborts).toEqual([])
+    await run.ui.unmount()
+  })
+}
+
+test('x with no running turn aborts nothing even after Yes', async ($, on) => {
+  const idle = await startConfirm($, on, 'Yes')
+  await pressKey($, 'x')
+  await idle.clock.advance(200)
+
+  expect(idle.calls.asks).toEqual(['Interrupt main?'])
+  expect(idle.calls.aborts).toEqual([])
+  expect(idle.calls.strip.at(-1)).toBe('Interrupt skipped: no turn is running')
+  await idle.ui.unmount()
+})
+
+test('x after the turn completed aborts nothing', async ($, on) => {
+  const run = await startConfirm($, on, 'Yes')
+  await $.turn.start({ text: 'go', turnId: 'turn-9' })
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 'turn-9', reason: 'answer' })
+  await pressKey($, 'x')
+  await run.clock.advance(200)
+
+  expect(run.calls.asks).toEqual(['Interrupt main?'])
+  expect(run.calls.aborts).toEqual([])
+  await run.ui.unmount()
+})
+
+test('a finished subagent is never nudged', async ($, on) => {
+  const run = await startConfirm($, on, 'Yes')
+  await $.turn.complete({ ...turnArgs, agentId: 'a1', turnId: 'sub-1' })
+  await walkToSubagent($, run.clock)
+  await pressKey($, 'm')
+  await run.clock.advance(200)
+
+  expect(run.calls.asks).toEqual([])
+  expect(run.calls.sends).toEqual([])
+  await run.ui.unmount()
 })

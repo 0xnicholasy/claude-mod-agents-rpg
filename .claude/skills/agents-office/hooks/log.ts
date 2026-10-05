@@ -25,3 +25,9 @@ export const told = (from: string, to: string, text: string): string =>
 
 export const reported = (label: string, reason: string): string =>
   reason === 'answer' ? `${cleanLabel(label)} reported done` : `${cleanLabel(label)} reported stopped`
+
+// T23 (D25): the result of a confirmed nudge or interrupt, or why it did not happen.
+export const nudged = (label: string): string => `You nudged ${cleanLabel(label)}`
+export const nudgeFailed = (label: string): string => `Nudge to ${cleanLabel(label)} failed`
+export const interrupted = (): string => 'You interrupted main'
+export const interruptFailed = (): string => 'Interrupt failed'
