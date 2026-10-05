@@ -5,7 +5,7 @@ import type { Motion } from './frame'
 import type { OfficeMap, Point } from './map'
 import { findPath } from './path'
 import { frameCount, POSES } from './sprites'
-import type { Pose } from './sprites'
+import type { Facing, Pose } from './sprites'
 import { TICK_MS, WORK_FRAME_TICKS } from './timing'
 
 const same = (a: Point, b: Point): boolean => a.x === b.x && a.y === b.y
@@ -88,3 +88,15 @@ export const drawnFrame = (pose: Pose, entry: Motion[string], now: number): numb
   pose === 'walk'
     ? entry.frame % frameCount('walk')
     : Math.floor(now / (TICK_MS * WORK_FRAME_TICKS)) % frameCount(pose)
+
+/** Facing from the next path step (the larger axis wins, a tie goes horizontal); a resting agent faces down (D8). */
+export const drawnFacing = (entry: Motion[string]): Facing => {
+  const next = entry.path[0]
+  if (next === undefined) return 'down'
+  const dx = next.x - entry.x
+  const dy = next.y - entry.y
+  if (dx === 0 && dy === 0) return 'down'
+  if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 'right' : 'left'
+
+  return dy > 0 ? 'down' : 'up'
+}

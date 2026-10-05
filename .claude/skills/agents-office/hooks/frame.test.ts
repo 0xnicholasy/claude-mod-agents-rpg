@@ -1,11 +1,14 @@
 import { expect, test } from 'claude-code/testing'
-import { buildFrame, FLOOR_BG, OFFICE_PALETTE, placeMotion, SIGN_BG, SIGN_FG, BUBBLE_BG, BUBBLE_FG } from './frame'
+import { buildFrame, DOOR_BG, FLOOR_BG, OFFICE_PALETTE, placeMotion, SIGN_BG, SIGN_FG, BUBBLE_BG, BUBBLE_FG } from './frame'
 import type { Bubble, Motion } from './frame'
 import type { OfficeAgent, Roster, Tier } from './agents'
 import { buildMap } from './map'
 import { DEFAULT_COLOR } from './raster'
+import type { Cell } from './raster'
 import { enterAtDoor } from './motion'
-import { nameplate, POSES, SPRITE_PALETTE, sprite } from './sprites'
+import { countPairs, PAIR_BUDGET } from './pixels'
+import { FACINGS, figure, nameplate, POSES, ROLE_COLORS, SPRITE_PALETTE } from './sprites'
+import type { Facing, Pose, Role } from './sprites'
 
 const map = buildMap(60, 18)
 
@@ -39,18 +42,18 @@ test('frame draws every room sign at its anchor', () => {
   }
 })
 
-test("an agent's sprite and nameplate sit at its motion tile", () => {
+test("an agent's figure and nameplate sit at its motion tile", () => {
   const roster: Roster = { a1: agent('a1', { label: 'quick', pose: 'type' }) }
   // A resting work pose animates from the clock (D34): now = 300 ms is work frame 1.
   const grid = buildFrame({ map, agents: roster, motion: { a1: at(anchor.x, anchor.y) }, bubbles: [], now: 300 })
-  const art = sprite('type', 1, 'opus')
+  // No role on the roster entry draws as dev; the key is the agent id; `.` pixels take the floor.
+  const art = figure({ pose: 'type', facing: 'down', frame: 1, shirt: 'opus', role: 'dev', key: 'a1', floor: FLOOR_BG })
 
-  // Face cell: opaque, own skin bg. Body cells keep the floor bg (D28).
-  expect(grid[anchor.y]?.[anchor.x + 1]).toEqual(art[0]?.[1])
-  expect(grid[anchor.y + 1]?.[anchor.x + 1]).toEqual({ ...art[1]?.[1], bg: FLOOR_BG })
-  expect(grid[anchor.y]?.[anchor.x + 2]).toEqual({ ...art[0]?.[2], bg: FLOOR_BG })
-  // A TRANSPARENT sprite cell leaves the floor cell untouched.
-  expect(grid[anchor.y]?.[anchor.x]).toEqual({ ch: 0x20, fg: FLOOR_BG, bg: FLOOR_BG })
+  art.forEach((row, dy) =>
+    row.forEach((cell, dx) => expect(grid[anchor.y + dy]?.[anchor.x + dx]).toEqual(cell)),
+  )
+  // Every figure cell is a half-block.
+  expect(grid[anchor.y]?.[anchor.x]?.ch).toBe(0x2580)
   // Nameplate: 5 cells one row above. Centred on the sprite it would start at x=0, a wall,
   // so it shifts onto the floor and starts at x=1.
   const plate = nameplate('quick')
@@ -105,7 +108,7 @@ test('a bubble is drawn above the speaker and clipped to the grid', () => {
   expect(expired[0]?.some(c => c.bg === BUBBLE_BG)).toBe(false)
 })
 
-test('office and sprite colors stay inside the 32-color budget', () => {
+test('office and figure colors stay inside the palettes and the pair budget', () => {
   const tiers: Tier[] = ['haiku', 'sonnet', 'opus', 'fable', 'grey']
   const roster: Roster = {}
   const motion: Motion = {}
@@ -118,18 +121,81 @@ test('office and sprite colors stay inside the 32-color budget', () => {
   })
   const grid = buildFrame({ map, agents: roster, motion, bubbles, now: 0 })
   const colors = new Set<number>()
-  const pairs = new Set<string>()
   for (const cell of grid.flat()) {
     colors.add(cell.fg)
     colors.add(cell.bg)
-    pairs.add(`${cell.fg}/${cell.bg}`)
   }
   colors.delete(DEFAULT_COLOR)
   const allowed = new Set([...OFFICE_PALETTE, ...SPRITE_PALETTE])
 
   expect([...colors].every(c => allowed.has(c))).toBe(true)
-  expect(allowed.size).toBeLessThan(32)
-  expect(pairs.size).toBeLessThan(1024)
+  expect(countPairs(grid)).toBeLessThan(PAIR_BUDGET)
+})
+
+test('a crowd of 32 figures stays under 256 color pairs', () => {
+  const tiers: Tier[] = ['haiku', 'sonnet', 'opus', 'fable', 'grey']
+  const roles = Object.keys(ROLE_COLORS) as Role[]
+  // The floor tile and the door tile; `.` pixels take whichever is under the figure.
+  const floors = [FLOOR_BG, DOOR_BG]
+  const crowd: Cell[][] = []
+  for (let i = 0; i < 32; i++) {
+    const pose: Pose = POSES[i % POSES.length] ?? 'idle'
+    const facing: Facing = FACINGS[i % FACINGS.length] ?? 'down'
+    const art = figure({
+      pose,
+      facing,
+      frame: i % 4,
+      shirt: tiers[i % tiers.length] ?? 'grey',
+      role: roles[i % roles.length] ?? 'dev',
+      key: `agent-${i}`,
+      floor: floors[i % floors.length] ?? FLOOR_BG,
+    })
+    crowd.push(...art)
+  }
+
+  expect(crowd).toHaveLength(64)
+  expect(countPairs(crowd)).toBeLessThan(PAIR_BUDGET)
+
+  // The same crowd standing in the real frame, spread over every room's anchors.
+  const roster: Roster = {}
+  const motion: Motion = {}
+  const spots = map.rooms.flatMap(r => r.anchors)
+  for (let i = 0; i < 32; i++) {
+    const spot = spots[i % spots.length] ?? anchor
+    roster[`c${i}`] = agent(`c${i}`, {
+      pose: POSES[i % POSES.length] ?? 'idle',
+      tier: tiers[i % tiers.length] ?? 'grey',
+      role: roles[i % roles.length] ?? 'dev',
+    })
+    motion[`c${i}`] = { ...at(spot.x, spot.y, i), path: i % 3 === 0 ? [{ x: spot.x + 1, y: spot.y }] : [] }
+  }
+  const frame = buildFrame({ map, agents: roster, motion, bubbles: [], now: 0 })
+  expect(countPairs(frame)).toBeLessThan(PAIR_BUDGET)
+})
+
+test('a walking figure faces its next step', () => {
+  const roster: Roster = { a1: agent('a1') }
+  const faceOf = (path: { x: number; y: number }[]): string => {
+    const grid = buildFrame({ map, agents: roster, motion: { a1: { x: anchor.x, y: anchor.y, path, frame: 0 } }, bubbles: [], now: 0 })
+    return JSON.stringify([grid[anchor.y], grid[anchor.y + 1]].map(row => row?.slice(anchor.x, anchor.x + 3)))
+  }
+  const draw = (facing: Facing): string =>
+    JSON.stringify(figure({ pose: 'walk', facing, frame: 0, shirt: 'opus', role: 'dev', key: 'a1', floor: FLOOR_BG }))
+
+  expect(faceOf([{ x: anchor.x + 1, y: anchor.y }])).toBe(draw('right'))
+  expect(faceOf([{ x: anchor.x - 1, y: anchor.y }])).toBe(draw('left'))
+  expect(faceOf([{ x: anchor.x, y: anchor.y + 1 }])).toBe(draw('down'))
+  expect(faceOf([{ x: anchor.x, y: anchor.y - 1 }])).toBe(draw('up'))
+  expect(draw('right')).not.toBe(draw('left'))
+})
+
+test('a typing agent shows the desk color under the figure', () => {
+  const roster: Roster = { a1: agent('a1', { pose: 'type' }) }
+  const grid = buildFrame({ map, agents: roster, motion: { a1: at(anchor.x, anchor.y) }, bubbles: [], now: 0 })
+  const bottom = grid[anchor.y + 1]?.slice(anchor.x, anchor.x + 3) ?? []
+
+  expect(bottom).toHaveLength(3)
+  for (const cell of bottom) expect(cell.bg).toBe(0x8d6e63)
 })
 
 test('placeMotion seats a new agent at its first free anchor and drops departed ones', () => {
@@ -233,4 +299,28 @@ test('no nameplate is drawn when the row above is a door or wall', () => {
   const bare = buildFrame({ map: wide, agents: {}, motion: {}, bubbles: [], now: 0 })
   const grid = buildFrame({ map: wide, agents: roster, motion: { m: at(stand.x, stand.y) }, bubbles: [], now: 0 })
   expect(grid[stand.y - 1]).toEqual(bare[stand.y - 1])
+})
+
+test('an overlapping figure takes its floor from the map, not from the figure drawn before it', () => {
+  const roster: Roster = { a: agent('a'), b: agent('b') }
+  const grid = buildFrame({ map, agents: roster, motion: { a: at(anchor.x, anchor.y), b: at(anchor.x + 1, anchor.y) }, bubbles: [], now: 0 })
+  const alone = buildFrame({ map, agents: { b: agent('b') }, motion: { b: at(anchor.x + 1, anchor.y) }, bubbles: [], now: 0 })
+
+  // b is drawn over a; b's own cells must match b drawn alone on the empty floor.
+  for (let dy = 0; dy < 2; dy++) {
+    for (let dx = 0; dx < 3; dx++) {
+      expect(grid[anchor.y + dy]?.[anchor.x + 1 + dx]).toEqual(alone[anchor.y + dy]?.[anchor.x + 1 + dx])
+    }
+  }
+})
+
+test('main draws with lead pants, other roster entries without a role draw as dev', () => {
+  const roster: Roster = { main: agent('main'), a1: agent('a1') }
+  const spots = devbay?.anchors ?? []
+  const first = spots[0] ?? anchor
+  const second = spots[1] ?? { x: anchor.x + 8, y: anchor.y }
+  const grid = buildFrame({ map, agents: roster, motion: { main: at(first.x, first.y), a1: at(second.x, second.y) }, bubbles: [], now: 0 })
+
+  expect(grid[first.y + 1]?.[first.x]?.bg).toBe(ROLE_COLORS.lead)
+  expect(grid[second.y + 1]?.[second.x]?.bg).toBe(ROLE_COLORS.dev)
 })

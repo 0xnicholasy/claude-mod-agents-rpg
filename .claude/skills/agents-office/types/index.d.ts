@@ -20,6 +20,7 @@ declare module 'claude-code' {
           id: string
           label: string
           tier: 'haiku' | 'sonnet' | 'opus' | 'fable' | 'grey'
+          role?: 'lead' | 'dev' | 'research' | 'review'
           parentId?: string
           status: 'working' | 'idle' | 'done' | 'leaving'
           room: 'lobby' | 'devbay' | 'library' | 'server' | 'phone' | 'meeting' | 'break'

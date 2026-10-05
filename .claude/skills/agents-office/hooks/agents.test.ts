@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { expire, onActivity, onComplete, onSpawn, seedMain, syncList } from './agents'
+import { expire, onActivity, onComplete, onSpawn, roleOf, seedMain, syncList } from './agents'
 import type { Roster, SpawnInput } from './agents'
 import { buildMap } from './map'
 
@@ -103,4 +103,16 @@ test('a second turn.complete on a leaving agent returns the same roster', () => 
   const leaving: Roster = { ...done, a1: { ...base, status: 'leaving' } }
 
   expect(onComplete(leaving, 'a1', 999)).toBe(leaving)
+})
+
+test('role comes from the agent type: main leads, review, research, else dev', () => {
+  expect(seedMain({}).main?.role).toBe('lead')
+  expect(roleOf('code-reviewer')).toBe('review')
+  expect(roleOf('Explore')).toBe('research')
+  expect(roleOf('deep-researcher')).toBe('research')
+  expect(roleOf('quick-search')).toBe('research')
+  expect(roleOf('general-purpose')).toBe('dev')
+  expect(onSpawn({}, input({ subagentType: 'code-reviewer' }), { agentId: 'a1' }).a1?.role).toBe('review')
+  const listed = syncList({}, [{ id: 'x', description: 'd', type: 'Explore', status: 'running' }])
+  expect(listed.x?.role).toBe('research')
 })

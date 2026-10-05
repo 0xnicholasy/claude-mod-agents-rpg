@@ -2,7 +2,7 @@ import type { AgentInfo, AgentSpawnInput } from 'claude-code'
 import type { Activity } from './activity'
 import type { OfficeMap, RoomId } from './map'
 import type { Motion } from './frame'
-import type { Pose } from './sprites'
+import type { Pose, Role } from './sprites'
 import { DESPAWN_MS } from './timing'
 
 // A meeting walk (D38). `text` is the speaker's bubble, shown on arrival; `until` is
@@ -37,6 +37,8 @@ export type OfficeAgent = {
   id: string
   label: string
   tier: Tier
+  // Pants color. A roster entry from before roles existed has none and draws as dev (D6).
+  role?: Role
   parentId?: string
   status: AgentStatus
   room: RoomId
@@ -70,6 +72,15 @@ const tierOf = (text: string | undefined): Tier | undefined => {
 // An Explore-type agent works from the Library, every other spawned agent from the Dev Bay (D37).
 const homeOf = (type: string): RoomId => (type.toLowerCase().includes('explore') ? 'library' : 'devbay')
 
+// Pants color by agent type (D6): review, then research (explore/research/search), else dev.
+export const roleOf = (type: string): Role => {
+  const lower = type.toLowerCase()
+  if (lower.includes('review')) return 'review'
+  if (['explore', 'research', 'search'].some(word => lower.includes(word))) return 'research'
+
+  return 'dev'
+}
+
 const labelOf = (name: string | undefined, type: string, description: string): string =>
   name || type || description.slice(0, 12)
 
@@ -86,7 +97,7 @@ export const seedMain = (roster: Roster): Roster =>
     ? roster
     : {
         ...roster,
-        main: { id: 'main', label: 'main', tier: 'grey', status: 'working', room: 'lobby', pose: 'idle', home: 'lobby', teammate: false },
+        main: { id: 'main', label: 'main', tier: 'grey', role: 'lead', status: 'working', room: 'lobby', pose: 'idle', home: 'lobby', teammate: false },
       }
 
 export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult): Roster => {
@@ -97,6 +108,7 @@ export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult):
     id,
     label: labelOf(input.name, input.subagentType, input.description),
     tier: tierOf(input.model) ?? tierOf(result.model) ?? 'grey',
+    role: roleOf(input.subagentType),
     status: 'working',
     room: home,
     pose: 'idle',
@@ -167,6 +179,7 @@ export const syncList = (roster: Roster, infos: readonly AgentInfo[]): Roster =>
       id: info.id,
       label: labelOf(info.name, info.type, info.description),
       tier: 'grey',
+      role: roleOf(info.type),
       status: info.status === 'idle' ? 'idle' : 'working',
       room: home,
       pose: 'idle',

@@ -3,7 +3,8 @@ import type { OfficeAgent } from './agents'
 import type { Motion } from './frame'
 import { buildMap } from './map'
 import type { Point } from './map'
-import { assignTarget, drawnFrame, drawnPose, enterAtDoor, step } from './motion'
+import { assignTarget, drawnFacing, drawnFrame, drawnPose, enterAtDoor, step } from './motion'
+import { frameCount } from './sprites'
 
 const map = buildMap(60, 18)
 
@@ -87,4 +88,25 @@ test('enterAtDoor makes no entry when the room is unknown or unreachable', () =>
 
   expect(enterAtDoor(motion, island, 'a', 'library')).toBe(motion)
   expect(enterAtDoor(motion, map, 'a', 'nowhere')).toBe(motion)
+})
+
+test('walk frames cycle through 4', () => {
+  expect(frameCount('walk')).toBe(4)
+  let motion: Motion = { a: { x: 0, y: 0, path: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }, { x: 5, y: 0 }], frame: 0 } }
+  const seen: number[] = []
+  for (let i = 0; i < 5; i++) {
+    motion = step(motion)
+    seen.push(entry(motion, 'a').frame)
+  }
+  expect(seen).toEqual([1, 2, 3, 0, 1])
+})
+
+test('drawnFacing follows the next path step and rests facing down', () => {
+  const e = (path: Motion[string]['path']): Motion[string] => ({ x: 5, y: 5, path, frame: 0 })
+
+  expect(drawnFacing(e([{ x: 6, y: 5 }]))).toBe('right')
+  expect(drawnFacing(e([{ x: 4, y: 5 }]))).toBe('left')
+  expect(drawnFacing(e([{ x: 5, y: 6 }]))).toBe('down')
+  expect(drawnFacing(e([{ x: 5, y: 4 }]))).toBe('up')
+  expect(drawnFacing(e([]))).toBe('down')
 })
