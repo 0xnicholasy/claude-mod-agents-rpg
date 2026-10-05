@@ -555,7 +555,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; loop.test.ts 'mid starts at 72 columns'; office.test.ts 'a footprint change reseats the office'. LIVE: the capture shows a 5-row figure with eyes and a tie in the own team room, the top band whole, and ▼ at the bottom; after five `]` presses to reach a bottom room, ▲ shows. LIVE120: the whole office with no ▲▼. LIVE74: the 3x2 layout.
 
 ### F09 Check mixed figure sizes across sessions
-- status: done (#PR, 2026-10-05)
+- status: done (#58, 2026-10-05)
 - needs: F08
 - size: S
 - scope: No schema change (D62). Run `ao` at 80x24 (mid) and `ao2` at 74x24 (3x2). Fix only clamp or placement bugs found; anything else goes to the Backlog.
@@ -650,4 +650,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 F07 done (#55): `nearest` takes the map footprint (gap distance on mid, D16 on small); the cat walks on a CAT_FOOT map and rests at person spot + (1, foot.h - 2) on mid; the spawn and jump pad skip takes a `pad` Rect (`padRectAt(view)`, wired in `stepPlayerTick`); `placeRemotePlayer` already clamped between sizes, now tested. Small layout unchanged; LIVE and LIVE120 show the same 3x2 office. No OWNER CHECK. Deviation in D67.
 - 2026-10-05 F06 done (#56): `buildFrame` draws `midFigure` (5x5 standing, 8x5 seated at the desk anchor) for agents, the player and remote players when `map.foot` is MID_FOOT, with plates cut to 7 and centred on the person; the small map is unchanged. D68: mouth = darker skin, shoes = `MID_SHOE`; pair test 219 full / 107 crop. Nothing wires mid yet (F08), so LIVE is covered by F08's 120x40 and 74x24 captures.
 - 2026-10-05 F08 done (#57): mid is wired in at 72 columns and 11 rows (D69); `viewport.foot`, `seatFoot` reseat, 0 strip rows for a 23-row mid body, and a retrying viewport write (the 120x40 pane was empty without it). Backlog: the pad Input covers the first cell of the bottom-left room sign ('Reception' reads 'eception' when the view is at the map bottom); the F04 sign cut ('Conferenc') stays.
-- 2026-10-05 F09 done (#PR): mixed-size LIVE2 shows both panes drawing each other's team room and moving figure in both directions (D70); no presence.ts change. Fixed the F08 Backlog sign cut under the pad (`Reception` was `eception`). LIVE120 for `ao` shows the whole 116x23 office, no ▲/▼.
+- 2026-10-05 F09 done (#58): mixed-size LIVE2 shows both panes drawing each other's team room and moving figure in both directions (D70); no presence.ts change. Fixed the F08 Backlog sign cut under the pad (`Reception` was `eception`). LIVE120 for `ao` shows the whole 116x23 office, no ▲/▼.
