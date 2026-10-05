@@ -172,7 +172,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; map.test.ts: 'four team rooms fit at 60 columns', 'team desks are 5 apart', 'every room is reachable from Reception'
 
 ### T06 Move the office into the new rooms
-- status: done (#PR, 2026-10-05)
+- status: done (#29, 2026-10-05)
 - needs: T04, T05
 - size: M
 - scope:
