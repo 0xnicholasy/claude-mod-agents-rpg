@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { buildOffice, canStand, FOOTPRINT_H, FOOTPRINT_W, tileAt } from './map'
+import { buildOffice, canStand, SMALL_FOOT, tileAt } from './map'
 import type { OfficeMap, Point, Room } from './map'
 import { findPath } from './path'
 const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }])
@@ -26,8 +26,8 @@ const assertValidPath = (map: OfficeMap, from: Point, to: Point, path: Point[]):
   expect(at(path, path.length - 1)).toEqual(to)
   for (const [i, p] of path.entries()) {
     if (i > 0) expect(dist(at(path, i - 1), p)).toBe(1)
-    for (let dy = 0; dy < FOOTPRINT_H; dy++) {
-      for (let dx = 0; dx < FOOTPRINT_W; dx++) {
+    for (let dy = 0; dy < SMALL_FOOT.h; dy++) {
+      for (let dx = 0; dx < SMALL_FOOT.w; dx++) {
         const kind = tileAt(map, p.x + dx, p.y + dy)
         expect(kind === 'floor' || kind === 'door').toBe(true)
       }

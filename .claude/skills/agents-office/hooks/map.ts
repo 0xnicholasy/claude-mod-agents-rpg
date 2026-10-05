@@ -40,6 +40,8 @@ export type OfficeMap = {
   tiles: TileKind[][]
   rooms: Room[]
   corridor: Rect
+  // Footprint every person occupies on this map; `canStand` reads it.
+  foot: Footprint
 }
 export type TeamSpec = { id: `team:${string}`; label: string }
 
@@ -47,8 +49,11 @@ export const MIN_COLUMNS = 60
 export const MIN_ROWS = 11
 // Height of the full layout; taller maps stretch it.
 export const FULL_ROWS = 18
-export const FOOTPRINT_W = 3
-export const FOOTPRINT_H = 2
+export type Footprint = { w: number; h: number }
+export const SMALL_FOOT: Footprint = { w: 3, h: 2 }
+export const MID_FOOT: Footprint = { w: 5, h: 5 }
+// The cat keeps the small footprint on every map.
+export const CAT_FOOT: Footprint = SMALL_FOOT
 
 export class OfficeTooSmall extends Error {
   constructor(columns: number, rows: number) {
@@ -103,12 +108,12 @@ type RowBand = { interiorTop: number; interiorRows: number; doorRow: number }
 // bottom-row door starts from the room's right edge.
 const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow: boolean, pitch: number, doorInset: number): Room => {
   const { interiorTop, interiorRows, doorRow } = band
-  const gap = pitch - FOOTPRINT_W
+  const gap = pitch - SMALL_FOOT.w
   const count = Math.max(1, Math.floor((width + gap) / pitch))
   const offset = Math.floor((width - (pitch * count - gap)) / 2)
-  // Rooms with fewer than FOOTPRINT_H + 2 interior rows put the sign on the wall
+  // Rooms with fewer than SMALL_FOOT.h + 2 interior rows put the sign on the wall
   // row above so the interior's first row stays free for the nameplate.
-  const roomy = interiorRows >= FOOTPRINT_H + 2
+  const roomy = interiorRows >= SMALL_FOOT.h + 2
   const signY = roomy ? interiorTop : interiorTop - 1
   const allAnchors = Array.from({ length: count }, (_, i) => ({
     x: x + offset + pitch * i,
@@ -116,14 +121,14 @@ const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow
   }))
   // Top-row rooms centre the door; bottom-row rooms put it at the right so the
   // doorStand footprint never stands on the left-aligned sign.
-  const doorX = doorBelow ? x + Math.floor((width - FOOTPRINT_W) / 2) : x + width - doorInset
-  const doorStandY = doorBelow ? interiorTop + interiorRows - FOOTPRINT_H : interiorTop
+  const doorX = doorBelow ? x + Math.floor((width - SMALL_FOOT.w) / 2) : x + width - doorInset
+  const doorStandY = doorBelow ? interiorTop + interiorRows - SMALL_FOOT.h : interiorTop
   // In a bottom room the doorStand is on the top interior rows, where short rooms also
   // seat their desks, so a desk overlapping it is dropped. Top rooms keep every desk: their
   // centred stand sits among the desks by design and dropping them would empty the Phone Booths.
   const anchors = doorBelow
     ? allAnchors
-    : allAnchors.filter(a => Math.abs(a.x - doorX) >= FOOTPRINT_W || Math.abs(a.y - doorStandY) >= FOOTPRINT_H)
+    : allAnchors.filter(a => Math.abs(a.x - doorX) >= SMALL_FOOT.w || Math.abs(a.y - doorStandY) >= SMALL_FOOT.h)
   // A bottom room's sign shares its row with the door (wall row) or the doorStand (interior row), so it is
   // cut before them.
   const sign = doorBelow ? cut(spec.sign, width) : cut(spec.sign, doorX - x)
@@ -176,10 +181,10 @@ const paintTiles = (columns: number, rows: number, corridor: Rect, rooms: Room[]
 
 export const tileAt = (map: OfficeMap, x: number, y: number): TileKind | undefined => map.tiles[y]?.[x]
 
-// True when all six footprint cells (x..x+2, y..y+1) are floor or door.
+// True when every cell of the map footprint (x..x+w-1, y..y+h-1) is floor or door.
 export const canStand = (map: OfficeMap, x: number, y: number): boolean => {
-  for (let dy = 0; dy < FOOTPRINT_H; dy++) {
-    for (let dx = 0; dx < FOOTPRINT_W; dx++) {
+  for (let dy = 0; dy < map.foot.h; dy++) {
+    for (let dx = 0; dx < map.foot.w; dx++) {
       const kind = tileAt(map, x + dx, y + dy)
       if (kind !== 'floor' && kind !== 'door') return false
     }
@@ -247,5 +252,5 @@ export const buildOffice = (paneColumns: number, rows: number, teams: TeamSpec[]
     x += width + 1
   })
 
-  return { columns, rows, tiles: paintTiles(columns, rows, corridor, placed), rooms: placed, corridor }
+  return { columns, rows, tiles: paintTiles(columns, rows, corridor, placed), rooms: placed, corridor, foot: SMALL_FOOT }
 }

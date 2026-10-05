@@ -1,7 +1,7 @@
 // Presence directory, share preference and the published record (D17-D19, D22). Pure: register.tsx runs every `$` call.
 import type { OfficeAgent, AgentStatus, Roster, Tier } from './agents'
 import { clean } from './log'
-import { canStand, cut, FOOTPRINT_H, FOOTPRINT_W, roomAt } from './map'
+import { canStand, cut, roomAt } from './map'
 import type { OfficeMap, Point, RoomId, TeamSpec } from './map'
 import { assignTarget } from './motion'
 import type { Motion, RemotePlayer } from './frame'
@@ -433,14 +433,14 @@ export const placeRemotePlayer = (map: OfficeMap, player: PresencePlayer): Point
   if (room === undefined) return undefined
   const { x: bx, y: by, w, h } = room.bounds
   const wanted: Point = {
-    x: bx + Math.min(Math.max(0, player.rx), Math.max(0, w - FOOTPRINT_W)),
-    y: by + Math.min(Math.max(0, player.ry), Math.max(0, h - FOOTPRINT_H)),
+    x: bx + Math.min(Math.max(0, player.rx), Math.max(0, w - map.foot.w)),
+    y: by + Math.min(Math.max(0, player.ry), Math.max(0, h - map.foot.h)),
   }
   if (canStand(map, wanted.x, wanted.y)) return wanted
   let best: Point | undefined
   let bestDist = Infinity
-  for (let y = by; y + FOOTPRINT_H <= by + h; y++) {
-    for (let x = bx; x + FOOTPRINT_W <= bx + w; x++) {
+  for (let y = by; y + map.foot.h <= by + h; y++) {
+    for (let x = bx; x + map.foot.w <= bx + w; x++) {
       const dist = Math.abs(x - wanted.x) + Math.abs(y - wanted.y)
       if (dist < bestDist && canStand(map, x, y)) {
         best = { x, y }
