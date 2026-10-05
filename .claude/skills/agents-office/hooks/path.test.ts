@@ -43,8 +43,8 @@ test('path from Lobby to Library crosses only floor and door tiles and every pai
   expect(path.length).toBe(42)
 })
 
-test('every room is reachable from every other room on the 60x18, 120x36 and 76x12 maps', () => {
-  for (const [columns, rows] of [[60, 18], [120, 36], [76, 12]] as const) {
+test('every room is reachable from every other room on the 60x18, 120x36, 76x12, 60x11 and 76x11 maps', () => {
+  for (const [columns, rows] of [[60, 18], [120, 36], [76, 12], [60, 11], [76, 11]] as const) {
     const map = buildMap(columns, rows)
     for (const a of map.rooms) {
       for (const b of map.rooms) {

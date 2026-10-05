@@ -21,7 +21,7 @@ const at = <T>(items: T[], i: number): T => {
 const inside = (r: Rect, p: Point): boolean => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h
 const overlap = (a: Rect, b: Rect): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 
-const SIZES: Array<[number, number]> = [[60, 18], [61, 19], [77, 23], [100, 30], [120, 36], [60, 12], [76, 12], [76, 14], [60, 17]]
+const SIZES: Array<[number, number]> = [[60, 18], [61, 19], [77, 23], [100, 30], [120, 36], [60, 11], [76, 11], [60, 12], [76, 12], [76, 14], [60, 17]]
 
 const STEPS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 
@@ -131,20 +131,22 @@ test('tile rows span the full width and rooms in a row fill it with one-cell wal
   }
 })
 
-test('buildMap throws OfficeTooSmall at 59x12', () => {
-  expect(() => buildMap(59, 12)).toThrow(OfficeTooSmall)
-  expect(() => buildMap(60, 11)).toThrow(OfficeTooSmall)
-  expect(buildMap(60, 12).rows).toBe(12)
+test('buildMap throws OfficeTooSmall at 59x11', () => {
+  expect(() => buildMap(59, 11)).toThrow(OfficeTooSmall)
+  expect(() => buildMap(60, 10)).toThrow(OfficeTooSmall)
+  expect(buildMap(60, 11).rows).toBe(11)
 })
 
-test('heights 12 to 18 grow one interior row per step into the unchanged 60x18 layout', () => {
+test('heights 11 to 18 grow one interior row per step into the unchanged 60x18 layout', () => {
   let prev: number[] | undefined
-  for (let rows = 12; rows <= 18; rows++) {
+  for (let rows = 11; rows <= 18; rows++) {
     const map = buildMap(60, rows)
     const top = at(map.rooms, 0).bounds.h
     const bottom = at(map.rooms.filter(r => r.id === 'lobby'), 0).bounds.h
-    const bands = [top, map.corridor.h, bottom]
-    expect(top + map.corridor.h + bottom).toBe(rows - 4)
+    // At 11 rows the corridor is one row; the map exposes it as a 2-row walkable band.
+    const corridor = rows === 11 ? 1 : map.corridor.h
+    const bands = [top, corridor, bottom]
+    expect(top + corridor + bottom).toBe(rows - 4)
     if (prev) bands.forEach((h, i) => expect(h).toBeGreaterThanOrEqual(prev?.[i] ?? 0))
     prev = bands
   }

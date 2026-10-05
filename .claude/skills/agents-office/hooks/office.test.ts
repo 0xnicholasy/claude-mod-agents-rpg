@@ -57,7 +57,7 @@ test('a 50x12 pane shows the widen line and ticks do not blit', async ($, on) =>
   expect(
     await ui.find({
       type: 'Text',
-      text: 'Office needs a 60x12 pane, this one is 50x12. Widen or heighten the terminal.',
+      text: 'Office needs a 60x11 pane, this one is 50x12. Widen or heighten the terminal.',
     }),
   ).toBeDefined()
   expect(await ui.find({ type: 'Raster' })).toBeUndefined()
@@ -66,16 +66,16 @@ test('a 50x12 pane shows the widen line and ticks do not blit', async ($, on) =>
   await ui.unmount()
 })
 
-test('the widen line and Raster switch at the 60x12 body-size boundary', async ($, on) => {
+test('the widen line and Raster switch at the 60x11 body-size boundary', async ($, on) => {
   mock.clock(on)
   stubSession(on)
   on('agent.list', () => ({ value: [] }))
   on('ui.blit', () => ({ value: {} }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const cases = [
-    { columns: 59, rows: 12, raster: false },
-    { columns: 60, rows: 11, raster: false },
-    { columns: 60, rows: 12, raster: true },
+    { columns: 59, rows: 11, raster: false },
+    { columns: 60, rows: 10, raster: false },
+    { columns: 60, rows: 11, raster: true },
   ]
   for (const c of cases) {
     const ui = await $.ui.mount({
@@ -87,7 +87,7 @@ test('the widen line and Raster switch at the 60x12 body-size boundary', async (
     })
     if (c.raster) {
       expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({
-        props: { columns: 60, rows: 12 },
+        props: { columns: 60, rows: 11 },
       })
       expect(await ui.find({ type: 'Text', text: /Office needs a/ })).toBeUndefined()
     } else {
@@ -95,7 +95,7 @@ test('the widen line and Raster switch at the 60x12 body-size boundary', async (
       expect(
         await ui.find({
           type: 'Text',
-          text: `Office needs a 60x12 pane, this one is ${c.columns}x${c.rows}. Widen or heighten the terminal.`,
+          text: `Office needs a 60x11 pane, this one is ${c.columns}x${c.rows}. Widen or heighten the terminal.`,
         }),
       ).toBeDefined()
       expect(await ui.find({ type: 'Raster' })).toBeUndefined()
@@ -974,8 +974,8 @@ test('an inline pane sizes from the viewport, not from a 1-row bodyRows', async 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount(viewportPane('inline', 76, 1, { columns: 80, rows: 24, isFullscreen: false }))
 
-  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 76, rows: 12 } })
-  expect(await ui.findAll({ type: 'Text' })).toHaveLength(1)
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 76, rows: 11 } })
+  expect(await ui.findAll({ type: 'Text' })).toHaveLength(0)
   await ui.unmount()
 })
 

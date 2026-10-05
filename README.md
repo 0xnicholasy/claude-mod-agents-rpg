@@ -51,7 +51,7 @@ Grey means the model is unknown. It is used for the main session and for teammat
 
 - Claude Code 2.1.289, the version the API types were taken from (see `CLAUDE.md`).
 - The terminal surface only. Other surfaces show "Office needs the terminal surface."
-- A pane body of at least 60 columns by 12 rows. Inline, that means a terminal of about 64x22; the office fits 80x24. `/office` requests a pane of up to 23 rows. The log strip under the map shows 0-2 rows when the pane is small and up to 5 when it is roomy. An inline pane is sized from the terminal height and capped at 23 rows; a height-only terminal resize applies after the next width change or `/office`. A smaller pane shows a line naming the needed and actual size ("Office needs a 60x12 pane, this one is ...") and draws nothing else. Resizing to a valid size redraws at once.
+- A pane body of at least 60 columns by 11 rows. Inline, that means a terminal of about 64x24 (13 rows are kept for the border, the prompt area and two transcript lines); the office fits 80x24 with no log strip there. `/office` requests a pane of up to 23 rows. The log strip under the map shows 0-2 rows when the pane is small (none at 11 rows) and up to 5 when it is roomy. An inline pane is sized from the terminal height and capped at 23 rows; a height-only terminal resize applies after the next width change or `/office`. A smaller pane shows a line naming the needed and actual size ("Office needs a 60x11 pane, this one is ...") and draws nothing else. Resizing to a valid size redraws at once.
 
 ## Develop
 
