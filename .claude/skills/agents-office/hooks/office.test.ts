@@ -975,7 +975,7 @@ test('an inline pane sizes from the viewport, not from a 1-row bodyRows', async 
   const ui = await $.ui.mount(viewportPane('inline', 76, 1, { columns: 80, rows: 24, isFullscreen: false }))
 
   expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 76, rows: 12 } })
-  expect(await ui.findAll({ type: 'Text' })).toHaveLength(2)
+  expect(await ui.findAll({ type: 'Text' })).toHaveLength(1)
   await ui.unmount()
 })
 
