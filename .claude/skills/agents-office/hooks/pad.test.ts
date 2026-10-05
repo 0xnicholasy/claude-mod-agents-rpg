@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { applyKeys, chatLine, emoteOf, INITIAL_PAD, MAX_TAPS, onPadInput, onPadSubmit, readKeys } from './pad'
+import { applyKeys, chatLine, CONFIRM_OPTIONS, isYes, emoteOf, INITIAL_PAD, MAX_TAPS, onPadInput, onPadSubmit, readKeys } from './pad'
 import { isValidGlyph } from './raster'
 import { CHAT_MAX } from './timing'
 
@@ -25,10 +25,10 @@ test('a deletion yields no keys', () => {
 })
 
 test('applyKeys counts WASD in either case and ignores other keys', () => {
-  const state = applyKeys(INITIAL_PAD, ['w', 'W', 'x', '1'], 100)
+  const state = applyKeys(INITIAL_PAD, ['w', 'W', 'z', '1'], 100)
   expect(state.intent).toEqual({ key: 'w', at: 100, taps: 2 })
   expect(applyKeys(state, ['d'], 200).intent).toEqual({ key: 'd', at: 200, taps: 1 })
-  expect(applyKeys(INITIAL_PAD, ['x'], 5).intent).toBeUndefined()
+  expect(applyKeys(INITIAL_PAD, ['z'], 5).intent).toBeUndefined()
 })
 
 test('an input event flips the clear marker, and the marker alone changes nothing', () => {
@@ -161,4 +161,23 @@ test('the draft is the text in the field, so an edit in the middle or a paste do
 test('the typing line shows what would be sent and marks a cut', () => {
   expect(chatLine({ ...INITIAL_PAD, mode: 'chat', draft: 'hi' })).toBe('Say: hi_')
   expect(chatLine({ ...INITIAL_PAD, mode: 'chat', draft: 'x'.repeat(CHAT_MAX + 5) })).toBe(`Say: ${'x'.repeat(CHAT_MAX)}|`)
+})
+
+test('m asks to nudge and x asks to interrupt, lower case only', () => {
+  expect(applyKeys(INITIAL_PAD, ['m'], 9).nudge).toEqual({ at: 9 })
+  expect(applyKeys(INITIAL_PAD, ['x'], 9).interrupt).toEqual({ at: 9 })
+  expect(applyKeys(INITIAL_PAD, ['M', 'X'], 9)).toEqual(INITIAL_PAD)
+})
+
+test('m and x are text, not commands, in chat mode', () => {
+  const chat = applyKeys(INITIAL_PAD, ['t', 'm', 'x'], 9)
+  expect(chat.nudge).toBeUndefined()
+  expect(chat.interrupt).toBeUndefined()
+  expect(chat.draft).toBe('mx')
+})
+
+test('only the exact answer Yes confirms', () => {
+  expect(CONFIRM_OPTIONS).toEqual(['No', 'Yes'])
+  expect(isYes('Yes')).toBe(true)
+  for (const answer of ['No', '', 'yes', 'Yes, please', 'Other']) expect(isYes(answer)).toBe(false)
 })

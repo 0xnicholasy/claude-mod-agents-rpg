@@ -26,6 +26,9 @@ export type PadState = {
   inspect?: { at: number }
   // An `E` press waiting for the tick to open the peek pane (D25).
   peek?: { at: number }
+  // An `m` press (nudge the nearest own agent) or `x` press (interrupt main) waiting for the ui.input hook to ask (D25).
+  nudge?: { at: number }
+  interrupt?: { at: number }
   // `t` enters chat mode (D23, D47): keys build `draft` and move nothing until Enter sends or cancels it.
   mode?: 'chat'
   draft?: string
@@ -49,6 +52,13 @@ export type PendingEmote = { glyph: string; at: number }
 
 // Taps that can wait for a tick (one is consumed per tick), so a held key cannot queue a long walk.
 export const MAX_TAPS = 8
+
+// The message a confirmed nudge sends (D25); fixed text, never anything from a prompt.
+export const NUDGE_TEXT = 'Nudge from the office: please post a short status update.'
+
+// The two answers of a confirm dialog, safe answer first. Only the exact label `Yes` acts (D25).
+export const CONFIRM_OPTIONS: readonly string[] = ['No', 'Yes']
+export const isYes = (answer: string): boolean => answer === 'Yes'
 
 export const INITIAL_PAD: PadState = { handled: '', clear: '' }
 
@@ -94,7 +104,7 @@ export const emoteOf = (key: string): string | undefined => {
   return String.fromCodePoint(codes.find(isValidGlyph) ?? 0x2a)
 }
 
-// Dispatches every key (D13). W/A/S/D (either case) walk, 1-4 emote, [ ] jump rooms and e inspects; later keys are added here, so
+// Dispatches every key (D13). W/A/S/D (either case) walk, 1-4 emote, [ ] jump rooms, e inspects, E peeks, m nudges and x interrupts; later keys are added here, so
 // register.tsx never changes for them.
 export const applyKeys = (state: PadState, keys: readonly string[], now: number): PadState => {
   let mode = state.mode
@@ -105,6 +115,8 @@ export const applyKeys = (state: PadState, keys: readonly string[], now: number)
   let epoch = state.epoch
   let inspect = state.inspect
   let peek = state.peek
+  let nudge = state.nudge
+  let interrupt = state.interrupt
   for (const raw of keys) {
     // Chat mode (D47): every key, WASD and digits included, is text for the draft.
     if (mode === 'chat') {
@@ -126,6 +138,15 @@ export const applyKeys = (state: PadState, keys: readonly string[], now: number)
       peek = { at: now }
       continue
     }
+    // Lower-case `m` asks to nudge the nearest own agent and `x` to interrupt main; both only ask (D25).
+    if (raw === 'm') {
+      nudge = { at: now }
+      continue
+    }
+    if (raw === 'x') {
+      interrupt = { at: now }
+      continue
+    }
     if (raw === 'e') {
       inspect = { at: now }
       continue
@@ -143,7 +164,7 @@ export const applyKeys = (state: PadState, keys: readonly string[], now: number)
     intent = { key, at: now, taps: intent !== undefined && intent.key === key ? Math.min(intent.taps + 1, MAX_TAPS) : 1 }
   }
 
-  return { ...state, mode, draft, intent, emote, jump, epoch, inspect, peek }
+  return { ...state, mode, draft, intent, emote, jump, epoch, inspect, peek, nudge, interrupt }
 }
 
 // One `ui.input` change: diffs the value, applies the keys and flips the clear marker so the Input is

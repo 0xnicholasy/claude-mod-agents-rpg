@@ -10,13 +10,13 @@ import type { Cat } from './cat'
 import { cropFrame, focusOf, overlaySpan } from './camera'
 import { buildFrame, hourOf, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
-import { arrived, clean, pushLog, reported, told } from './log'
+import { arrived, clean, interrupted, interruptFailed, nudged, nudgeFailed, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
 import { MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest, peekLines } from './inspect'
-import { chatLine, INITIAL_PAD, onPadInput, onPadSubmit } from './pad'
+import { chatLine, CONFIRM_OPTIONS, INITIAL_PAD, isYes, NUDGE_TEXT, onPadInput, onPadSubmit } from './pad'
 import {
   asShare,
   DEFAULT_SHARE,
@@ -87,6 +87,12 @@ const inspect = atom({ plugin: 'agents-office', key: 'inspect' } as const, null 
 // The peek pane's content (D25): the nearest own agent's last text messages, or one `Nothing to show` line.
 type Peek = { agentId: string; label: string; lines: string[] }
 const peek = atom({ plugin: 'agents-office', key: 'peek' } as const, null as Peek | null)
+
+// The id of the main turn that is running (`turn.start`), null between turns; `x` aborts it after a Yes (D25).
+const turnRef = atom({ plugin: 'agents-office', key: 'turn' } as const, null as string | null)
+
+// True while a confirm dialog of `m` or `x` is open, so a second press cannot stack another one.
+const asking = atom({ plugin: 'agents-office', key: 'asking' } as const, false)
 
 // This session's presence identity (D17): the session id, its start time and the resolved presence dir.
 // `dir` stays undefined until `printenv` resolves, or when both variables are empty; then nothing reads or writes.
@@ -591,6 +597,95 @@ const peekTick = async ($: EngineInterface, now: number, at: Player | null | und
   if ('reason' in opened && opened.reason !== undefined) logOnce($, 'peek open', String(opened.reason))
 }
 
+// Asks `question` with No first; `act` runs only when the answer is exactly Yes. A dismissed dialog rejects and a
+// throw from `act` is logged to the strip by `failed`; neither reaches the session. One dialog at a time.
+const confirmThen = async (
+  $: EngineInterface,
+  question: string,
+  act: () => Promise<string>,
+  failed: string,
+): Promise<void> => {
+  // One update claims the flag, so two presses cannot both see it free.
+  let wasAsking = false
+  await update($, asking, cur => {
+    wasAsking = cur
+
+    return true
+  })
+  if (wasAsking) return
+  try {
+    let answer = 'No'
+    try {
+      answer = await $.ui.ask(question, CONFIRM_OPTIONS)
+    } catch (error) {
+      $.ui.log(`agents-office: confirm dismissed ${String(error)}`, { to: 'debug' })
+    }
+    if (!isYes(answer)) return
+    try {
+      await pushLines($, [await act()])
+    } catch (error) {
+      $.ui.log(`agents-office: confirmed action threw ${String(error)}`, { to: 'debug' })
+      await pushLines($, [failed])
+    }
+  } finally {
+    await update($, asking, () => false)
+  }
+}
+
+// `m` and `x` (D25), called from the ui.input hook like the peek. `m` nudges the nearest own non-main agent within 2
+// tiles (a remote agent is never in the roster), `x` interrupts main; each only after a confirm dialog answers Yes.
+// The dialog is not awaited by the hook, so the pad keeps working while it is open.
+const confirmTick = async ($: EngineInterface, now: number, at: Player | null | undefined): Promise<void> => {
+  const { nudge, interrupt } = await read($, pad)
+  if (nudge === undefined && interrupt === undefined) return
+  // Clear only the presses read here, so one that landed meanwhile is kept.
+  await update($, pad, cur => ({
+    ...cur,
+    nudge: cur.nudge?.at === nudge?.at ? undefined : cur.nudge,
+    interrupt: cur.interrupt?.at === interrupt?.at ? undefined : cur.interrupt,
+  }))
+  // Both keys in one burst is ambiguous, and a press that waited too long is stale: ask nothing.
+  if (nudge !== undefined && interrupt !== undefined) return
+  if (interrupt !== undefined) {
+    if (now - interrupt.at > INSPECT_PRESS_MS) return
+    // The turn running at the press is the one to abort; a turn that began or ended during the dialog is not.
+    const pressed = await read($, turnRef)
+    void confirmThen(
+      $,
+      'Interrupt main?',
+      async () => {
+        if (pressed === null) return 'Interrupt skipped: no turn is running'
+        await $.turn.abort({ turnId: pressed })
+
+        return interrupted()
+      },
+      interruptFailed(),
+    )
+    return
+  }
+  if (nudge === undefined || now - nudge.at > INSPECT_PRESS_MS) return
+  if (at === null || at === undefined) return
+  // Main and finished agents are never nudged (a finished subagent would be resumed), and are skipped before the
+  // nearest search so a subagent beside main is still found.
+  const roster = Object.fromEntries(
+    Object.entries(await read($, agents)).filter(([id, agent]) => id !== 'main' && (agent.status === 'working' || agent.status === 'idle')),
+  )
+  const target = nearest(roster, await read($, motion), at)
+  if (target === undefined) return
+  const label = clean(target.label)
+  void confirmThen(
+    $,
+    `Nudge ${label}?`,
+    async () => {
+      const sent = await $.session.send({ to: { agentId: target.id }, text: NUDGE_TEXT })
+      if ('isDelivered' in sent && !sent.isDelivered) return nudgeFailed(label)
+
+      return nudged(label)
+    },
+    nudgeFailed(label),
+  )
+}
+
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
   await guard($, 'team', undefined, async () => ensureTeam($, undefined, false))
@@ -755,6 +850,7 @@ export const register: Register = on => {
         name: 'office',
         description: 'Show the agents office pane',
       })
+      await update($, asking, () => false)
       startLoop($)
       // No unasked open: session.start input has only cwd, surface and
       // isInteractive, no fullscreen field (isFullscreen is on command.run
@@ -829,9 +925,23 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // The running main turn's id, kept for `x` (D25). A subagent's run raises no turn.start.
+  on('turn.start', async ($, e, next) => {
+    await guard($, 'turn.start', undefined, async () => {
+      await update($, turnRef, () => e.turnId)
+    })
+
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     const agentId = e.agentId
+    if (agentId === undefined) {
+      await guard($, 'turn.complete main', undefined, async () => {
+        await update($, turnRef, cur => (cur === e.turnId ? null : cur))
+      })
+    }
     if (agentId !== undefined) {
       await guard($, 'turn.complete', undefined, async () => {
         // A subagent reports in Reception and leaves via the Kitchen (T09); a teammate
@@ -893,6 +1003,9 @@ export const register: Register = on => {
       // The peek pane opens here, not in the tick: an open the plugin makes on its own waits undrawn below 144
       // columns, while one answering a key press is placed at any width (d.ts PaneOpenArgs).
       if ((await read($, pad)).peek !== undefined) await peekTick($, now, await read($, player))
+    })
+    await guard($, 'ui.input confirm', undefined, async () => {
+      await confirmTick($, await $.clock.now(), await read($, player))
     })
 
     return next(e)
