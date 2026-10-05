@@ -104,3 +104,13 @@ Events:
 - Hot reload: saving a file in the mod reloads the module in a running session. The office keeps its agents, because state lives in `$.state` atoms declared in `types/index.d.ts` and not in module variables. Module variables hold only caches and timer handles (`loggedFailures`, `loggedBlitDenies`, `lastFrameCells`, `loopTimer`, `refreshTimer` in `register.tsx`; the map cache in `loop.ts`), none of them drawn.
 - Design notes: [`docs/agents-office/plan.md`](docs/agents-office/plan.md).
 - Code rules: no emoji in code; no `any` or `unknown` without a comment that justifies it; never silence a TypeScript error with `// eslint-disable`.
+
+## Star history
+
+<a href="https://www.star-history.com/#0xnicholasy/claude-mod-agents-rpg&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=0xnicholasy/claude-mod-agents-rpg&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=0xnicholasy/claude-mod-agents-rpg&type=Date" />
+    <img alt="Star history chart for 0xnicholasy/claude-mod-agents-rpg" src="https://api.star-history.com/svg?repos=0xnicholasy/claude-mod-agents-rpg&type=Date" />
+  </picture>
+</a>
