@@ -8,6 +8,8 @@ import { isValidGlyph } from './raster'
 import type { Cell } from './raster'
 import { drawnFacing, drawnFrame, drawnPose, targetOf } from './motion'
 import { figure, nameplate } from './sprites'
+import type { Pose } from './sprites'
+import type { Player } from './player'
 
 export type Motion = Record<string, { x: number; y: number; path: Point[]; frame: number }>
 export type Bubble = { agentId: string; text: string; until: number }
@@ -21,6 +23,9 @@ export const SIGN_FG = 0xffe082
 export const SIGN_BG = 0x3b4252
 export const BUBBLE_FG = 0x202028
 export const BUBBLE_BG = 0xfff8e1
+
+// The player draws a walking pose for this long after a move.
+const PLAYER_WALK_MS = 300
 
 // One floor color per room kind (D10); the corridor keeps FLOOR_BG, which is also the team floor.
 export const ROOM_FLOORS: Readonly<Record<RoomKind, number>> = Object.freeze({
@@ -120,9 +125,11 @@ export type FrameInput = {
   bubbles: readonly Bubble[]
   // Bubbles with `until <= now` are not drawn.
   now: number
+  // The player avatar, drawn over every agent with the plate "you" (D14).
+  player?: Player | null
 }
 
-export const buildFrame = ({ map, agents, motion, bubbles, now }: FrameInput): Cell[][] => {
+export const buildFrame = ({ map, agents, motion, bubbles, now, player }: FrameInput): Cell[][] => {
   const floors = floorColors(map)
   const grid = map.tiles.map((row, y) => row.map((kind, x) => baseCell(kind, floors[y]?.[x] ?? FLOOR_BG)))
   for (const room of map.rooms) {
@@ -169,6 +176,28 @@ export const buildFrame = ({ map, agents, motion, bubbles, now }: FrameInput): C
     const center = at.x + Math.floor(FOOTPRINT_W / 2)
     const fit = fitPlate(map, center, at.y - 1, nameplate(agent.label))
     if (fit !== undefined) plates.push({ id: agent.id, left: fit.left, y: at.y - 1, cells: fit.cells, center })
+  }
+
+  if (player !== undefined && player !== null) {
+    const walking = player.movedAt !== undefined && now - player.movedAt < PLAYER_WALK_MS
+    const pose: Pose = walking ? 'walk' : 'idle'
+    figure({
+      pose,
+      facing: player.facing,
+      frame: walking ? player.frame % 4 : 0,
+      shirt: 'player',
+      role: 'lead',
+      key: 'player',
+      floor: base[player.y]?.[player.x]?.bg ?? FLOOR_BG,
+    }).forEach((row, dy) =>
+      row.forEach((cell, dx) => {
+        if (grid[player.y + dy]?.[player.x + dx] !== undefined) put(grid, player.x + dx, player.y + dy, cell)
+      }),
+    )
+    const center = player.x + Math.floor(FOOTPRINT_W / 2)
+    const fit = fitPlate(map, center, player.y - 1, nameplate('you'))
+    // First in the list, so a tie with a neighbouring agent's plate goes to the player's.
+    if (fit !== undefined) plates.unshift({ id: 'player', left: fit.left, y: player.y - 1, cells: fit.cells, center })
   }
 
   const owners = claimPlateCells(plates)

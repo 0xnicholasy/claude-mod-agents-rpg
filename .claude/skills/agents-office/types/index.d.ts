@@ -54,6 +54,17 @@ declare module 'claude-code' {
       bubbles: Array<{ agentId: string; text: string; until: number }>
       log: string[]
       team: { id: `team:${string}`; label: string; branch: string; startedAt: number } | null
+      player: {
+        x: number
+        y: number
+        facing: 'down' | 'up' | 'left' | 'right'
+        frame: number
+        path: Array<{ x: number; y: number }>
+        movedAt?: number
+        emote?: string
+        chat?: string
+        until?: number
+      } | null
       pad: { handled: string; clear: string; intent?: { key: 'w' | 'a' | 's' | 'd'; at: number; taps: number } }
     }
   }

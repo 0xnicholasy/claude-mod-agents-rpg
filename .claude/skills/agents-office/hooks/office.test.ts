@@ -251,6 +251,30 @@ test('typing into the pad records a coalesced burst and flips the drawn value', 
   await ui.unmount()
 })
 
+test('a pad key walks the player one tile per tick', async ($, on) => {
+  const clock = mock.clock(on)
+  const xs: number[] = []
+  on('state.set', ($, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the player atom is read.
+    if (e.key === 'player') xs.push((e.value as { x: number }).x)
+    return next(e)
+  })
+  on('ui.blit', () => ({ value: {} }))
+  on('agent.list', () => ({ value: [] }))
+  stubSession(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await clock.advance(100)
+  const spawn = xs[0]
+  expect(spawn).toBeDefined()
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'ddd', kind: 'change' })
+  await clock.advance(100)
+  expect(xs.at(-1)).toBe((spawn ?? 0) + 1)
+  await clock.advance(100)
+  expect(xs.at(-1)).toBe((spawn ?? 0) + 2)
+  await ui.unmount()
+})
+
 test('an unchanged office does not blit on the next tick', async ($, on) => {
   const clock = mock.clock(on)
   const blits: string[] = []

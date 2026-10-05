@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 8/26 done
+Progress: 9/26 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -96,6 +96,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - D33 T07 details. `team.ts` exports `baseName`, `branchOf(stdout, ok)` and `teamLabel(cwd, stdout, ok)`; session.start runs the git lookup in its own guard `session.start branch` after the `team` guard, so a failed run keeps the basename. The `team` atom's `branch` field now holds the branch. Beyond the TODO scope, `map.ts` gained `cut(text, n)`, which cuts team and room signs by code point; this closes the T06 backlog item. frame.ts now draws sign glyphs per code point and shows `?` for a glyph the raster refuses, and the git call has a 3 s timeout; both came from the review. These are the deviations. Office tests that start a session must stub `process.run` (without it the engine throws `no implementation for process.run` and the guard logs it). (T07, 2026-10-05) | confirms D12
 
 - D34 T08 details. `pad.ts` exports `readKeys(handled, value, clear)`, `applyKeys`, `onPadInput`, `INITIAL_PAD`; the `pad` atom is `{ handled, clear, intent? }` with `intent = { key, at, taps }` (`taps` counts presses of the same key since it last changed; T09 consumes it). A value equal to the drawn `clear` marker is never a key; a value that does not extend `handled` is a reset field and its text after the marker is all new. Every input event that carried keys flips `clear` between '' and ' '. A value that is a prefix of `handled` is a deletion and yields no keys (review). The hook returns `next(e)` and ignores `submit`; the Input sits in a wrapper Box with the Raster so `bottom={0}` is the map's last row, not a strip line. The Input needs `submitLabel=""`: with the default label it wrapped vertically inside the 2-column Box and covered 6 rows. At 80x24 it still draws `…` and `⏎` over the bottom-left wall cell and the cell above it (the Reception interior, first column); no figure is hidden there. The test engine does not dispatch `$.ui.focus` to an `on('ui.focus')` hook (it answers `no implementation`), so the office test asserts the plugin made the call at 1500 ms by the one `pad focus` debug-log line it writes on that failure. A deny is logged once with `pad focus denied: <reason>`. (T08, 2026-10-05) | confirms D13 so far
+- D35 T09 details. `player.ts` exports `Player`, `padRect`, `spawnPlayer(map, ownId)` and `stepPlayer(player, map, intent, now, ownId)`, which returns `{ player, intent }`. Each tick consumes at most one pending tap (`intent.taps`, capped at `MAX_TAPS` = 8 in pad.ts), so a held key never outruns the tick; a tap moves exactly one tile even when the tick is late. Taps older than `INTENT_MS` (250 ms, measured from the newest press) are stale and dropped, so a burst such as `dddd` can walk fewer tiles than keys when ticks fall behind the window (LIVE: 3 of 4). There is no hold smoothing: a consumed tap never moves again. A blocked move still turns the player. The `player` atom gains `movedAt?` (walk pose for 300 ms after a move). The spawn tries the own doorStand, then own anchors, then other rooms' doorStands, skipping any footprint over the pad's two bottom-left columns of the last two rows. The tick (register.tsx `stepPlayerTick`) spawns the player once the team exists and writes the `player` and `pad` atoms; render only reads them. (T09, 2026-10-05) | confirms D13, D14
 
 ## Todos
 
@@ -223,7 +224,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; pad.test.ts: 'a coalesced burst yields every key', 'the clear space is not a key'; office.test.ts: 'the pane draws the pad input'. LIVE as above.
 
 ### T09 Walk a player avatar with WASD
-- status: todo
+- status: done (#32, 2026-10-05)
 - needs: T08
 - size: M
 - scope:
@@ -472,6 +473,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - Replace presence polling with `classic.FileChanged` + `watchPaths` once spike S4 is confirmed.
 - Try focusing the pad without the 1500 ms delay (untested in S1b).
 - Pad (T08 review): a typed space can be lost when it equals the pending clear marker (matters when Space becomes a key, T20 chat); cancel or de-dup the focus timer when `/office` runs twice; the pad draws `…` and `⏎` over two cells of the bottom-left corner.
+- Pad (T09): a burst such as `dddd` walks fewer tiles than keys once ticks fall behind INTENT_MS; consider staleness measured from the last consumed tap. The player can still be walked under the pad's `…` and `⏎` cells.
 - Minimap: rejected, because 80x24 has no spare rows.
 - Arrival log lines read `arrived in the <project>` for the own team room (T06); consider `at their desk` wording (T06).
 - Make `roomAt` generic over the room id so it accepts an `Office` (T06). At 60 columns the bottom signs read `Conferenc` and `Test La`; consider shorter sign text (T05 review).
@@ -486,3 +488,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 T06 done: v1 rooms and buildMap removed; office runs on team room + Reception/Conference/Kitchen/Test Lab/Booths, per-kind floors, `team` atom, v1 roster migration on the first tick. See D32.
 - 2026-10-05 T07 done: team label is `basename (branch)` from `git branch --show-current` (team.ts); signs cut by code point (`cut` in map.ts). See D33.
 - 2026-10-05 T08 done: pad Input focused 1500 ms after `/office`, `ui.input` decodes key bursts into the `pad` atom (WASD intents only so far). See D34.
+- 2026-10-05 T09 done: player avatar (white shirt, plate `you`) spawns at the own team doorStand and walks one tile per tick on WASD taps; `player` atom, `player.ts`. See D35.

@@ -14,6 +14,8 @@ import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { INITIAL_PAD, onPadInput } from './pad'
 import type { PadState } from './pad'
+import { spawnPlayer, stepPlayer } from './player'
+import type { Player } from './player'
 import { packCells } from './raster'
 import { baseName, branchOf, teamLabel } from './team'
 import { LIST_MS, PAD_FOCUS_MS, TICK_MS } from './timing'
@@ -39,6 +41,9 @@ const NO_TEAM = null as Team | null
 const team = atom({ plugin: 'agents-office', key: 'team' } as const, NO_TEAM)
 // The pad Input's bookkeeping (D13): the value last handled, the value drawn, the newest movement intent.
 const pad = atom({ plugin: 'agents-office', key: 'pad' } as const, INITIAL_PAD as PadState)
+
+// The player avatar (D14); null until the first tick that has a map and a team.
+const player = atom({ plugin: 'agents-office', key: 'player' } as const, null as Player | null)
 
 // Log de-dup cache for guard failures, not drawn state (D49): a hook that fails the same
 // way every tick logs once per distinct name + message.
@@ -268,6 +273,34 @@ const seat = async (
   return { motion: next, arrived }
 }
 
+// Spawns the player once the own team exists, then steps it one tile for the pending tap (D13). The tick
+// writes the `player` and `pad` atoms; render never does. Returns the player to draw.
+const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number): Promise<Player | null> => {
+  const own = await read($, team)
+  const current = await read($, player)
+  if (own === null) return current
+  const intent = (await read($, pad)).intent
+  const out =
+    current === null
+      ? { player: spawnPlayer(map, own.id), intent }
+      : stepPlayer(current, map, intent, now, own.id)
+  if (out.player !== undefined && out.player !== current) {
+    const next = out.player
+    await update($, player, () => next)
+  }
+  if (out.intent !== undefined && intent !== undefined && out.intent !== intent) {
+    // Only the taps this step consumed are removed, so a press that landed since the read is kept.
+    const used = intent.taps - out.intent.taps
+    await update($, pad, cur =>
+      cur.intent === undefined || cur.intent.key !== intent.key
+        ? cur
+        : { ...cur, intent: { ...cur.intent, taps: Math.max(0, cur.intent.taps - used) } },
+    )
+  }
+
+  return out.player ?? current
+}
+
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
   await guard($, 'team', undefined, async () => ensureTeam($, undefined, false))
@@ -315,7 +348,8 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const after = await guard($, 'choreo', before, async () =>
     commitChoreo($, before, state => advanceScripts(state, now)),
   )
-  const frame = buildFrame({ map, agents: after.agents, motion: after.motion, bubbles: after.bubbles, now })
+  const walker = await guard($, 'player', await read($, player), async () => stepPlayerTick($, map, now))
+  const frame = buildFrame({ map, agents: after.agents, motion: after.motion, bubbles: after.bubbles, now, player: walker })
   const cells = packCells(frame)
   if (cells === lastFrameCells) return
   lastFrameCells = cells
@@ -572,6 +606,7 @@ export const register: Register = on => {
           motion: await read($, motion),
           bubbles: await read($, bubbles),
           now: await $.clock.now(),
+          player: await read($, player),
         })
         const cells = packCells(grid)
         // The newest `stripCount` lines under the Raster, oldest of them first (the log is

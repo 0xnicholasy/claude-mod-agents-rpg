@@ -1,0 +1,80 @@
+import { expect, test } from 'claude-code/testing'
+import { buildOffice, canStand } from './map'
+import type { OfficeMap } from './map'
+import type { Intent } from './pad'
+import { padRect, spawnPlayer, stepPlayer } from './player'
+import type { Player } from './player'
+import { INTENT_MS } from './timing'
+
+const map: OfficeMap = buildOffice(60, 18, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
+const spawned = spawnPlayer(map, 'team:t1')
+if (spawned === undefined) throw new Error('no spawn')
+const start: Player = spawned
+const tap = (key: Intent['key'], at: number, taps = 1): Intent => ({ key, at, taps })
+
+test('the player spawns at the own team doorStand, clear of the pad cells', () => {
+  const room = map.rooms.find(r => r.id === 'team:t1')
+  expect(start).toMatchObject({ x: room?.doorStand.x, y: room?.doorStand.y, facing: 'down', path: [] })
+  for (const rows of [11, 12, 18, 24]) {
+    const m = buildOffice(60, rows, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
+    const p = spawnPlayer(m, 'team:t1')
+    const r = padRect(m)
+    expect(p).toBeDefined()
+    expect(p !== undefined && p.x < r.x + r.w && p.x + 3 > r.x && p.y < r.y + r.h && p.y + 2 > r.y).toBe(false)
+  }
+})
+
+test('a tap moves one tile', () => {
+  // Late tick: 200 ms after the press, still inside INTENT_MS.
+  const out = stepPlayer(start, map, tap('d', 0), 200, 'team:t1')
+
+  expect(out.player).toMatchObject({ x: start.x + 1, y: start.y, facing: 'right', movedAt: 200 })
+  expect(out.intent?.taps).toBe(0)
+  // The consumed tap does not move again on the next tick.
+  const again = stepPlayer(out.player ?? start, map, out.intent, 300, 'team:t1')
+  expect(again.player?.x).toBe(start.x + 1)
+})
+
+test('walls block', () => {
+  // Walk left until the room's wall stops the player; it never leaves a standable tile.
+  let p: Player = start
+  let intent: Intent | undefined
+  for (let i = 0; i < 80; i++) {
+    intent = tap('a', i * 100)
+    p = stepPlayer(p, map, intent, i * 100, 'team:t1').player ?? p
+    expect(canStand(map, p.x, p.y)).toBe(true)
+  }
+  const stopped = p.x
+  const blocked = stepPlayer(p, map, tap('a', 9000), 9000, 'team:t1')
+  expect(blocked.player).toMatchObject({ x: stopped, facing: 'left' })
+  expect(blocked.intent?.taps).toBe(0)
+})
+
+test('a held key moves one tile per tick', () => {
+  let p: Player = start
+  for (let i = 0; i < 4; i++) p = stepPlayer(p, map, tap('d', i * 100), i * 100, 'team:t1').player ?? p
+
+  expect(p.x).toBe(start.x + 4)
+  expect(p.frame).toBe(0)
+})
+
+test('several queued taps are consumed one per tick', () => {
+  const first = stepPlayer(start, map, tap('d', 0, 4), 50, 'team:t1')
+
+  expect(first.player?.x).toBe(start.x + 1)
+  expect(first.intent?.taps).toBe(3)
+})
+
+test('a stale intent moves nothing', () => {
+  const out = stepPlayer(start, map, tap('d', 0, 3), INTENT_MS + 1, 'team:t1')
+
+  expect(out.player).toEqual(start)
+  expect(out.intent?.taps).toBe(0)
+})
+
+test('a resize reseats a player that cannot stand', () => {
+  const lost: Player = { ...start, x: 500, y: 500 }
+  const out = stepPlayer(lost, map, undefined, 0, 'team:t1')
+
+  expect(out.player).toMatchObject({ x: start.x, y: start.y })
+})
