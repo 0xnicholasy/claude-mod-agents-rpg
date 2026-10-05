@@ -15,7 +15,7 @@ import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
 import { MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
-import { inspectText, lastTextOf, nearest } from './inspect'
+import { inspectText, lastTextOf, nearest, peekLines } from './inspect'
 import { chatLine, INITIAL_PAD, onPadInput, onPadSubmit } from './pad'
 import {
   asShare,
@@ -50,6 +50,9 @@ import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timin
 
 const PANE = 'office'
 const PAD_KEY = 'pad-input'
+const PEEK_PANE = 'office-peek'
+// Body rows the peek pane asks for: up to 10 message lines and a little room (D25).
+const PEEK_ROWS = 12
 const opened = atom({ plugin: 'agents-office', key: 'opened' } as const, false)
 const viewport = atom(
   { plugin: 'agents-office', key: 'viewport' } as const,
@@ -80,6 +83,10 @@ const cat = atom({ plugin: 'agents-office', key: 'cat' } as const, null as Cat |
 // The inspect line (D39): which agent, the text and when it stops showing; null when nothing is inspected.
 type Inspect = { agentId: string; text: string; until: number }
 const inspect = atom({ plugin: 'agents-office', key: 'inspect' } as const, null as Inspect | null)
+
+// The peek pane's content (D25): the nearest own agent's last text messages, or one `Nothing to show` line.
+type Peek = { agentId: string; label: string; lines: string[] }
+const peek = atom({ plugin: 'agents-office', key: 'peek' } as const, null as Peek | null)
 
 // This session's presence identity (D17): the session id, its start time and the resolved presence dir.
 // `dir` stays undefined until `printenv` resolves, or when both variables are empty; then nothing reads or writes.
@@ -557,6 +564,33 @@ const catTick = async ($: EngineInterface, map: OfficeMap, now: number): Promise
   return next
 }
 
+// `E` (D25), called from the ui.input hook: finds the nearest agent within 2 tiles among this session's own roster (a remote agent is never in
+// it), writes the `peek` atom and opens `office-peek` without focus, so the pad keeps the keys. A messages deny or
+// throw, or no text, shows `Nothing to show for <label>.`. Nobody in range shows the inspect line instead.
+const peekTick = async ($: EngineInterface, now: number, at: Player | null | undefined): Promise<void> => {
+  const pending = (await read($, pad)).peek
+  if (pending === undefined || at === null || at === undefined) return
+  await update($, pad, cur => (cur.peek?.at === pending.at ? { ...cur, peek: undefined } : cur))
+  if (now - pending.at > INSPECT_PRESS_MS) return
+  const target = nearest(await read($, agents), await read($, motion), at)
+  if (target === undefined) {
+    await update($, inspect, () => ({ agentId: '', text: 'Nobody within 2 tiles.', until: now + INSPECT_MS }))
+    return
+  }
+  const label = clean(target.label)
+  let lines: string[] = []
+  try {
+    const rows = target.id === 'main' ? await $.session.messages() : await $.session.messages({ agentId: target.id })
+    if (Array.isArray(rows)) lines = peekLines(rows)
+  } catch (error) {
+    $.ui.log(`agents-office: peek messages threw ${String(error)}`, { to: 'debug' })
+  }
+  if (lines.length === 0) lines = [`Nothing to show for ${label}.`]
+  await update($, peek, () => ({ agentId: target.id, label, lines }))
+  const opened = await $.ui.open({ id: PEEK_PANE, title: `Peek: ${label}`, rows: PEEK_ROWS })
+  if ('reason' in opened && opened.reason !== undefined) logOnce($, 'peek open', String(opened.reason))
+}
+
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
   await guard($, 'team', undefined, async () => ensureTeam($, undefined, false))
@@ -856,10 +890,40 @@ export const register: Register = on => {
       const now = await $.clock.now()
       if (e.kind === 'submit') await update($, pad, cur => onPadSubmit(cur, now))
       else await update($, pad, cur => onPadInput(cur, e.value, now))
+      // The peek pane opens here, not in the tick: an open the plugin makes on its own waits undrawn below 144
+      // columns, while one answering a key press is placed at any width (d.ts PaneOpenArgs).
+      if ((await read($, pad)).peek !== undefined) await peekTick($, now, await read($, player))
     })
 
     return next(e)
   })
+
+  // The peek pane (D25): the lines the tick stored, one truncating Text each. Drawing writes nothing.
+  on('ui.render', { component: 'Pane', requestId: PEEK_PANE }, async ($, e) =>
+    guard(
+      $,
+      'ui.render peek',
+      () => {
+        const { Text } = $.ui.resolve(e)
+        return <Text>Peek failed to draw.</Text>
+      },
+      async () => {
+        const { Box, Text } = $.ui.resolve(e)
+        const shown = await read($, peek)
+        const lines = shown?.lines ?? ['Nothing to show.']
+
+        return (
+          <Box flexDirection="column">
+            {lines.map((line, i) => (
+              <Text key={`peek-${i}`} wrap="truncate-end">
+                {line}
+              </Text>
+            ))}
+          </Box>
+        )
+      },
+    ),
+  )
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
     guard(
