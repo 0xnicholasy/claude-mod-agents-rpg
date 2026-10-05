@@ -9,13 +9,13 @@ Agents Office is a Claude Code mod: a plugin of function hooks that hot-reloads 
 Layout sketch (not a screenshot; the real pane is drawn with colored sprites):
 
 ```text
-+-----------+-----------+-------------+-------------+
-|  Dev Bay  |  Library  | Server Room | Phone Booth |
-+-----------+-----------+-------------+-------------+
-|                   corridor (3 rows)               |
-+-----------+----------------+----------------------+
-|   Lobby   |  Meeting Room  |      Break Room      |
-+-----------+----------------+----------------------+
++------------------------+-----------+-----------+---------+
+|        Dev Bay         |  Library  |Server Room|  Phone  |
++------------------------+-----------+-----------+---------+
+|                    corridor (3 rows)                     |
++------------------+--------------------+------------------+
+|      Lobby       |    Meeting Room    |    Break Room    |
++------------------+--------------------+------------------+
 ```
 
 <!-- TODO: add a real screenshot or GIF -->
@@ -30,8 +30,8 @@ Layout sketch (not a screenshot; the real pane is drawn with colored sprites):
 
 Pick one. All three load the mod as `agents-office@skills-dir`.
 
-1. Clone this repo and run `claude` inside it. The mod loads from `.claude/skills/agents-office/`.
-2. Copy `.claude/skills/agents-office/` into your own project's `.claude/skills/` and start `claude` in that project.
+1. Clone this repo and run `claude` inside it. The mod loads from [`.claude/skills/agents-office/`](.claude/skills/agents-office/).
+2. Copy [`.claude/skills/agents-office/`](.claude/skills/agents-office/) into your own project's `.claude/skills/` and start `claude` in that project.
 3. Point Claude Code at the folder, from anywhere:
 
    ```bash
@@ -50,7 +50,7 @@ To confirm it loaded, run `claude plugin list` and look for `agents-office@skill
 
 ## How it works
 
-The tool an agent just called decides its room (`.claude/skills/agents-office/hooks/activity.ts`).
+The tool an agent just called decides its room ([`hooks/activity.ts`](.claude/skills/agents-office/hooks/activity.ts)).
 
 | Room | Sent there by |
 | --- | --- |
@@ -92,15 +92,15 @@ Events:
 
 ## Known limits
 
-- Inline pane height: a measurement taken with the current build found that an inline pane body is (columns - 4) by 1 at every terminal size tried, because its height follows the height of the content tree. The pane may therefore show the size line instead of the office in some terminals. `/office` already requests 60x23, but that request does not change this. A fix is in progress and not yet landed. Whether the office draws in your terminal is not guaranteed.
-- The builder never saw the office in a real pane. Frame rate, whether the sprites are legible in your terminal font, and where the speech bubbles land are not confirmed.
+- In some terminals the inline pane opens too short, so `/office` shows the "Office needs a 60x23 pane" line instead of the office. A fix is in progress.
+- The office has not yet been checked in a real terminal pane. Frame rate, whether the sprites are legible in your terminal font, and where the speech bubbles land are not confirmed.
 - Teammates have no tier color and show grey.
 - The `agentId` on a subagent's `tool.call` was observed through a test cast only (the typed test API drops it). Whether a real session delivers it the same way is not confirmed.
 
 ## Develop
 
 - `npm install`, then `npm run check`. It runs `validate` (`claude plugin validate`), `typecheck` (`tsc -p tsconfig.json`) and `test` (`claude plugin test`). Validate and test need the `claude` CLI and run locally only. CI runs typecheck only.
-- Mod path: `.claude/skills/agents-office/` (manifest `.claude-plugin/plugin.json`, hooks in `hooks/`, state contract in `types/index.d.ts`). The API declarations are vendored at `vendor/claude-code/claude-code.d.ts`; do not edit that file.
+- Mod path: [`.claude/skills/agents-office/`](.claude/skills/agents-office/) (manifest [`.claude-plugin/plugin.json`](.claude/skills/agents-office/.claude-plugin/plugin.json), hooks in [`hooks/`](.claude/skills/agents-office/hooks/), state contract in [`types/index.d.ts`](.claude/skills/agents-office/types/index.d.ts)). The API declarations are vendored at [`vendor/claude-code/claude-code.d.ts`](vendor/claude-code/claude-code.d.ts); do not edit that file.
 - Hot reload: saving a file in the mod reloads the module in a running session. The office keeps its agents, because state lives in `$.state` atoms declared in `types/index.d.ts` and not in module variables. Module variables hold only caches and timer handles (`loggedFailures`, `loggedBlitDenies`, `lastFrameCells`, `loopTimer`, `refreshTimer` in `register.tsx`; the map cache in `loop.ts`), none of them drawn.
-- Design notes: `docs/agents-office/plan.md`.
+- Design notes: [`docs/agents-office/plan.md`](docs/agents-office/plan.md).
 - Code rules: no emoji in code; no `any` or `unknown` without a comment that justifies it; never silence a TypeScript error with `// eslint-disable`.
