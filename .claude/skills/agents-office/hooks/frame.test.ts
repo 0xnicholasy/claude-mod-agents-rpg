@@ -1,5 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { buildFrame, DOOR_BG, FLOOR_BG, OFFICE_PALETTE, placeMotion, ROOM_FLOORS, SIGN_BG, SIGN_FG, BUBBLE_BG, BUBBLE_FG } from './frame'
+import { buildFrame, DOOR_BG, FLOOR_BG, isNight, OFFICE_PALETTE, placeMotion, ROOM_FLOORS, SIGN_BG, SIGN_FG, BUBBLE_BG, BUBBLE_FG, tint, WALL_COLOR } from './frame'
+import { CAT_FUR, CAT_PALETTE } from './cat'
+import type { Cat } from './cat'
 import type { Bubble, Motion } from './frame'
 import type { OfficeAgent, Roster, Tier } from './agents'
 import { buildOffice } from './map'
@@ -97,13 +99,13 @@ test('neighbouring nameplates split the cells they both want', () => {
 test('a bubble is drawn above the speaker and clipped to the grid', () => {
   const roster: Roster = { a1: agent('a1', { label: 'q' }) }
   const bubble: Bubble = { agentId: 'a1', text: 'hello there friend', until: 1000 }
-  // Speaker near the right edge and the top: the bubble row is y - 2 = 0.
-  const grid = buildFrame({ map, agents: roster, motion: { a1: at(56, 2) }, bubbles: [bubble], now: 999 })
-  const row = grid[0] ?? []
+  // Speaker near the right wall at a top desk: the bubble row is y - 2 = 1, floor up to the wall at column 59.
+  const grid = buildFrame({ map, agents: roster, motion: { a1: at(56, 3) }, bubbles: [bubble], now: 999 })
+  const row = grid[1] ?? []
   const start = 56 + 1 - Math.floor('hello there friend'.length / 2)
 
   expect(row).toHaveLength(60)
-  expect(String.fromCodePoint(...row.slice(start, 60).map(c => c.ch))).toBe('hello there friend'.slice(0, 60 - start))
+  expect(String.fromCodePoint(...row.slice(start, 59).map(c => c.ch))).toBe('hello there friend'.slice(0, 59 - start))
   expect(row[start]).toMatchObject({ fg: BUBBLE_FG, bg: BUBBLE_BG })
   expect(row[start - 1]?.bg).not.toBe(BUBBLE_BG)
 
@@ -111,8 +113,8 @@ test('a bubble is drawn above the speaker and clipped to the grid', () => {
   const clipped = buildFrame({ map, agents: roster, motion: { a1: at(10, 1) }, bubbles: [bubble], now: 999 })
   expect(clipped).toHaveLength(18)
   // An expired bubble is not drawn.
-  const expired = buildFrame({ map, agents: roster, motion: { a1: at(56, 2) }, bubbles: [bubble], now: 1000 })
-  expect(expired[0]?.some(c => c.bg === BUBBLE_BG)).toBe(false)
+  const expired = buildFrame({ map, agents: roster, motion: { a1: at(56, 3) }, bubbles: [bubble], now: 1000 })
+  expect(expired[1]?.some(c => c.bg === BUBBLE_BG)).toBe(false)
 })
 
 test('office and figure colors stay inside the palettes and the pair budget', () => {
@@ -247,32 +249,35 @@ test('placeMotion reseats a resting entry that is off the map and keeps a valid 
   expect(placeMotion(map, roster, valid).a).toBe(valid.a)
 })
 
-test('a bubble centred left of the grid writes nothing outside it', () => {
+test('a bubble centred left of the grid writes nothing outside the floor', () => {
   const roster: Roster = { a1: agent('a1', { label: 'q' }) }
   const text = 'hello there friend'
   const bubble: Bubble = { agentId: 'a1', text, until: 1000 }
-  const grid = buildFrame({ map, agents: roster, motion: { a1: at(0, 2) }, bubbles: [bubble], now: 999 })
-  const row = grid[0] ?? []
-  const left = 0 + 1 - Math.floor(text.length / 2)
+  // Row 2 is floor from column 1; column 0 is the wall.
+  const grid = buildFrame({ map, agents: roster, motion: { a1: at(1, 4) }, bubbles: [bubble], now: 999 })
+  const row = grid[2] ?? []
+  const left = 1 + 1 - Math.floor(text.length / 2)
   const drawn = row.filter(c => c.bg === BUBBLE_BG).length
 
   expect(grid).toHaveLength(18)
   expect(grid.every(r => r.length === 60)).toBe(true)
-  expect(drawn).toBe(text.length + left)
-  expect(row[0]).toMatchObject({ fg: BUBBLE_FG, bg: BUBBLE_BG, ch: text.codePointAt(-left) })
+  expect(drawn).toBe(text.length + left - 1)
+  expect(row[0]?.bg).not.toBe(BUBBLE_BG)
+  expect(row[1]).toMatchObject({ fg: BUBBLE_FG, bg: BUBBLE_BG, ch: text.codePointAt(1 - left) })
 })
 
-test('a bubble at the right edge draws up to the edge and nothing past it', () => {
+test('a bubble at the right wall draws up to the last floor column and nothing past it', () => {
   const roster: Roster = { a1: agent('a1', { label: 'q' }) }
   const text = 'hello there friend'
   const bubble: Bubble = { agentId: 'a1', text, until: 1000 }
-  const grid = buildFrame({ map, agents: roster, motion: { a1: at(56, 2) }, bubbles: [bubble], now: 999 })
-  const row = grid[0] ?? []
+  const grid = buildFrame({ map, agents: roster, motion: { a1: at(56, 3) }, bubbles: [bubble], now: 999 })
+  const row = grid[1] ?? []
   const start = 56 + 1 - Math.floor(text.length / 2)
 
   expect(row).toHaveLength(60)
-  expect(row.filter(c => c.bg === BUBBLE_BG)).toHaveLength(60 - start)
-  expect(row[59]).toMatchObject({ bg: BUBBLE_BG })
+  expect(row.filter(c => c.bg === BUBBLE_BG)).toHaveLength(59 - start)
+  expect(row[58]).toMatchObject({ bg: BUBBLE_BG })
+  expect(row[59]?.bg).not.toBe(BUBBLE_BG)
 })
 
 test('placeMotion treats the end of a walker path as held', () => {
@@ -577,4 +582,91 @@ test('a chat line shows above a remote player for its own expiry, apart from the
   // The own player's chat is drawn too.
   const own = { x: 10, y: 6, facing: 'down' as const, frame: 0, path: [], chat: 'mine', chatUntil: 100 }
   expect((buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0, player: own })[4] ?? []).map(c => String.fromCodePoint(c.ch)).join('')).toContain('mine')
+})
+
+const night = 22
+const day = 12
+
+test('night tints the map, not the figures', () => {
+  const roster: Roster = { a1: agent('a1', { label: 'quick', pose: 'idle' }) }
+  const motion = { a1: at(anchor.x, anchor.y) }
+  const dayGrid = buildFrame({ map, agents: roster, motion, bubbles: [], now: 0, hour: day })
+  const nightGrid = buildFrame({ map, agents: roster, motion, bubbles: [], now: 0, hour: night })
+
+  // Floor, wall, door and sign colors follow the tint.
+  expect(nightGrid[anchor.y + 2]?.[anchor.x]?.bg).toBe(tint(FLOOR_BG, night))
+  expect(nightGrid[0]?.[0]?.bg).toBe(tint(WALL_COLOR, night))
+  expect(nightGrid[0]?.[0]?.bg).not.toBe(dayGrid[0]?.[0]?.bg)
+  const room = map.rooms[0]
+  const sign = room?.sign.cells[0]
+  expect(nightGrid[sign?.y ?? 0]?.[sign?.x ?? 0]?.bg).toBe(tint(SIGN_BG, night))
+  expect(nightGrid[room?.door[0]?.y ?? 0]?.[room?.door[0]?.x ?? 0]?.bg).toBe(tint(DOOR_BG, night))
+  // The figure keeps its colors (shirt, hair, skin); only its floor pixels follow the tinted floor.
+  const art = figure({ pose: 'idle', facing: 'down', frame: 0, shirt: 'opus', role: 'dev', key: 'a1', floor: tint(FLOOR_BG, night) })
+  art.forEach((row, dy) =>
+    row.forEach((cell, dx) => expect(nightGrid[anchor.y + dy]?.[anchor.x + dx]).toEqual(cell)),
+  )
+  // By day nothing changes, with or without an hour.
+  expect(buildFrame({ map, agents: roster, motion, bubbles: [], now: 0 })).toEqual(dayGrid)
+})
+
+test('tint darkens by 35% from 20:00 to 06:00 and nothing else', () => {
+  expect(tint(0xffffff, night)).toBe(0xa6a6a6)
+  expect(tint(0xffffff, day)).toBe(0xffffff)
+  expect(tint(FLOOR_BG, night)).toBeLessThan(tint(FLOOR_BG, day))
+  expect([19, 20, 23, 0, 5, 6].map(isNight)).toEqual([false, true, true, true, true, false])
+})
+
+test('the night crowd and the cat stay under 256 color pairs', () => {
+  const tiers: Tier[] = ['haiku', 'sonnet', 'opus', 'fable', 'grey']
+  const roles = Object.keys(ROLE_COLORS) as Role[]
+  const roster: Roster = {}
+  const motion: Motion = {}
+  const spots = map.rooms.flatMap(r => r.anchors)
+  for (let i = 0; i < 32; i++) {
+    const spot = spots[i % spots.length] ?? anchor
+    roster[`c${i}`] = agent(`c${i}`, {
+      pose: POSES[i % POSES.length] ?? 'idle',
+      tier: tiers[i % tiers.length] ?? 'grey',
+      role: roles[i % roles.length] ?? 'dev',
+    })
+    motion[`c${i}`] = at(spot.x, spot.y, i)
+  }
+  const cat: Cat = { x: 14, y: 15, facing: 'left', frame: 1, path: [{ x: 15, y: 15 }], restUntil: 0, seed: 1 }
+  const frame = buildFrame({ map, agents: roster, motion, bubbles: [], now: 0, hour: night, cat })
+  const allowed = new Set([...OFFICE_PALETTE.map(c => tint(c, night)), ...SPRITE_PALETTE, ...CAT_PALETTE])
+  const colors = new Set(frame.flat().flatMap(c => [c.fg, c.bg]))
+  colors.delete(DEFAULT_COLOR)
+
+  expect(countPairs(frame)).toBeLessThan(PAIR_BUDGET)
+  expect([...colors].every(c => allowed.has(c))).toBe(true)
+  expect(frame.flat().some(c => c.fg === CAT_FUR || c.bg === CAT_FUR)).toBe(true)
+})
+
+test('an emote or a bubble at a top-room desk never covers the sign', () => {
+  // 80x24 gives an 11-row compact map: the room signs sit on wall row 0, which is the bubble row of a top desk.
+  const compact = buildOffice(80, 11, [{ id: 'team:t1', label: 'proj' }, { id: 'team:t2', label: 'two' }])
+  const room = compact.rooms[0]
+  const signRow = room?.sign.cells[0]?.y ?? 0
+  const signOf = (grid: Cell[][]): string => String.fromCodePoint(...(room?.sign.cells ?? []).map(p => grid[p.y]?.[p.x]?.ch ?? 0x3f))
+  const spot = room?.anchors[0] ?? { x: 1, y: 2 }
+  const player = { x: spot.x, y: spot.y, facing: 'down' as const, frame: 0, path: [], emote: '!', emoteUntil: 3000 }
+  const bare = buildFrame({ map: compact, agents: {}, motion: {}, bubbles: [], now: 0, player: { ...player, emote: undefined } })
+  const withEmote = buildFrame({ map: compact, agents: {}, motion: {}, bubbles: [], now: 0, player })
+
+  // The sign row is untouched, and the emote takes the plate row in place of the plate.
+  expect(signRow).toBe(spot.y - 2)
+  expect(withEmote[signRow]).toEqual(bare[signRow])
+  expect(signOf(withEmote)).toBe(room?.sign.text)
+  expect(withEmote[spot.y - 1]?.[spot.x + 1]).toMatchObject({ ch: 0x21, bg: BUBBLE_BG })
+
+  // The same holds for an agent bubble and a chat line.
+  const roster: Roster = { a1: agent('a1', { label: 'q', room: 'team:t1' }) }
+  const bubble: Bubble = { agentId: 'a1', text: 'yo', until: 1000 }
+  const said = buildFrame({ map: compact, agents: roster, motion: { a1: at(spot.x, spot.y) }, bubbles: [bubble], now: 0 })
+  expect(signOf(said)).toBe(room?.sign.text)
+  expect(String.fromCodePoint(...(said[spot.y - 1] ?? []).filter(c => c.bg === BUBBLE_BG).map(c => c.ch))).toContain('yo')
+  const chatting = buildFrame({ map: compact, agents: {}, motion: {}, bubbles: [], now: 0, player: { ...player, emote: undefined, chat: 'hi all', chatUntil: 100 } })
+  expect(signOf(chatting)).toBe(room?.sign.text)
+  expect(withEmote.every(r => r.length === 80)).toBe(true)
 })

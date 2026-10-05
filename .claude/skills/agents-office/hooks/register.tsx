@@ -5,8 +5,10 @@ import { expire, markTool, migrateRoster, onActivity, onSpawn, seedMain, syncLis
 import type { Roster } from './agents'
 import { advanceScripts, expireBubbles, startMeet, startReport } from './choreo'
 import type { ChoreoState } from './choreo'
+import { spawnCat, stepCat } from './cat'
+import type { Cat } from './cat'
 import { cropFrame, focusOf, overlaySpan } from './camera'
-import { buildFrame, placeMotion } from './frame'
+import { buildFrame, hourOf, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { arrived, clean, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
@@ -43,6 +45,7 @@ import { settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './p
 import type { Player } from './player'
 import { packCells } from './raster'
 import { baseName, branchOf, teamLabel } from './team'
+import { hashKey } from './sprites'
 import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timing'
 
 const PANE = 'office'
@@ -70,6 +73,9 @@ const pad = atom({ plugin: 'agents-office', key: 'pad' } as const, INITIAL_PAD a
 
 // The player avatar (D14); null until the first tick that has a map and a team.
 const player = atom({ plugin: 'agents-office', key: 'player' } as const, null as Player | null)
+
+// The office cat (D24): local to this pane, never published; null until the first tick that has a map.
+const cat = atom({ plugin: 'agents-office', key: 'cat' } as const, null as Cat | null)
 
 // The inspect line (D39): which agent, the text and when it stops showing; null when nothing is inspected.
 type Inspect = { agentId: string; text: string; until: number }
@@ -539,6 +545,18 @@ const inspectTick = async ($: EngineInterface, map: OfficeMap, now: number, at: 
   return shown.text
 }
 
+// Seats the cat on a shared-room spot (seeded from the own team id), then steps it one tile (D24). The tick writes
+// the `cat` atom only when the cat changed. Returns the cat to draw.
+const catTick = async ($: EngineInterface, map: OfficeMap, now: number): Promise<Cat | null> => {
+  const current = await read($, cat)
+  const seed = hashKey((await read($, team))?.id ?? 'office')
+  const next = current === null ? spawnCat(map, seed, now) : stepCat(current, map, now)
+  if (next === undefined) return current
+  if (next !== current) await update($, cat, () => next)
+
+  return next
+}
+
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
   await guard($, 'team', undefined, async () => ensureTeam($, undefined, false))
@@ -587,6 +605,7 @@ const tick = async ($: EngineInterface): Promise<void> => {
     commitChoreo($, before, state => advanceScripts(state, now)),
   )
   const walker = await guard($, 'player', await read($, player), async () => stepPlayerTick($, map, now))
+  const kitty = await guard($, 'cat', await read($, cat), async () => catTick($, map, now))
   const inspected = await guard($, 'inspect', undefined, async () => inspectTick($, map, now, walker))
   // The message being typed takes the inspect line (D47).
   const shown = chatLine(await read($, pad)) ?? inspected
@@ -602,6 +621,8 @@ const tick = async ($: EngineInterface): Promise<void> => {
     now,
     player: walker,
     others: remotePlayersOf(await read($, remote), map),
+    cat: kitty,
+    hour: hourOf(now),
     overlay: noStrip ? shown : undefined,
     overlayFrom: span.from,
     overlayWidth: span.width,
@@ -911,6 +932,8 @@ export const register: Register = on => {
           now: await $.clock.now(),
           player: drawnPlayer,
           others: remotePlayersOf(await read($, remote), map),
+          cat: await read($, cat),
+          hour: hourOf(await $.clock.now()),
           overlay: stripCount === 0 ? inspectLine : undefined,
           overlayFrom: span.from,
           overlayWidth: span.width,

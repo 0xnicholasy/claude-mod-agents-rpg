@@ -10,6 +10,8 @@ import { drawnFacing, drawnFrame, drawnPose, targetOf } from './motion'
 import { figure, nameplate } from './sprites'
 import type { Facing, Pose } from './sprites'
 import type { Player } from './player'
+import { catArt } from './cat'
+import type { Cat } from './cat'
 
 export type Motion = Record<string, { x: number; y: number; path: Point[]; frame: number }>
 export type Bubble = { agentId: string; text: string; until: number }
@@ -27,6 +29,24 @@ export const BUBBLE_BG = 0xfff8e1
 // The player draws a walking pose for this long after a move.
 const PLAYER_WALK_MS = 300
 
+// Night runs from 20:00 to 06:00 local time and darkens the map colors by 35% (D24).
+export const NIGHT_FROM = 20
+export const NIGHT_TO = 6
+const NIGHT_KEEP = 0.65
+
+export const isNight = (hour: number): boolean => hour >= NIGHT_FROM || hour < NIGHT_TO
+
+// A map color at `hour`: unchanged by day, 35% darker per channel at night.
+export const tint = (color: number, hour: number): number => {
+  if (!isNight(hour)) return color
+  const dim = (shift: number): number => Math.round(((color >> shift) & 0xff) * NIGHT_KEEP) << shift
+
+  return dim(16) | dim(8) | dim(0)
+}
+
+// The local hour of a clock reading, 0-23.
+export const hourOf = (now: number): number => new Date(now).getHours()
+
 // One floor color per room kind (D10); the corridor keeps FLOOR_BG, which is also the team floor.
 export const ROOM_FLOORS: Readonly<Record<RoomKind, number>> = Object.freeze({
   team: FLOOR_BG,
@@ -42,25 +62,27 @@ export const OFFICE_PALETTE: readonly number[] = Object.freeze([
 ])
 
 // Floor color of every tile: a room's interior takes its kind's color, anything else FLOOR_BG.
-const floorColors = (map: OfficeMap): number[][] => {
-  const colors = map.tiles.map(row => row.map(() => FLOOR_BG))
+const floorColors = (map: OfficeMap, shade: Shade): number[][] => {
+  const colors = map.tiles.map(row => row.map(() => shade(FLOOR_BG)))
   for (const room of map.rooms) {
     const { x, y, w, h } = room.bounds
-    for (let dy = 0; dy < h; dy++) colors[y + dy]?.fill(ROOM_FLOORS[room.kind], x, x + w)
+    for (let dy = 0; dy < h; dy++) colors[y + dy]?.fill(shade(ROOM_FLOORS[room.kind]), x, x + w)
   }
 
   return colors
 }
 
-const baseCell = (kind: TileKind | undefined, floor: number): Cell => {
+type Shade = (color: number) => number
+
+const baseCell = (kind: TileKind | undefined, floor: number, shade: Shade): Cell => {
   switch (kind) {
     case 'wall':
     case undefined:
-      return { ch: 0x2588, fg: WALL_COLOR, bg: WALL_COLOR }
+      return { ch: 0x2588, fg: shade(WALL_COLOR), bg: shade(WALL_COLOR) }
     case 'door':
-      return { ch: 0x20, fg: DOOR_BG, bg: DOOR_BG }
+      return { ch: 0x20, fg: shade(DOOR_BG), bg: shade(DOOR_BG) }
     case 'sign':
-      return { ch: 0x20, fg: SIGN_FG, bg: SIGN_BG }
+      return { ch: 0x20, fg: shade(SIGN_FG), bg: shade(SIGN_BG) }
     case 'floor':
       return { ch: 0x20, fg: floor, bg: floor }
   }
@@ -78,6 +100,16 @@ const put = (grid: Cell[][], x: number, y: number, cell: Cell): void => {
   const row = grid[y]
   if (row === undefined || x < 0 || x >= row.length) return
   row[x] = cell
+}
+
+// D48: a bubble never covers a sign, wall or door. It sits on the row above the plate when that row is floor under
+// the speaker's centre; otherwise it takes the plate row for as long as it shows. Cells over any other tile are
+// skipped. `cx` is the speaker's centre column, `y` its top row.
+const putBubble = (grid: Cell[][], map: OfficeMap, cx: number, y: number, left: number, cells: Cell[]): void => {
+  const row = tileAt(map, cx, y - 2) === 'floor' ? y - 2 : y - 1
+  cells.forEach((cell, i) => {
+    if (tileAt(map, left + i, row) === 'floor') put(grid, left + i, row, cell)
+  })
 }
 
 type Plate = { id: string; left: number; y: number; cells: Cell[]; center: number }
@@ -147,22 +179,36 @@ export type FrameInput = {
   // The columns the overlay may use when the view is cropped (camera.ts overlaySpan); default the whole corridor.
   overlayFrom?: number
   overlayWidth?: number
+  // The office cat (D24), drawn over the agents and under the players.
+  cat?: Cat | null
+  // Local hour 0-23; the map is tinted at night (D24). Undefined draws by day.
+  hour?: number
 }
 
-export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, overlay, overlayFrom, overlayWidth }: FrameInput): Cell[][] => {
-  const floors = floorColors(map)
-  const grid = map.tiles.map((row, y) => row.map((kind, x) => baseCell(kind, floors[y]?.[x] ?? FLOOR_BG)))
+export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, cat, hour, overlay, overlayFrom, overlayWidth }: FrameInput): Cell[][] => {
+  const shade: Shade = color => (hour === undefined ? color : tint(color, hour))
+  const floors = floorColors(map, shade)
+  const grid = map.tiles.map((row, y) => row.map((kind, x) => baseCell(kind, floors[y]?.[x] ?? shade(FLOOR_BG), shade)))
   for (const room of map.rooms) {
     // One glyph per code point (cells are per code point); a glyph the raster refuses draws as ?.
     const glyphs = Array.from(room.sign.text, g => g.codePointAt(0))
     room.sign.cells.forEach((p, i) => {
       const code = glyphs[i]
-      if (code !== undefined) put(grid, p.x, p.y, { ch: isValidGlyph(code) ? code : 0x3f, fg: SIGN_FG, bg: SIGN_BG })
+      if (code !== undefined) put(grid, p.x, p.y, { ch: isValidGlyph(code) ? code : 0x3f, fg: shade(SIGN_FG), bg: shade(SIGN_BG) })
     })
   }
 
   // Floor colors come from this copy, so an overlapping figure never reads another figure's cell as floor.
   const base = grid.map(row => row.slice())
+
+  // The cat is drawn first, so agents and players stand over it and never vanish behind it; it has no plate.
+  if (cat !== undefined && cat !== null) {
+    catArt(cat, base[cat.y]?.[cat.x]?.bg ?? shade(FLOOR_BG)).forEach((row, dy) =>
+      row.forEach((cell, dx) => {
+        if (grid[cat.y + dy]?.[cat.x + dx] !== undefined) put(grid, cat.x + dx, cat.y + dy, cell)
+      }),
+    )
+  }
 
   // Back to front: a sprite lower on the screen draws over one above it.
   const placed = Object.values(agents)
@@ -247,7 +293,7 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
     })
   }
 
-  // Bubble row sits above the nameplate; the latest-expiring active bubble wins.
+  // Bubble row sits above the nameplate, or on the plate row where that row is not floor (D48); the latest-expiring active bubble wins.
   for (const { agent, at } of placed) {
     const active = bubbles
       .filter(b => b.agentId === agent.id && b.until > now)
@@ -255,23 +301,21 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
     if (active === undefined) continue
     const cells = textCells(active.text, BUBBLE_FG, BUBBLE_BG)
     const left = at.x + Math.floor(FOOTPRINT_W / 2) - Math.floor(cells.length / 2)
-    cells.forEach((cell, i) => put(grid, left + i, at.y - 2, cell))
+    putBubble(grid, map, at.x + Math.floor(FOOTPRINT_W / 2), at.y, left, cells)
   }
 
   // An emote shows on the bubble row above the player's plate until `until` (D15).
   if (player !== undefined && player !== null && player.emote !== undefined && (player.emoteUntil ?? 0) > now) {
     const code = player.emote.codePointAt(0) ?? 0x2a
-    put(grid, player.x + Math.floor(FOOTPRINT_W / 2), player.y - 2, {
-      ch: isValidGlyph(code) ? code : 0x2a,
-      fg: BUBBLE_FG,
-      bg: BUBBLE_BG,
-    })
+    const cx = player.x + Math.floor(FOOTPRINT_W / 2)
+    putBubble(grid, map, cx, player.y, cx, [{ ch: isValidGlyph(code) ? code : 0x2a, fg: BUBBLE_FG, bg: BUBBLE_BG }])
   }
 
   for (const other of others ?? []) {
     if (other.emote === undefined || (other.emoteUntil ?? 0) <= now) continue
     const code = other.emote.codePointAt(0) ?? 0x2a
-    put(grid, other.x + Math.floor(FOOTPRINT_W / 2), other.y - 2, { ch: isValidGlyph(code) ? code : 0x2a, fg: BUBBLE_FG, bg: BUBBLE_BG })
+    const cx = other.x + Math.floor(FOOTPRINT_W / 2)
+    putBubble(grid, map, cx, other.y, cx, [{ ch: isValidGlyph(code) ? code : 0x2a, fg: BUBBLE_FG, bg: BUBBLE_BG }])
   }
 
   // Chat bubbles (D23) sit on the same row as an emote and win over it; the text stays inside the map.
@@ -281,7 +325,7 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
     if (speaker.chat === undefined || (speaker.chatUntil ?? 0) <= now) continue
     const cells = textCells(speaker.chat, BUBBLE_FG, BUBBLE_BG)
     const left = Math.max(0, Math.min(map.columns - cells.length, speaker.x + Math.floor(FOOTPRINT_W / 2) - Math.floor(cells.length / 2)))
-    cells.forEach((cell, i) => put(grid, left + i, speaker.y - 2, cell))
+    putBubble(grid, map, speaker.x + Math.floor(FOOTPRINT_W / 2), speaker.y, left, cells)
   }
 
   // Inspect text (D39): one row over the corridor, cut to the corridor's width, on top of everything.
