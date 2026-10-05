@@ -95,8 +95,9 @@ declare module 'claude-code' {
             ry: number
             facing: 'down' | 'up' | 'left' | 'right'
             emote?: string
+            emoteUntil?: number
             chat?: string
-            until?: number
+            chatUntil?: number
           } | null
         }
       >
@@ -108,6 +109,10 @@ declare module 'claude-code' {
         jump?: { dir: 'next' | 'prev'; at: number }
         epoch?: number
         inspect?: { at: number }
+        mode?: 'chat'
+        draft?: string
+        base?: number
+        chat?: { text: string; at: number }
       }
     }
   }

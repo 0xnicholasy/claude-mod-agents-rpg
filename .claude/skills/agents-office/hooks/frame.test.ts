@@ -369,7 +369,7 @@ test('the player draws over agents in a white shirt with the plate you', () => {
 
 test('an emote shows above the player for 3 s', () => {
   const base = { x: 10, y: 5, facing: 'down' as const, frame: 0, path: [] }
-  const player = { ...base, emote: '\u25c6', until: 3000 }
+  const player = { ...base, emote: '\u25c6', emoteUntil: 3000 }
   const glyphAt = (now: number, p: Player = player): number | undefined =>
     buildFrame({ map, agents: {}, motion: {}, bubbles: [], now, player: p })[3]?.[11]?.ch
 
@@ -555,7 +555,7 @@ test('the inspect line lands inside a scrolled view', () => {
 })
 
 test('another session\'s player draws in a white shirt with its plate and its emote', () => {
-  const other = { id: 's2', x: 10, y: 5, facing: 'down' as const, label: 'proj', emote: '!', until: 3000 }
+  const other = { id: 's2', x: 10, y: 5, facing: 'down' as const, label: 'proj', emote: '!', emoteUntil: 3000 }
   const grid = buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0, others: [other] })
 
   expect((grid[6] ?? []).slice(10, 13).some(c => c.fg === 0xf5f5f5)).toBe(true)
@@ -563,4 +563,18 @@ test('another session\'s player draws in a white shirt with its plate and its em
   expect(grid[3]?.[11]?.ch).toBe(0x21)
   const late = buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 3000, others: [other] })
   expect(late[3]?.[11]?.ch).not.toBe(0x21)
+})
+
+test('a chat line shows above a remote player for its own expiry, apart from the emote', () => {
+  const other = { id: 's2', x: 10, y: 6, facing: 'down' as const, label: 'proj', emote: '!', emoteUntil: 2000, chat: 'hello', chatUntil: 5000 }
+  const row = (now: number): string =>
+    (buildFrame({ map, agents: {}, motion: {}, bubbles: [], now, others: [other] })[4] ?? []).map(c => String.fromCodePoint(c.ch)).join('')
+
+  expect(row(1000)).toContain('hello')
+  // The emote ended at 2000 but the chat runs to 5000.
+  expect(row(3000)).toContain('hello')
+  expect(row(5000)).not.toContain('hello')
+  // The own player's chat is drawn too.
+  const own = { x: 10, y: 6, facing: 'down' as const, frame: 0, path: [], chat: 'mine', chatUntil: 100 }
+  expect((buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0, player: own })[4] ?? []).map(c => String.fromCodePoint(c.ch)).join('')).toContain('mine')
 })

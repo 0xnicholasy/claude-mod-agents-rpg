@@ -2,9 +2,9 @@
 import { canStand, FOOTPRINT_H, FOOTPRINT_W, roomAt } from './map'
 import type { OfficeMap, Point, Rect, Room } from './map'
 import { findPath } from './path'
-import type { Dir, Intent, PendingEmote } from './pad'
+import type { Dir, Intent, PendingChat, PendingEmote } from './pad'
 import type { Facing } from './sprites'
-import { EMOTE_MS, INTENT_MS } from './timing'
+import { CHAT_MS, EMOTE_MS, INTENT_MS } from './timing'
 
 export type Player = {
   x: number
@@ -16,9 +16,11 @@ export type Player = {
   path: Point[]
   // When the player last moved a tile, for the walk pose. Undefined until the first move.
   movedAt?: number
+  // The emote and the chat line each expire on their own (T10 backlog, D47).
   emote?: string
+  emoteUntil?: number
   chat?: string
-  until?: number
+  chatUntil?: number
 }
 
 const FACING: Readonly<Record<Dir, Facing>> = { w: 'up', a: 'left', s: 'down', d: 'right' }
@@ -131,13 +133,22 @@ const stepPath = (player: Player, map: OfficeMap, intent: Intent | undefined, no
   return { player: { ...player, x: step.x, y: step.y, facing, frame: (player.frame + 1) % 4, path: rest, movedAt: now }, intent }
 }
 
-// Puts a pending emote on the player for EMOTE_MS from the press (D15) and clears one that has run out. The
-// shared `until` is cleared with it unless a chat line (T20) still uses it. Returns the same object when
-// nothing changes.
+// Puts a pending emote on the player for EMOTE_MS from the press (D15) and clears one that has run out. Returns
+// the same object when nothing changes.
 export const settleEmote = (player: Player, pending: PendingEmote | undefined, now: number): Player => {
-  if (pending !== undefined) return { ...player, emote: pending.glyph, until: pending.at + EMOTE_MS }
-  if (player.emote === undefined || player.until === undefined || player.until > now) return player
-  const { emote: _emote, until: _until, ...rest } = player
+  if (pending !== undefined) return { ...player, emote: pending.glyph, emoteUntil: pending.at + EMOTE_MS }
+  if (player.emote === undefined || (player.emoteUntil !== undefined && player.emoteUntil > now)) return player
+  const { emote: _emote, emoteUntil: _emoteUntil, ...rest } = player
 
-  return player.chat === undefined ? rest : { ...rest, until: player.until }
+  return rest
+}
+
+// Puts a sent chat line on the player for CHAT_MS from the send (D23) and clears one that has run out, apart from
+// the emote's own expiry. Returns the same object when nothing changes.
+export const settleChat = (player: Player, pending: PendingChat | undefined, now: number): Player => {
+  if (pending !== undefined) return { ...player, chat: pending.text, chatUntil: pending.at + CHAT_MS }
+  if (player.chat === undefined || (player.chatUntil !== undefined && player.chatUntil > now)) return player
+  const { chat: _chat, chatUntil: _chatUntil, ...rest } = player
+
+  return rest
 }

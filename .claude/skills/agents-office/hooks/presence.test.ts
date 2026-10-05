@@ -182,6 +182,13 @@ test('parseRecord clamps lengths and counts and drops unknown tiers and rooms', 
   expect(record.team).toEqual({ label: 'L'.repeat(40), branch: 'B'.repeat(40) })
 })
 
+test('a published chat line is cleaned and cut to 40, and the expiries are kept apart', () => {
+  const parsed = recordOf(recordText({ player: { room: 'team:s1', rx: 1, ry: 1, facing: 'down', chat: `a\u0007${'c'.repeat(60)}`, chatUntil: 7, emote: '!', emoteUntil: 3 } })).player
+
+  expect(parsed?.chat).toBe(`a ${'c'.repeat(38)}`)
+  expect(parsed).toMatchObject({ chatUntil: 7, emoteUntil: 3 })
+})
+
 test('parseRecord validates the published player', () => {
   const player = { room: 'team:s1', rx: 9999, ry: -4, facing: 'left', chat: 'c'.repeat(90) }
 
@@ -260,20 +267,22 @@ test('a published emote lasts only until it expires and a player in the corridor
   const map = teamMap(80)
   const base = { x: map.corridor.x + 2, y: map.corridor.y, facing: 'down' as const }
 
-  expect(toPresencePlayer(map, { ...base, emote: '!', until: 500 }, 400)?.emote).toBe('!')
-  expect(toPresencePlayer(map, { ...base, emote: '!', until: 500 }, 500)?.emote).toBeUndefined()
+  expect(toPresencePlayer(map, { ...base, emote: '!', emoteUntil: 500 }, 400)?.emote).toBe('!')
+  expect(toPresencePlayer(map, { ...base, emote: '!', emoteUntil: 500 }, 500)?.emote).toBeUndefined()
   const room = toPresencePlayer(map, base, 0)?.room
   expect(map.rooms.some(r => r.id === room)).toBe(true)
   const remote = { s2: { ...rec('s2', 20), player: { room: 'team:s1' as const, rx: 0, ry: 0, facing: 'up' as const } } }
-  expect(remotePlayersOf(remote, map, 0)).toHaveLength(1)
-  expect(remotePlayersOf({ s2: rec('s2', 20) }, map, 0)).toHaveLength(0)
+  expect(remotePlayersOf(remote, map)).toHaveLength(1)
+  expect(remotePlayersOf({ s2: rec('s2', 20) }, map)).toHaveLength(0)
 })
 
-test('a published player carries only its documented keys and a forged until is capped', () => {
+test('a published player carries only its documented keys and a forged expiry is capped', () => {
   const map = teamMap(80)
-  const published = toPresencePlayer(map, { x: 20, y: 3, facing: 'up', emote: '!', until: 900 }, 0)
-  expect(Object.keys(published ?? {}).sort()).toEqual(['emote', 'facing', 'room', 'rx', 'ry', 'until'])
-  const forged = { s2: { ...rec('s2', 20), player: { room: 'team:s1' as const, rx: 0, ry: 0, facing: 'up' as const, emote: '!', until: 9e15 } } }
+  const published = toPresencePlayer(map, { x: 20, y: 3, facing: 'up', emote: '!', emoteUntil: 900, chat: 'hello', chatUntil: 1200 }, 0)
+  expect(Object.keys(published ?? {}).sort()).toEqual(['chat', 'chatUntil', 'emote', 'emoteUntil', 'facing', 'room', 'rx', 'ry'])
+  const forged = { s2: { ...rec('s2', 20), player: { room: 'team:s1' as const, rx: 0, ry: 0, facing: 'up' as const, emote: '!', emoteUntil: 9e15, chat: 'hi', chatUntil: 9e15 } } }
 
-  expect(remotePlayersOf(forged, map, 1000)[0]?.until).toBe(4000)
+  expect(remotePlayersOf(forged, map)[0]).toMatchObject({ emoteUntil: 3020, chatUntil: 5020 })
+  // A chat that has run out is not published, and the emote keeps its own expiry.
+  expect(toPresencePlayer(map, { x: 20, y: 3, facing: 'up', emote: '!', emoteUntil: 2000, chat: 'hello', chatUntil: 1000 }, 1500)).toMatchObject({ emote: '!', emoteUntil: 2000 })
 })

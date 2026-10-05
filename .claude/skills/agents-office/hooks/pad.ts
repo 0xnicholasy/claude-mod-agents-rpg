@@ -2,7 +2,10 @@
 // passes plain data in. The Input only ever holds the clear marker plus what was typed since the last
 // redraw, so keys are found by diffing its value against what was already handled.
 
+import { clean } from './log'
+import { cut } from './map'
 import { isValidGlyph } from './raster'
+import { CHAT_MAX } from './timing'
 
 export type Dir = 'w' | 'a' | 's' | 'd'
 
@@ -21,7 +24,20 @@ export type PadState = {
   epoch?: number
   // An `e` press waiting for the tick to inspect the nearest agent (D39).
   inspect?: { at: number }
+  // `t` enters chat mode (D23, D47): keys build `draft` and move nothing until Enter sends or cancels it.
+  mode?: 'chat'
+  draft?: string
+  // How many code points of the field are not the message: what was there before `t`, and the `t` (D47).
+  base?: number
+  // A sent line waiting for the tick to put it on the player.
+  chat?: PendingChat
 }
+
+// A chat line waiting for the tick to put it on the player (D23).
+export type PendingChat = { text: string; at: number }
+
+// The draft keeps more than CHAT_MAX so a cut is visible in the typing line.
+const DRAFT_MAX = 120
 
 // A room jump waiting for the tick to set the player's path (D38). `at` tells two presses apart.
 export type PendingJump = { dir: 'next' | 'prev'; at: number }
@@ -79,12 +95,27 @@ export const emoteOf = (key: string): string | undefined => {
 // Dispatches every key (D13). W/A/S/D (either case) walk, 1-4 emote, [ ] jump rooms and e inspects; later keys are added here, so
 // register.tsx never changes for them.
 export const applyKeys = (state: PadState, keys: readonly string[], now: number): PadState => {
+  let mode = state.mode
+  let draft = state.draft
   let intent = state.intent
   let emote = state.emote
   let jump = state.jump
   let epoch = state.epoch
   let inspect = state.inspect
   for (const raw of keys) {
+    // Chat mode (D47): every key, WASD and digits included, is text for the draft.
+    if (mode === 'chat') {
+      draft = cut(`${draft ?? ''}${raw}`, DRAFT_MAX)
+      continue
+    }
+    // Lower-case `t` opens chat; the keys after it in the same burst are already the message.
+    if (raw === 't') {
+      mode = 'chat'
+      draft = ''
+      intent = undefined
+      jump = undefined
+      continue
+    }
     const glyph = emoteOf(raw)
     if (glyph !== undefined) emote = { glyph, at: now }
     // Only a lower-case `e`: `E` is reserved for peek (D13).
@@ -105,7 +136,7 @@ export const applyKeys = (state: PadState, keys: readonly string[], now: number)
     intent = { key, at: now, taps: intent !== undefined && intent.key === key ? Math.min(intent.taps + 1, MAX_TAPS) : 1 }
   }
 
-  return { ...state, intent, emote, jump, epoch, inspect }
+  return { ...state, mode, draft, intent, emote, jump, epoch, inspect }
 }
 
 // One `ui.input` change: diffs the value, applies the keys and flips the clear marker so the Input is
@@ -113,6 +144,34 @@ export const applyKeys = (state: PadState, keys: readonly string[], now: number)
 export const onPadInput = (state: PadState, value: string, now: number): PadState => {
   const { keys, handled } = readKeys(state.handled, value, state.clear)
   const applied = applyKeys({ ...state, handled }, keys, now)
+  // In chat mode the field is not cleared: it keeps the typed text, so a space is never mistaken for the clear
+  // marker. The draft is read from the field (everything after its `base`), so a deletion, a paste or an edit in
+  // the middle all give the text on screen (D47).
+  if (applied.mode === 'chat') {
+    const chars = Array.from(value)
+    const base = state.mode === 'chat' ? (state.base ?? 0) : Math.max(0, chars.length - (keys.length - keys.indexOf('t') - 1))
+
+    return { ...applied, base, draft: chars.slice(base).join('').slice(0, DRAFT_MAX) }
+  }
 
   return keys.length === 0 && CLEAR_VALUES.includes(value) ? { ...applied, handled } : { ...applied, clear: nextClear(state.clear) }
+}
+
+// Enter (D23, D47): in chat mode sends the draft (cleaned, cut to CHAT_MAX) or, when it is empty, cancels. Either
+// way chat mode ends and the field is reset by flipping the clear marker. Outside chat mode Enter does nothing.
+export const onPadSubmit = (state: PadState, now: number): PadState => {
+  if (state.mode !== 'chat') return state
+  const text = cut(clean(state.draft ?? ''), CHAT_MAX).trim()
+  const { mode: _mode, draft: _draft, base: _base, ...rest } = state
+
+  return { ...rest, handled: '', clear: nextClear(state.clear), ...(text === '' ? {} : { chat: { text, at: now } }) }
+}
+
+// The line the pad shows while a message is being typed (over the inspect line), or undefined outside chat mode.
+// It shows what would be sent: the first CHAT_MAX characters, then `_`, or `|` once the rest would be cut.
+export const chatLine = (state: PadState): string | undefined => {
+  if (state.mode !== 'chat') return undefined
+  const chars = Array.from(state.draft ?? '')
+
+  return `Say: ${chars.slice(0, CHAT_MAX).join('')}${chars.length > CHAT_MAX ? '|' : '_'}`
 }

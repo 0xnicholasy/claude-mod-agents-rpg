@@ -126,7 +126,9 @@ export type RemotePlayer = {
   facing: Facing
   label: string
   emote?: string
-  until?: number
+  emoteUntil?: number
+  chat?: string
+  chatUntil?: number
 }
 
 export type FrameInput = {
@@ -257,7 +259,7 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
   }
 
   // An emote shows on the bubble row above the player's plate until `until` (D15).
-  if (player !== undefined && player !== null && player.emote !== undefined && (player.until ?? 0) > now) {
+  if (player !== undefined && player !== null && player.emote !== undefined && (player.emoteUntil ?? 0) > now) {
     const code = player.emote.codePointAt(0) ?? 0x2a
     put(grid, player.x + Math.floor(FOOTPRINT_W / 2), player.y - 2, {
       ch: isValidGlyph(code) ? code : 0x2a,
@@ -267,9 +269,19 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
   }
 
   for (const other of others ?? []) {
-    if (other.emote === undefined || (other.until ?? 0) <= now) continue
+    if (other.emote === undefined || (other.emoteUntil ?? 0) <= now) continue
     const code = other.emote.codePointAt(0) ?? 0x2a
     put(grid, other.x + Math.floor(FOOTPRINT_W / 2), other.y - 2, { ch: isValidGlyph(code) ? code : 0x2a, fg: BUBBLE_FG, bg: BUBBLE_BG })
+  }
+
+  // Chat bubbles (D23) sit on the same row as an emote and win over it; the text stays inside the map.
+  const speakers: Array<{ x: number; y: number; chat?: string; chatUntil?: number }> = [...(others ?? [])]
+  if (player !== undefined && player !== null) speakers.push(player)
+  for (const speaker of speakers) {
+    if (speaker.chat === undefined || (speaker.chatUntil ?? 0) <= now) continue
+    const cells = textCells(speaker.chat, BUBBLE_FG, BUBBLE_BG)
+    const left = Math.max(0, Math.min(map.columns - cells.length, speaker.x + Math.floor(FOOTPRINT_W / 2) - Math.floor(cells.length / 2)))
+    cells.forEach((cell, i) => put(grid, left + i, speaker.y - 2, cell))
   }
 
   // Inspect text (D39): one row over the corridor, cut to the corridor's width, on top of everything.

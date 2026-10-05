@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { buildOffice, canStand, roomAt } from './map'
 import type { OfficeMap } from './map'
 import type { Intent } from './pad'
-import { jumpOrder, padRect, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
+import { jumpOrder, padRect, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { INTENT_MS } from './timing'
 
@@ -82,12 +82,27 @@ test('a resize reseats a player that cannot stand', () => {
 test('an emote lasts 3000 ms from the press and then clears', () => {
   const shown = settleEmote(start, { glyph: '\u2665', at: 1000 }, 1100)
 
-  expect(shown).toMatchObject({ emote: '\u2665', until: 4000 })
+  expect(shown).toMatchObject({ emote: '\u2665', emoteUntil: 4000 })
   // Still shown just before the end, and the same object when nothing changes.
   expect(settleEmote(shown, undefined, 3999)).toBe(shown)
   const gone = settleEmote(shown, undefined, 4000)
   expect(gone.emote).toBeUndefined()
-  expect(gone.until).toBeUndefined()
+  expect(gone.emoteUntil).toBeUndefined()
+})
+
+test('an emote and a chat line each expire on their own (T10 backlog)', () => {
+  const both = settleChat(settleEmote(start, { glyph: '!', at: 0 }, 0), { text: 'hi', at: 0 }, 0)
+
+  expect(both).toMatchObject({ emote: '!', emoteUntil: 3000, chat: 'hi', chatUntil: 5000 })
+  // After the emote's 3000 ms the chat is still there.
+  const later = settleChat(settleEmote(both, undefined, 3000), undefined, 3000)
+  expect(later.emote).toBeUndefined()
+  expect(later).toMatchObject({ chat: 'hi', chatUntil: 5000 })
+  // A chat that ends first leaves the emote alone.
+  const sent = settleChat(settleEmote(start, { glyph: '!', at: 4000 }, 4000), { text: 'hi', at: 0 }, 4000)
+  const ended = settleChat(settleEmote(sent, undefined, 5000), undefined, 5000)
+  expect(ended.chat).toBeUndefined()
+  expect(ended.emote).toBe('!')
 })
 
 test('a burst of 4 taps applies all 4 at one tick per 100 ms (D37)', () => {

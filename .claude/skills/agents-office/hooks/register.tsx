@@ -14,7 +14,7 @@ import { MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest } from './inspect'
-import { INITIAL_PAD, onPadInput } from './pad'
+import { chatLine, INITIAL_PAD, onPadInput, onPadSubmit } from './pad'
 import {
   asShare,
   DEFAULT_SHARE,
@@ -39,7 +39,7 @@ import {
 } from './presence'
 import type { Parsed, Remote, ShareMode } from './presence'
 import type { PadState } from './pad'
-import { settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
+import { settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
 import { baseName, branchOf, teamLabel } from './team'
@@ -469,12 +469,16 @@ const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number): 
     jumping === null
       ? { player: spawnPlayer(map, own.id), intent }
       : stepPlayer(jumping, map, intent, now, own.id)
-  const next = out.player === undefined ? undefined : settleEmote(out.player, padNow.emote, now)
+  const next = out.player === undefined ? undefined : settleChat(settleEmote(out.player, padNow.emote, now), padNow.chat, now)
   if (next !== undefined && next !== current) await update($, player, () => next)
   if (padNow.emote !== undefined && next !== undefined) {
     // Only the emote that was applied is cleared; a newer press stays for the next tick.
     const applied = padNow.emote
     await update($, pad, cur => (cur.emote?.at === applied.at && cur.emote.glyph === applied.glyph ? { ...cur, emote: undefined } : cur))
+  }
+  if (padNow.chat !== undefined && next !== undefined) {
+    const sent = padNow.chat
+    await update($, pad, cur => (cur.chat?.at === sent.at && cur.chat.text === sent.text ? { ...cur, chat: undefined } : cur))
   }
   if (padNow.jump !== undefined && current !== null) {
     const applied = padNow.jump
@@ -583,7 +587,9 @@ const tick = async ($: EngineInterface): Promise<void> => {
     commitChoreo($, before, state => advanceScripts(state, now)),
   )
   const walker = await guard($, 'player', await read($, player), async () => stepPlayerTick($, map, now))
-  const shown = await guard($, 'inspect', undefined, async () => inspectTick($, map, now, walker))
+  const inspected = await guard($, 'inspect', undefined, async () => inspectTick($, map, now, walker))
+  // The message being typed takes the inspect line (D47).
+  const shown = chatLine(await read($, pad)) ?? inspected
   const noStrip = (await read($, viewport)).strip === 0
   const ownId = (await read($, team))?.id ?? ''
   const focus = focusOf(map, walker, ownId)
@@ -595,7 +601,7 @@ const tick = async ($: EngineInterface): Promise<void> => {
     bubbles: after.bubbles,
     now,
     player: walker,
-    others: remotePlayersOf(await read($, remote), map, now),
+    others: remotePlayersOf(await read($, remote), map),
     overlay: noStrip ? shown : undefined,
     overlayFrom: span.from,
     overlayWidth: span.width,
@@ -826,9 +832,9 @@ export const register: Register = on => {
   // Not a render, so it may write state (D20). Bursts are coalesced: onPadInput diffs the value.
   on('ui.input', { element: PAD_KEY }, async ($, e, next) => {
     await guard($, 'ui.input', undefined, async () => {
-      if (e.kind !== 'change') return
       const now = await $.clock.now()
-      await update($, pad, cur => onPadInput(cur, e.value, now))
+      if (e.kind === 'submit') await update($, pad, cur => onPadSubmit(cur, now))
+      else await update($, pad, cur => onPadInput(cur, e.value, now))
     })
 
     return next(e)
@@ -892,7 +898,7 @@ export const register: Register = on => {
           )
         }
         const inspected = await read($, inspect)
-        const inspectLine = inspected !== null && inspected.until > (await $.clock.now()) ? inspected.text : undefined
+        const inspectLine = chatLine(await read($, pad)) ?? (inspected !== null && inspected.until > (await $.clock.now()) ? inspected.text : undefined)
         const drawnPlayer = await read($, player)
         const ownTeamId = (await read($, team))?.id ?? ''
         const focus = focusOf(map, drawnPlayer, ownTeamId)
@@ -904,7 +910,7 @@ export const register: Register = on => {
           bubbles: await read($, bubbles),
           now: await $.clock.now(),
           player: drawnPlayer,
-          others: remotePlayersOf(await read($, remote), map, await $.clock.now()),
+          others: remotePlayersOf(await read($, remote), map),
           overlay: stripCount === 0 ? inspectLine : undefined,
           overlayFrom: span.from,
           overlayWidth: span.width,

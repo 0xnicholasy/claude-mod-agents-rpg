@@ -6,7 +6,7 @@ import type { OfficeMap, Point, RoomId, TeamSpec } from './map'
 import { assignTarget } from './motion'
 import type { Motion, RemotePlayer } from './frame'
 import type { Facing, Pose, Role } from './sprites'
-import { EMOTE_MS, HEARTBEAT_MS, STALE_MS } from './timing'
+import { CHAT_MAX, CHAT_MS, EMOTE_MS, HEARTBEAT_MS, STALE_MS } from './timing'
 
 export type ShareMode = 'all' | 'anon' | 'off'
 
@@ -72,8 +72,9 @@ export type PresencePlayer = {
   ry: number
   facing: Facing
   emote?: string
+  emoteUntil?: number
   chat?: string
-  until?: number
+  chatUntil?: number
 }
 
 export type PresenceRecord = {
@@ -230,13 +231,15 @@ const playerFrom = (value: unknown): PresencePlayer | null => {
   }
   const emote = str(value.emote)
   const chat = str(value.chat)
-  const until = num(value.until)
+  const emoteUntil = num(value.emoteUntil)
+  const chatUntil = num(value.chatUntil)
 
   return {
     ...base,
     ...(emote === undefined ? {} : { emote: cut(clean(emote), 2) }),
-    ...(chat === undefined ? {} : { chat: cut(clean(chat), 40) }),
-    ...(until === undefined ? {} : { until }),
+    ...(emoteUntil === undefined ? {} : { emoteUntil }),
+    ...(chat === undefined ? {} : { chat: cut(clean(chat), CHAT_MAX) }),
+    ...(chatUntil === undefined ? {} : { chatUntil }),
   }
 }
 
@@ -389,11 +392,12 @@ export const routeRemote = (motion: Motion, map: OfficeMap, remoteAgents: Roster
 
 // ---- Players (T19, D29, D46) --------------------------------------------------------------------------
 
-export type OwnPlayer = { x: number; y: number; facing: Facing; emote?: string; until?: number }
+export type OwnPlayer = { x: number; y: number; facing: Facing; emote?: string; emoteUntil?: number; chat?: string; chatUntil?: number }
 
 // The own player as published: the room holding its origin (else the room with the nearest door, for a player in
-// the corridor) and the offset from that room's top-left interior cell, never below 0. An emote is published
-// only while it is still showing.
+// the corridor) and the offset from that room's top-left interior cell, never below 0. An emote and a chat line
+// are published only while they are still showing, each with its own expiry. A chat line is text the user typed
+// on purpose to share (D23); nothing else from a prompt is ever published.
 export const toPresencePlayer = (map: OfficeMap, player: OwnPlayer, now: number): PresencePlayer | null => {
   const here = roomAt(map, player.x, player.y)
   const room =
@@ -410,9 +414,15 @@ export const toPresencePlayer = (map: OfficeMap, player: OwnPlayer, now: number)
     ry: Math.max(0, player.y - room.bounds.y),
     facing: player.facing,
   }
-  if (player.emote === undefined || player.until === undefined || player.until <= now) return base
+  const emoting = player.emote !== undefined && player.emoteUntil !== undefined && player.emoteUntil > now
+  const chatting = player.chat !== undefined && player.chatUntil !== undefined && player.chatUntil > now
+  const text = player.chat === undefined ? '' : cut(clean(player.chat), CHAT_MAX)
 
-  return { ...base, emote: cut(clean(player.emote), 2), until: player.until }
+  return {
+    ...base,
+    ...(emoting ? { emote: cut(clean(player.emote ?? ''), 2), emoteUntil: player.emoteUntil } : {}),
+    ...(chatting && text !== '' ? { chat: text, chatUntil: player.chatUntil } : {}),
+  }
 }
 
 // Where a published player stands in this pane's layout (D29): the room-relative offset, clamped into the room
@@ -443,8 +453,9 @@ export const placeRemotePlayer = (map: OfficeMap, player: PresencePlayer): Point
 }
 
 // The other sessions' players to draw: each at its clamped spot, plated with its session's team label (`Session N`
-// when anonymous). A forged `until` is capped at EMOTE_MS from now, so a crafted record cannot pin an emote.
-export const remotePlayersOf = (remote: Remote, map: OfficeMap, now: number): RemotePlayer[] =>
+// when anonymous). An expiry is capped (EMOTE_MS, CHAT_MS) from the record's own heartbeat, so a forged far-future value is cut
+// down and does not drift with each frame; a stale record is dropped by the reader anyway.
+export const remotePlayersOf = (remote: Remote, map: OfficeMap): RemotePlayer[] =>
   Object.values(remote).flatMap(record => {
     const published = record.player
     if (published === null) return []
@@ -453,7 +464,13 @@ export const remotePlayersOf = (remote: Remote, map: OfficeMap, now: number): Re
     const name = map.rooms.find(room => room.id === `team:${record.sessionId}`)?.name ?? ''
     const base: RemotePlayer = { id: record.sessionId, x: at.x, y: at.y, facing: published.facing, label: name === '' ? 'guest' : name }
 
-    return published.emote === undefined || published.until === undefined
-      ? base
-      : { ...base, emote: published.emote, until: Math.min(published.until, now + EMOTE_MS) }
+    return {
+      ...base,
+      ...(published.emote === undefined || published.emoteUntil === undefined
+        ? {}
+        : { emote: published.emote, emoteUntil: Math.min(published.emoteUntil, record.heartbeatAt + EMOTE_MS) }),
+      ...(published.chat === undefined || published.chatUntil === undefined
+        ? {}
+        : { chat: published.chat, chatUntil: Math.min(published.chatUntil, record.heartbeatAt + CHAT_MS) }),
+    }
   })

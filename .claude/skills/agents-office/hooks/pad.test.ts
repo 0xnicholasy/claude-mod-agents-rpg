@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { applyKeys, emoteOf, INITIAL_PAD, MAX_TAPS, onPadInput, readKeys } from './pad'
+import { applyKeys, chatLine, emoteOf, INITIAL_PAD, MAX_TAPS, onPadInput, onPadSubmit, readKeys } from './pad'
 import { isValidGlyph } from './raster'
+import { CHAT_MAX } from './timing'
 
 test('a coalesced burst yields every key', () => {
   expect(readKeys('', 'wwww')).toEqual({ keys: ['w', 'w', 'w', 'w'], handled: 'wwww' })
@@ -77,4 +78,80 @@ test('[ and ] set a pending jump, clear the intent, and a later WASD key cancels
 test('lower-case e asks to inspect and E does not', () => {
   expect(applyKeys(INITIAL_PAD, ['e'], 70).inspect).toEqual({ at: 70 })
   expect(applyKeys(INITIAL_PAD, ['E'], 70).inspect).toBeUndefined()
+})
+
+const typed = (keys: string): ReturnType<typeof applyKeys> => applyKeys(INITIAL_PAD, ['t', ...Array.from(keys)], 10)
+
+test('t, hi there, Enter sends the chat line and moves nobody', () => {
+  const typing = typed('hi there')
+
+  expect(typing.mode).toBe('chat')
+  expect(typing.draft).toBe('hi there')
+  expect(typing.intent).toBeUndefined()
+  expect(chatLine(typing)).toBe('Say: hi there_')
+  const sent = onPadSubmit(typing, 50)
+  expect(sent.chat).toEqual({ text: 'hi there', at: 50 })
+  expect(sent.mode).toBeUndefined()
+  expect(sent.draft).toBeUndefined()
+  expect(chatLine(sent)).toBeUndefined()
+})
+
+test('chat mode swallows WASD and every other key', () => {
+  const typing = typed('wasd 1[e')
+
+  expect(typing.draft).toBe('wasd 1[e')
+  expect(typing.intent).toBeUndefined()
+  expect(typing.emote).toBeUndefined()
+  expect(typing.jump).toBeUndefined()
+  expect(typing.inspect).toBeUndefined()
+  // Without chat mode the same keys act.
+  expect(applyKeys(INITIAL_PAD, ['w'], 1).intent).toBeDefined()
+})
+
+test('chat is cut to 40 cleaned characters', () => {
+  const sent = onPadSubmit(typed(`a\u0007b${'x'.repeat(60)}`), 5)
+
+  expect(Array.from(sent.chat?.text ?? '')).toHaveLength(CHAT_MAX)
+  expect(sent.chat?.text.startsWith('a b')).toBe(true)
+  expect(/[\u0000-\u001f\u007f-\u009f]/.test(sent.chat?.text ?? '')).toBe(false)
+})
+
+test('an empty submit cancels and Enter outside chat does nothing', () => {
+  expect(onPadSubmit(typed('   '), 5).chat).toBeUndefined()
+  expect(onPadSubmit(typed(''), 5).mode).toBeUndefined()
+  expect(onPadSubmit(INITIAL_PAD, 5)).toBe(INITIAL_PAD)
+})
+
+test('the field keeps its text in chat mode, so a space is typed and a deletion edits the draft', () => {
+  let state = onPadInput(INITIAL_PAD, 't', 1)
+  expect(state.mode).toBe('chat')
+  const clear = state.clear
+  state = onPadInput(state, 't ', 2)
+  state = onPadInput(state, 't hi', 3)
+  expect(state.draft).toBe(' hi')
+  expect(state.clear).toBe(clear)
+  state = onPadInput(state, 't h', 4)
+  expect(state.draft).toBe(' h')
+  // Enter ends chat and flips the clear marker so the field resets.
+  const sent = onPadSubmit(state, 5)
+  expect(sent.clear).not.toBe(clear)
+  expect(sent.chat?.text).toBe('h')
+})
+
+test('the draft is the text in the field, so an edit in the middle or a paste does not garble it', () => {
+  let state = onPadInput(INITIAL_PAD, 't', 1)
+  state = onPadInput(state, 'tabc', 2)
+  expect(state.draft).toBe('abc')
+  // The cursor moved and a letter was typed in the middle: neither an extension nor a prefix of the old value.
+  state = onPadInput(state, 'taXbc', 3)
+  expect(state.draft).toBe('aXbc')
+  state = onPadInput(state, 'tbc', 4)
+  expect(state.draft).toBe('bc')
+  // A burst that opens chat: everything after the t is the message.
+  expect(onPadInput(INITIAL_PAD, 'thi', 5).draft).toBe('hi')
+})
+
+test('the typing line shows what would be sent and marks a cut', () => {
+  expect(chatLine({ ...INITIAL_PAD, mode: 'chat', draft: 'hi' })).toBe('Say: hi_')
+  expect(chatLine({ ...INITIAL_PAD, mode: 'chat', draft: 'x'.repeat(CHAT_MAX + 5) })).toBe(`Say: ${'x'.repeat(CHAT_MAX)}|`)
 })
