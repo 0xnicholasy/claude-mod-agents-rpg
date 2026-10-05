@@ -1,12 +1,12 @@
 // Presence directory, share preference and the published record (D17-D19, D22). Pure: register.tsx runs every `$` call.
 import type { OfficeAgent, AgentStatus, Roster, Tier } from './agents'
 import { clean } from './log'
-import { cut } from './map'
-import type { OfficeMap, RoomId, TeamSpec } from './map'
+import { canStand, cut, FOOTPRINT_H, FOOTPRINT_W, roomAt } from './map'
+import type { OfficeMap, Point, RoomId, TeamSpec } from './map'
 import { assignTarget } from './motion'
-import type { Motion } from './frame'
+import type { Motion, RemotePlayer } from './frame'
 import type { Facing, Pose, Role } from './sprites'
-import { HEARTBEAT_MS, STALE_MS } from './timing'
+import { EMOTE_MS, HEARTBEAT_MS, STALE_MS } from './timing'
 
 export type ShareMode = 'all' | 'anon' | 'off'
 
@@ -65,7 +65,7 @@ export type PresenceAgent = {
   parentId?: string
 }
 
-// The own player, published from T19 on; T14 always publishes null.
+// The own player (T19, D29): the room and the position inside it, so each pane can map it into its own layout.
 export type PresencePlayer = {
   room: RoomId
   rx: number
@@ -97,6 +97,8 @@ export type RecordInput = {
   share: 'all' | 'anon'
   team: { label: string; branch: string }
   roster: Roster
+  // The own player in room-relative form (T19); absent or null publishes null.
+  player?: PresencePlayer | null
 }
 
 const labelOf = (text: string): string => cut(clean(text), LABEL_MAX)
@@ -136,7 +138,7 @@ export const toRecord = (input: RecordInput): PresenceRecord => {
     share: input.share,
     team: anon ? { label: '', branch: '' } : { label: teamText(input.team.label), branch: teamText(input.team.branch) },
     agents,
-    player: null,
+    player: input.player ?? null,
   }
   while (record.agents.length > 0 && bytesOf(JSON.stringify(record)) > MAX_RECORD_BYTES) record.agents.pop()
 
@@ -384,3 +386,74 @@ export const routeRemote = (motion: Motion, map: OfficeMap, remoteAgents: Roster
 
   return next
 }
+
+// ---- Players (T19, D29, D46) --------------------------------------------------------------------------
+
+export type OwnPlayer = { x: number; y: number; facing: Facing; emote?: string; until?: number }
+
+// The own player as published: the room holding its origin (else the room with the nearest door, for a player in
+// the corridor) and the offset from that room's top-left interior cell, never below 0. An emote is published
+// only while it is still showing.
+export const toPresencePlayer = (map: OfficeMap, player: OwnPlayer, now: number): PresencePlayer | null => {
+  const here = roomAt(map, player.x, player.y)
+  const room =
+    map.rooms.find(candidate => candidate.id === here) ??
+    [...map.rooms].sort(
+      (a, b) =>
+        Math.abs(a.doorStand.x - player.x) + Math.abs(a.doorStand.y - player.y) -
+        (Math.abs(b.doorStand.x - player.x) + Math.abs(b.doorStand.y - player.y)),
+    )[0]
+  if (room === undefined) return null
+  const base: PresencePlayer = {
+    room: room.id,
+    rx: Math.max(0, player.x - room.bounds.x),
+    ry: Math.max(0, player.y - room.bounds.y),
+    facing: player.facing,
+  }
+  if (player.emote === undefined || player.until === undefined || player.until <= now) return base
+
+  return { ...base, emote: cut(clean(player.emote), 2), until: player.until }
+}
+
+// Where a published player stands in this pane's layout (D29): the room-relative offset, clamped into the room
+// so a narrower room still holds it, then the nearest tile of the room a figure can stand on, else the room's
+// first free anchor or its doorStand. Undefined when the room is not on this map.
+export const placeRemotePlayer = (map: OfficeMap, player: PresencePlayer): Point | undefined => {
+  const room = map.rooms.find(candidate => candidate.id === player.room)
+  if (room === undefined) return undefined
+  const { x: bx, y: by, w, h } = room.bounds
+  const wanted: Point = {
+    x: bx + Math.min(Math.max(0, player.rx), Math.max(0, w - FOOTPRINT_W)),
+    y: by + Math.min(Math.max(0, player.ry), Math.max(0, h - FOOTPRINT_H)),
+  }
+  if (canStand(map, wanted.x, wanted.y)) return wanted
+  let best: Point | undefined
+  let bestDist = Infinity
+  for (let y = by; y + FOOTPRINT_H <= by + h; y++) {
+    for (let x = bx; x + FOOTPRINT_W <= bx + w; x++) {
+      const dist = Math.abs(x - wanted.x) + Math.abs(y - wanted.y)
+      if (dist < bestDist && canStand(map, x, y)) {
+        best = { x, y }
+        bestDist = dist
+      }
+    }
+  }
+
+  return best ?? room.anchors.find(p => canStand(map, p.x, p.y)) ?? room.doorStand
+}
+
+// The other sessions' players to draw: each at its clamped spot, plated with its session's team label (`Session N`
+// when anonymous). A forged `until` is capped at EMOTE_MS from now, so a crafted record cannot pin an emote.
+export const remotePlayersOf = (remote: Remote, map: OfficeMap, now: number): RemotePlayer[] =>
+  Object.values(remote).flatMap(record => {
+    const published = record.player
+    if (published === null) return []
+    const at = placeRemotePlayer(map, published)
+    if (at === undefined) return []
+    const name = map.rooms.find(room => room.id === `team:${record.sessionId}`)?.name ?? ''
+    const base: RemotePlayer = { id: record.sessionId, x: at.x, y: at.y, facing: published.facing, label: name === '' ? 'guest' : name }
+
+    return published.emote === undefined || published.until === undefined
+      ? base
+      : { ...base, emote: published.emote, until: Math.min(published.until, now + EMOTE_MS) }
+  })
