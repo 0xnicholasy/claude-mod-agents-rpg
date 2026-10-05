@@ -363,7 +363,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; frame.test.ts: 'team rooms follow startedAt order', 'a remote agent walks to its published room'. LIVE2 and FAKES as above.
 
 ### T17 Show anonymous sessions as Session N
-- status: done (#PR, 2026-10-05)
+- status: done (#40, 2026-10-05)
 - needs: T16
 - size: S
 - scope: Reader side of D22: a record with `share: 'anon'` draws as `Session N`, and its plates show the role.
