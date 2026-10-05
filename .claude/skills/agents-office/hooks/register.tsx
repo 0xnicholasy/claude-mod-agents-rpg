@@ -12,7 +12,7 @@ import { buildFrame, hourOf, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { arrived, clean, interrupted, interruptFailed, nudged, nudgeFailed, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
-import { canStand, MIN_COLUMNS, MIN_ROWS, roomAt, SMALL_FOOT } from './map'
+import { canStand, MID_FOOT, MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { Footprint, OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest, peekLines } from './inspect'
@@ -191,12 +191,12 @@ const mapAt = async ($: EngineInterface, columns: number, rows: number): Promise
 
 // The footprint of the map the pane draws, for the hook calls that have no map of their own (D67): the render's own
 // record, small before one exists.
-const footOf = async ($: EngineInterface): Promise<Footprint> => (await read($, viewport)).foot ?? SMALL_FOOT
+const footOf = async ($: EngineInterface): Promise<Footprint> => (await read($, viewport)).foot ?? MID_FOOT
 
-// A footprint change (a resize across 72 columns) drops every motion entry so `seat` places the agents at the new
+// A footprint change (a resize across the 11-row minimum) drops every motion entry so `seat` places the agents at the new
 // layout's desks, clears the player's path (or respawns a player who no longer stands) and respawns the cat (D57).
 const reseatOnFootChange = async ($: EngineInterface, map: OfficeMap): Promise<void> => {
-  const last = (await read($, seatFoot)) ?? SMALL_FOOT
+  const last = (await read($, seatFoot)) ?? MID_FOOT
   if (last.w === map.foot.w && last.h === map.foot.h) return
   await update($, motion, () => ({}))
   await update($, cat, () => null)
@@ -748,6 +748,7 @@ const tick = async ($: EngineInterface): Promise<void> => {
     await update($, agents, cur => migrateRoster(cur, own.id))
     await update($, motion, cur => Object.fromEntries(Object.entries(cur).filter(([id]) => !moved.includes(id))))
   })
+  await guard($, 'pad focus', undefined, async () => askPadFocusAfterLoad($))
   const viewSize = await read($, viewport)
   const viewMap = await mapAt($, viewSize.columns, viewSize.rows)
   if (viewMap !== undefined) await guard($, 'reseat', undefined, async () => reseatOnFootChange($, viewMap))
@@ -844,10 +845,13 @@ let refreshTimer: Timer | undefined
 let presenceTimer: Timer | undefined
 // True while a presence tick runs, so a slow read cannot overlap the next tick and overwrite newer state.
 let presenceBusy = false
+// True once this module load has asked for the pad's keyboard focus (`openOffice` or the first tick over a drawn pane).
+let padFocusAsked = false
 
 const startLoop = ($: EngineInterface): void => {
   loopTimer?.cancel()
   lastFrameCells = null
+  padFocusAsked = false
   loopTimer = $.clock.every(TICK_MS, () => {
     tick($).catch(error =>
       $.ui.log(`agents-office: tick threw ${String(error)}`, { to: 'debug' }),
@@ -884,14 +888,29 @@ const openOffice = async ($: EngineInterface): Promise<void> => {
   await update($, opened, () => true)
   // The Input is drawn only after the pane mounts, and a focus request before then is waited for only
   // briefly, so the pad takes focus after PAD_FOCUS_MS (spike S1b). A deny is logged once.
-  $.clock.after(PAD_FOCUS_MS, () => {
-    $.ui
-      .focus({ requestId: PANE, key: PAD_KEY })
-      .then(result => {
-        if (result.deny !== undefined) logOnce($, 'pad focus', `denied: ${result.deny}`)
-      })
-      .catch(error => logOnce($, 'pad focus', String(error)))
-  })
+  padFocusAsked = true
+  $.clock.after(PAD_FOCUS_MS, () => requestPadFocus($))
+}
+
+const requestPadFocus = ($: EngineInterface): void => {
+  $.ui
+    .focus({ requestId: PANE, key: PAD_KEY })
+    .then(result => {
+      if (result.deny !== undefined) logOnce($, 'pad focus', `denied: ${result.deny}`)
+    })
+    .catch(error => logOnce($, 'pad focus', String(error)))
+}
+
+// A module loaded while the pane is already drawn (a hot reload, /reload-plugins after an edit) never ran
+// `openOffice`, so nobody asked for the keys and WASD typed into the prompt (D73). The tick re-opens the pane with
+// `focus` once per load when it sees a drawn pane: `$.ui.focus` alone is denied once Escape has handed the keys
+// back ("that site does not hold the keyboard"), while an open's focus request is granted over an empty composer.
+// Not on every tick: Escape stays the person's way back to the prompt.
+const askPadFocusAfterLoad = async ($: EngineInterface): Promise<void> => {
+  if (padFocusAsked) return
+  const view = await read($, viewport)
+  if (view.columns === 0 && view.rows === 0) return
+  await openOffice($)
 }
 
 export const register: Register = on => {

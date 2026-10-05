@@ -19,14 +19,10 @@ export const bodyRowsFor = (placement: 'dock' | 'inline', bodyRows: number, view
     : bodyRows
 
 // Mid figures need this many pane columns and MIN_ROWS rows; below it the 3x2 layout stays (D57).
-export const MID_MIN_COLUMNS = 72
+// Every pane that passes `isOfficeSize` draws the mid 5x5 figures (D72). A pane narrower than the mid map's
+// virtual width crops it with the camera instead of falling back to the small layout (supersedes D57).
+export const footFor = (): Footprint => MID_FOOT
 
-export const footFor = (columns: number, rows: number): Footprint =>
-  columns >= MID_MIN_COLUMNS && rows >= MIN_ROWS ? MID_FOOT : SMALL_FOOT
-
-// Small: 0-2 strip rows until the map reaches FULL_ROWS, then up to STRIP_ROWS (D52).
-// Mid: the map comes first, so strip rows appear only past the mid map's MID_MIN_ROWS (D59, D63d); an inline body
-// of at most 23 rows is all map. Neither the map nor the strip shrinks as the body grows.
 export const stripRows = (bodyRows: number, foot: Footprint = SMALL_FOOT): number =>
   isMid(foot)
     ? Math.max(0, Math.min(STRIP_ROWS, bodyRows - MID_MIN_ROWS))
@@ -39,7 +35,7 @@ export const rasterSize = (
   bodyRows: number,
 ): { columns: number; rows: number; strip: number; foot: Footprint } => {
   const columns = Math.min(512, Math.max(1, bodyColumns))
-  const foot = footFor(columns, bodyRows)
+  const foot = footFor()
   const strip = stripRows(bodyRows, foot)
   return {
     columns,
@@ -58,7 +54,7 @@ let cached: { key: string; map: OfficeMap } | undefined
 
 // The map for a raster size and a team list in room order, or undefined below the 60x11 minimum. The footprint
 // follows the size (`footFor`) unless the caller names one.
-export const mapFor = (columns: number, rows: number, teams: TeamSpec[], foot: Footprint = footFor(columns, rows)): OfficeMap | undefined => {
+export const mapFor = (columns: number, rows: number, teams: TeamSpec[], foot: Footprint = footFor()): OfficeMap | undefined => {
   if (!isOfficeSize(columns, rows)) return undefined
   const key = `${columns},${rows},${foot.w}x${foot.h},${teams.map(t => `${t.id}=${t.label}`).join('|')}`
   if (cached?.key === key) return cached.map

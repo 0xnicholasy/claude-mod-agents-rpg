@@ -1,28 +1,29 @@
 import { expect, test } from 'claude-code/testing'
 import { bodyRowsFor, footFor, INLINE_MAX_ROWS, mapFor, rasterSize, stripRows } from './loop'
-import { MID_FOOT, MID_MIN_ROWS, SMALL_FOOT } from './map'
+import { MID_FOOT, MID_MIN_ROWS } from './map'
 
-test('stripRows follows the table and neither map nor strip shrinks as the body grows', () => {
+test('stripRows follows the mid table and neither map nor strip shrinks as the body grows', () => {
+  // [body rows, strip rows, map rows]: the strip appears only past MID_MIN_ROWS (23) body rows.
   const table: Array<[number, number, number]> = [
     [11, 0, 11],
-    [12, 1, 11],
-    [13, 2, 11],
-    [14, 2, 12],
-    [15, 2, 13],
-    [20, 2, 18],
-    [21, 3, 18],
-    [22, 4, 18],
-    [23, 5, 18],
+    [12, 0, 12],
+    [20, 0, 20],
+    [23, 0, 23],
+    [24, 1, 23],
+    [25, 2, 23],
+    [27, 4, 23],
+    [28, 5, 23],
     [30, 5, 25],
   ]
   for (const [body, strip, map] of table) {
-    expect(stripRows(body)).toBe(strip)
+    expect(stripRows(body, MID_FOOT)).toBe(strip)
+    expect(rasterSize(60, body).strip).toBe(strip)
     expect(rasterSize(60, body).rows).toBe(map)
   }
-  expect(stripRows(10)).toBe(0)
+  expect(stripRows(10, MID_FOOT)).toBe(0)
   for (let body = 11; body < 40; body++) {
-    expect(stripRows(body + 1)).toBeGreaterThanOrEqual(stripRows(body))
-    expect(body + 1 - stripRows(body + 1)).toBeGreaterThanOrEqual(body - stripRows(body))
+    expect(stripRows(body + 1, MID_FOOT)).toBeGreaterThanOrEqual(stripRows(body, MID_FOOT))
+    expect(body + 1 - stripRows(body + 1, MID_FOOT)).toBeGreaterThanOrEqual(body - stripRows(body, MID_FOOT))
   }
 })
 
@@ -45,26 +46,24 @@ test('bodyRowsFor sizes an inline pane from the viewport and leaves other cases 
   expect(bodyRowsFor('dock', 7, 50)).toBe(7)
 })
 
-test('mid starts at 72 columns', () => {
-  expect(footFor(76, 11)).toEqual(MID_FOOT)
-  expect(footFor(72, 11)).toEqual(MID_FOOT)
-  expect(footFor(71, 11)).toEqual(SMALL_FOOT)
-  expect(footFor(70, 11)).toEqual(SMALL_FOOT)
-  // Below the 11-row minimum there is no office at all, and the small footprint stands in.
-  expect(footFor(120, 10)).toEqual(SMALL_FOOT)
-  expect(rasterSize(76, 11).foot).toEqual(MID_FOOT)
-  expect(rasterSize(70, 11).foot).toEqual(SMALL_FOOT)
-  expect(mapFor(76, 11, [{ id: 'team:a', label: 'a' }])?.foot).toEqual(MID_FOOT)
-  expect(mapFor(70, 11, [{ id: 'team:a', label: 'a' }])?.foot).toEqual(SMALL_FOOT)
-  // The cache never hands a small map to a mid size or the reverse.
-  expect(mapFor(76, 11, [{ id: 'team:a', label: 'a' }])?.foot).toEqual(MID_FOOT)
+test('every office size draws the mid footprint, narrow panes included (D72)', () => {
+  expect(footFor()).toEqual(MID_FOOT)
+  expect(rasterSize(60, 11).foot).toEqual(MID_FOOT)
+  expect(rasterSize(68, 30).foot).toEqual(MID_FOOT)
+  expect(rasterSize(71, 11).foot).toEqual(MID_FOOT)
+  expect(mapFor(64, 30, [{ id: 'team:a', label: 'a' }])?.foot).toEqual(MID_FOOT)
+  // A 60-column pane is narrower than the mid map, which the camera crops.
+  const narrow = mapFor(60, 23, [{ id: 'team:a', label: 'a' }])
+  expect(narrow?.columns).toBeGreaterThan(60)
+  // Below the minimum there is no office at all.
+  expect(mapFor(59, 23, [{ id: 'team:a', label: 'a' }])).toBeUndefined()
+  expect(mapFor(120, 10, [{ id: 'team:a', label: 'a' }])).toBeUndefined()
 })
 
 test('an inline body of 23 rows gives a 23-row mid raster with no strip', () => {
   expect(INLINE_MAX_ROWS).toBe(MID_MIN_ROWS)
   expect(rasterSize(116, INLINE_MAX_ROWS)).toEqual({ columns: 116, rows: 23, strip: 0, foot: MID_FOOT })
-  // The small layout keeps its 18 + 5 split at the same rows.
-  expect(rasterSize(70, INLINE_MAX_ROWS)).toEqual({ columns: 70, rows: 18, strip: 5, foot: SMALL_FOOT })
+  expect(rasterSize(70, INLINE_MAX_ROWS)).toEqual({ columns: 70, rows: 23, strip: 0, foot: MID_FOOT })
   // A mid body of 11 to 23 rows is all map; strip rows appear only past 23 (D59).
   for (let body = 11; body <= 23; body++) expect(stripRows(body, MID_FOOT)).toBe(0)
   expect(stripRows(24, MID_FOOT)).toBe(1)

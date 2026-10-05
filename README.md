@@ -112,8 +112,8 @@ Hair and skin tones come from a hash of the agent's id, so an agent keeps its lo
 
 ## Figure sizes and the camera
 
-- At 72 pane columns or more (and at least 11 rows), a standing person is 5x5 cells, and a person at a desk takes 8x5 cells (the person plus the monitor). Their plate shows the label, cut to 7 characters.
-- Below 72 columns, down to the 60-column minimum, the pane falls back to 3x2-cell figures and the compact layout.
+- At every pane size the office draws (60 columns and 11 rows or more), a standing person is 5x5 cells, and a person at a desk takes 8x5 cells (the person plus the monitor). Their plate shows the label, cut to 7 characters.
+- A pane narrower or shorter than the 5x5 map (which is at least 71 columns by 23 rows) crops it with the camera below; there is no smaller layout.
 - A map larger than the pane is cropped around your character (or around your own team room when your character is not drawn). Arrows at the pane edges show where more office is hidden: `▲` and `▼` at the middle column of the first and last row, `◀` and `▶` on the first visible corridor row. `^` and `v` replace the vertical marks where the terminal cannot draw triangles.
 - At 80x24 the pane body is 76 columns by 11 rows, so you see one room band at a time and `[` `]` or WASD scroll the view. At 120x40 the whole office fits in the pane and no `▲` or `▼` shows.
 
