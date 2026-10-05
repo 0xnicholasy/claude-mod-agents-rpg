@@ -1323,6 +1323,29 @@ test('presence writes on change and every 3 s', async ($, on) => {
   expect(JSON.parse(writes[1]?.text ?? '{}').heartbeatAt).toBe(4000)
 })
 
+test('t, a message and Enter publish the chat line without moving the player', async ($, on) => {
+  const { clock, writes } = await startPresence($, on)
+  const ui = await $.ui.mount(paneAt(11))
+  await clock.advance(1000)
+  const playerOf = (): { rx: number; ry: number; chat?: string } =>
+    JSON.parse(writes.at(-1)?.text ?? '{}').player as { rx: number; ry: number; chat?: string }
+  const before = playerOf()
+  expect(before.chat).toBeUndefined()
+  const input = (text: string, kind: 'change' | 'submit') => $.ui.input({ plugin: 'agents-office', key: 'pad-input', text, kind })
+  await input('t', 'change')
+  await input('twasd hi', 'change')
+  await input('twasd hi', 'submit')
+  await clock.advance(1000)
+  const after = playerOf()
+
+  expect(after.chat).toBe('wasd hi')
+  expect({ rx: after.rx, ry: after.ry }).toEqual({ rx: before.rx, ry: before.ry })
+  // The line leaves the record once its 5000 ms are up.
+  await clock.advance(5000)
+  expect(playerOf().chat).toBeUndefined()
+  await ui.unmount()
+})
+
 test('the presence timer reads only changed foreign files into the remote atom, and share off clears it', async ($, on) => {
   const dir = '/home/u/.claude/agents-office/presence'
   const remoteRecord = JSON.stringify({

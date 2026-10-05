@@ -14,6 +14,10 @@ export const PAD_FOCUS_MS = 1500
 // A movement key stays fresh this long (D13).
 export const INTENT_MS = 250
 export const EMOTE_MS = 3000
+// A chat line shows above its player this long (D23).
+export const CHAT_MS = 5000
+// A chat line is cut to this many code points (D23).
+export const CHAT_MAX = 40
 // The inspect line stays up this long (D16).
 export const INSPECT_MS = 6000
 export const PRESENCE_MS = 1000
