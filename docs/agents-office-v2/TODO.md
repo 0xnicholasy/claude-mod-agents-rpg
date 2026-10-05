@@ -291,7 +291,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; inspect.test.ts: 'nearest within 2 tiles', 'inspect text format'; office.test.ts: 'inspect shows for 6 s'. LIVE as above.
 
 ### T13 Resolve the presence directory and share preference
-- status: done (#PR, 2026-10-05)
+- status: done (#36, 2026-10-05)
 - needs: T12
 - size: M
 - scope:
