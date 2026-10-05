@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { OfficeAgent, Roster } from './agents'
 import type { Motion } from './frame'
+import { MID_FOOT } from './map'
 import { elapsedText, inspectText, lastTextOf, nearest, peekLines, PEEK_WIDTH } from './inspect'
 
 const agent = (id: string, extra: Partial<OfficeAgent> = {}): OfficeAgent => ({
@@ -67,4 +68,17 @@ test('peek keeps the last 10 text messages', () => {
     'x'.repeat(PEEK_WIDTH),
   ])
   expect(peekLines([])).toEqual([])
+})
+
+test('mid inspect measures the gap between figures', () => {
+  const roster: Roster = { two: agent('two'), three: agent('three') }
+  const from = { x: 10, y: 10 }
+  // Origins 7 apart in x leave a 2-cell gap between two 5-wide figures; 8 apart leave 3.
+  expect(nearest({ two: roster.two as OfficeAgent }, { two: at(17, 10) }, from, undefined, MID_FOOT)?.id).toBe('two')
+  expect(nearest({ three: roster.three as OfficeAgent }, { three: at(18, 10) }, from, undefined, MID_FOOT)).toBeUndefined()
+  // The gap adds across both axes: 1 in x and 2 in y is 3, so it is out; 1 and 1 is in.
+  expect(nearest({ two: roster.two as OfficeAgent }, { two: at(16, 17) }, from, undefined, MID_FOOT)).toBeUndefined()
+  expect(nearest({ two: roster.two as OfficeAgent }, { two: at(16, 16) }, from, undefined, MID_FOOT)?.id).toBe('two')
+  // The same 7-apart agent is out of range on the small map, where origins are measured.
+  expect(nearest({ two: roster.two as OfficeAgent }, { two: at(17, 10) }, from)).toBeUndefined()
 })

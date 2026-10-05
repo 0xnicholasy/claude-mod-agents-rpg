@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { CAT_DARK, CAT_FUR, catArt, spawnCat, stepCat } from './cat'
 import type { Cat } from './cat'
-import { buildOffice, canStand, roomAt } from './map'
+import { buildOffice, canStand, CAT_FOOT, MID_FOOT, roomAt, tileAt } from './map'
 import { CAT_REST_MAX_MS, CAT_REST_MIN_MS, TICK_MS } from './timing'
 
 const map = buildOffice(80, 11, [{ id: 'team:t1', label: 'proj' }, { id: 'team:t2', label: 'two' }])
@@ -82,4 +82,26 @@ test('the cat draws as a 3x2 sprite that faces and walks', () => {
   const stride = (frame: number): Cat => ({ ...sit, frame, path: [{ x: 1, y: 0 }] })
   expect(catArt(stride(0), floor)).not.toEqual(catArt(stride(1), floor))
   expect(catArt(stride(0), floor)).not.toEqual(art)
+})
+
+test('on a mid map the cat stands beside the feet, never on a wall, and walks one tile at a time', () => {
+  const mid = buildOffice(100, 23, [{ id: 'team:t1', label: 'proj' }, { id: 'team:t2', label: 'two' }], MID_FOOT)
+  const catMap = { ...mid, foot: CAT_FOOT }
+  const anchors = mid.rooms.filter(room => room.kind !== 'team').flatMap(room => [room.doorStand, ...room.anchors])
+  for (let seed = 1; seed <= 12; seed++) {
+    const first = spawnCat(mid, seed, 0)
+    expect(first).toBeDefined()
+    // A spawn is a person spot + (1, 3).
+    expect(anchors.some(p => p.x + 1 === first?.x && p.y + MID_FOOT.h - 2 === first?.y)).toBe(true)
+    let cat: Cat = first ?? ({} as Cat)
+    for (let i = 1; i <= 400; i++) {
+      const next = stepCat(cat, mid, i * TICK_MS)
+      expect(Math.abs(next.x - cat.x) + Math.abs(next.y - cat.y)).toBeLessThanOrEqual(1)
+      for (let dy = 0; dy < CAT_FOOT.h; dy++) {
+        for (let dx = 0; dx < CAT_FOOT.w; dx++) expect(['floor', 'door']).toContain(tileAt(mid, next.x + dx, next.y + dy))
+      }
+      expect(canStand(catMap, next.x, next.y)).toBe(true)
+      cat = next
+    }
+  }
 })

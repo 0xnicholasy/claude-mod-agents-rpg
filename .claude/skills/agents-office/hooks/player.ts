@@ -29,15 +29,19 @@ const DELTA: Readonly<Record<Dir, Point>> = { w: { x: 0, y: -1 }, a: { x: -1, y:
 // The two bottom-left columns of the last two map rows: the pad's Input draws its `…` and `⏎` there.
 export const padRect = (map: OfficeMap): Rect => ({ x: 0, y: map.rows - 2, w: 2, h: 2 })
 
+// The same two cells under the pad's Input when the pane shows only part of the map: the Input sits at the
+// bottom-left of the view (D63). For a view that is the whole map this equals `padRect`.
+export const padRectAt = (view: { x: number; y: number; height: number }): Rect => ({ x: view.x, y: view.y + view.height - 2, w: 2, h: 2 })
+
 const overlaps = (map: OfficeMap, at: Point, rect: Rect): boolean =>
   at.x < rect.x + rect.w && at.x + map.foot.w > rect.x && at.y < rect.y + rect.h && at.y + map.foot.h > rect.y
 
 // First free spot, nearest the own team room's door (D14): the doorStand, then the room's anchors, then
-// every other room's doorStand. A footprint over the pad's cells is skipped.
-export const spawnPlayer = (map: OfficeMap, ownId: string): Player | undefined => {
+// every other room's doorStand. A footprint over the pad's cells is skipped; `pad` defaults to the map's last two
+// rows and is the view's bottom-left when the pane crops the map.
+export const spawnPlayer = (map: OfficeMap, ownId: string, pad: Rect = padRect(map)): Player | undefined => {
   const own = map.rooms.find(room => room.id === ownId) ?? map.rooms.find(room => room.id === 'reception')
   const others = map.rooms.filter(room => room !== own).map(room => room.doorStand)
-  const pad = padRect(map)
   const spot = [...(own === undefined ? [] : [own.doorStand, ...own.anchors]), ...others].find(
     p => canStand(map, p.x, p.y) && !overlaps(map, p, pad),
   )
@@ -68,16 +72,13 @@ export const jumpOrder = (map: OfficeMap): Room[] => [
 ]
 
 // First free spot of a room: its first anchor the player can stand on outside the pad's cells, else its doorStand.
-const firstSpot = (map: OfficeMap, room: Room): Point => {
-  const pad = padRect(map)
-
-  return [...room.anchors, room.doorStand].find(p => canStand(map, p.x, p.y) && !overlaps(map, p, pad)) ?? room.doorStand
-}
+const firstSpot = (map: OfficeMap, room: Room, pad: Rect): Point =>
+  [...room.anchors, room.doorStand].find(p => canStand(map, p.x, p.y) && !overlaps(map, p, pad)) ?? room.doorStand
 
 // `]` and `[` (D38): sets the path to the first free spot of the next or previous room in canonical order,
 // wrapping at the ends. The current room is the one holding the player, else the one with the nearest door.
 // Returns the same player when there is nothing to walk to.
-export const startJump = (player: Player, map: OfficeMap, dir: 'next' | 'prev'): Player => {
+export const startJump = (player: Player, map: OfficeMap, dir: 'next' | 'prev', pad: Rect = padRect(map)): Player => {
   const rooms = jumpOrder(map)
   if (rooms.length === 0) return player
   const here = roomAt(map, player.x, player.y)
@@ -85,7 +86,7 @@ export const startJump = (player: Player, map: OfficeMap, dir: 'next' | 'prev'):
   const from = found >= 0 ? found : nearestDoor(rooms, player)
   const target = rooms[(from + (dir === 'next' ? 1 : rooms.length - 1)) % rooms.length]
   if (target === undefined) return player
-  const path = findPath(map, player, firstSpot(map, target))
+  const path = findPath(map, player, firstSpot(map, target, pad))
 
   return { ...player, path }
 }
@@ -102,8 +103,9 @@ export const stepPlayer = (
   intent: Intent | undefined,
   now: number,
   ownId: string,
+  pad: Rect = padRect(map),
 ): StepResult => {
-  const seated = canStand(map, player.x, player.y) ? player : (spawnPlayer(map, ownId) ?? player)
+  const seated = canStand(map, player.x, player.y) ? player : (spawnPlayer(map, ownId, pad) ?? player)
   const pending = intent !== undefined && intent.taps > 0
   if (pending && now - intent.at > INTENT_MS) return stepPath(seated, map, { ...intent, taps: 0 }, now)
   if (!pending) return stepPath(seated, map, intent, now)

@@ -7,13 +7,13 @@ import { advanceScripts, expireBubbles, startMeet, startReport } from './choreo'
 import type { ChoreoState } from './choreo'
 import { spawnCat, stepCat } from './cat'
 import type { Cat } from './cat'
-import { cropFrame, focusOf, overlaySpan } from './camera'
+import { cropFrame, focusOf, overlaySpan, viewFor } from './camera'
 import { buildFrame, hourOf, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { arrived, clean, interrupted, interruptFailed, nudged, nudgeFailed, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
-import { MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
-import type { OfficeMap, RoomId, TeamSpec } from './map'
+import { MIN_COLUMNS, MIN_ROWS, roomAt, SMALL_FOOT } from './map'
+import type { Footprint, OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest, peekLines } from './inspect'
 import { chatLine, CONFIRM_OPTIONS, INITIAL_PAD, isYes, NUDGE_TEXT, onPadInput, onPadSubmit } from './pad'
@@ -41,7 +41,7 @@ import {
 } from './presence'
 import type { Parsed, Remote, ShareMode } from './presence'
 import type { PadState } from './pad'
-import { settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
+import { padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
 import { baseName, branchOf, teamLabel } from './team'
@@ -184,6 +184,13 @@ const mapAt = async ($: EngineInterface, columns: number, rows: number): Promise
   const { teams } = await teamsOf($)
 
   return mapFor(columns, rows, teams)
+}
+
+// The footprint of the map the pane draws, for the hook calls that have no map of their own (small before a map exists).
+const footOf = async ($: EngineInterface): Promise<Footprint> => {
+  const size = await read($, viewport)
+
+  return (await mapAt($, size.columns, size.rows))?.foot ?? SMALL_FOOT
 }
 
 // Writes the own team from the session id and cwd (D12). Without `force` an existing team is kept, so
@@ -476,18 +483,20 @@ const seat = async (
 
 // Spawns the player once the own team exists, then steps it one tile for the pending tap (D13). The tick
 // writes the `player` and `pad` atoms; render never does. Returns the player to draw.
-const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number): Promise<Player | null> => {
+const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number, pane: { columns: number; rows: number }): Promise<Player | null> => {
   const own = await read($, team)
   const current = await read($, player)
   if (own === null) return current
   const padNow = await read($, pad)
   const intent = padNow.intent
+  // The pad's Input sits at the bottom-left of the view, so its cells are the view's, not the map's (D63).
+  const padCells = padRectAt(viewFor(map.columns, map.rows, pane.columns, pane.rows, focusOf(map, current, own.id)))
   // A pending room jump sets the path first, so its first tile is walked this tick.
-  const jumping = padNow.jump !== undefined && current !== null ? startJump(current, map, padNow.jump.dir) : current
+  const jumping = padNow.jump !== undefined && current !== null ? startJump(current, map, padNow.jump.dir, padCells) : current
   const out =
     jumping === null
-      ? { player: spawnPlayer(map, own.id), intent }
-      : stepPlayer(jumping, map, intent, now, own.id)
+      ? { player: spawnPlayer(map, own.id, padCells), intent }
+      : stepPlayer(jumping, map, intent, now, own.id, padCells)
   const next = out.player === undefined ? undefined : settleChat(settleEmote(out.player, padNow.emote, now), padNow.chat, now)
   if (next !== undefined && next !== current) await update($, player, () => next)
   if (padNow.emote !== undefined && next !== undefined) {
@@ -532,7 +541,7 @@ const inspectTick = async ($: EngineInterface, map: OfficeMap, now: number, at: 
     // A press that waited (no player or map yet) is stale, not a phantom inspect later.
     if (now - pending.at > INSPECT_PRESS_MS) return undefined
     const roster = await read($, agents)
-    const target = nearest(roster, await read($, motion), at)
+    const target = nearest(roster, await read($, motion), at, undefined, map.foot)
     let text = 'Nobody within 2 tiles.'
     if (target !== undefined) {
       let lastText: string | undefined
@@ -573,12 +582,12 @@ const catTick = async ($: EngineInterface, map: OfficeMap, now: number): Promise
 // `E` (D25), called from the ui.input hook: finds the nearest agent within 2 tiles among this session's own roster (a remote agent is never in
 // it), writes the `peek` atom and opens `office-peek` without focus, so the pad keeps the keys. A messages deny or
 // throw, or no text, shows `Nothing to show for <label>.`. Nobody in range shows the inspect line instead.
-const peekTick = async ($: EngineInterface, now: number, at: Player | null | undefined): Promise<void> => {
+const peekTick = async ($: EngineInterface, now: number, at: Player | null | undefined, foot: Footprint): Promise<void> => {
   const pending = (await read($, pad)).peek
   if (pending === undefined || at === null || at === undefined) return
   await update($, pad, cur => (cur.peek?.at === pending.at ? { ...cur, peek: undefined } : cur))
   if (now - pending.at > INSPECT_PRESS_MS) return
-  const target = nearest(await read($, agents), await read($, motion), at)
+  const target = nearest(await read($, agents), await read($, motion), at, undefined, foot)
   if (target === undefined) {
     await update($, inspect, () => ({ agentId: '', text: 'Nobody within 2 tiles.', until: now + INSPECT_MS }))
     return
@@ -635,7 +644,7 @@ const confirmThen = async (
 // `m` and `x` (D25), called from the ui.input hook like the peek. `m` nudges the nearest own non-main agent within 2
 // tiles (a remote agent is never in the roster), `x` interrupts main; each only after a confirm dialog answers Yes.
 // The dialog is not awaited by the hook, so the pad keeps working while it is open.
-const confirmTick = async ($: EngineInterface, now: number, at: Player | null | undefined): Promise<void> => {
+const confirmTick = async ($: EngineInterface, now: number, at: Player | null | undefined, foot: Footprint): Promise<void> => {
   const { nudge, interrupt } = await read($, pad)
   if (nudge === undefined && interrupt === undefined) return
   // Clear only the presses read here, so one that landed meanwhile is kept.
@@ -670,7 +679,7 @@ const confirmTick = async ($: EngineInterface, now: number, at: Player | null | 
   const roster = Object.fromEntries(
     Object.entries(await read($, agents)).filter(([id, agent]) => id !== 'main' && (agent.status === 'working' || agent.status === 'idle')),
   )
-  const target = nearest(roster, await read($, motion), at)
+  const target = nearest(roster, await read($, motion), at, undefined, foot)
   if (target === undefined) return
   const label = clean(target.label)
   void confirmThen(
@@ -733,7 +742,7 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const after = await guard($, 'choreo', before, async () =>
     commitChoreo($, before, state => advanceScripts(state, now)),
   )
-  const walker = await guard($, 'player', await read($, player), async () => stepPlayerTick($, map, now))
+  const walker = await guard($, 'player', await read($, player), async () => stepPlayerTick($, map, now, size))
   const kitty = await guard($, 'cat', await read($, cat), async () => catTick($, map, now))
   const inspected = await guard($, 'inspect', undefined, async () => inspectTick($, map, now, walker))
   // The message being typed takes the inspect line (D47).
@@ -1003,10 +1012,10 @@ export const register: Register = on => {
       else await update($, pad, cur => onPadInput(cur, e.value, now))
       // The peek pane opens here, not in the tick: an open the plugin makes on its own waits undrawn below 144
       // columns, while one answering a key press is placed at any width (d.ts PaneOpenArgs).
-      if ((await read($, pad)).peek !== undefined) await peekTick($, now, await read($, player))
+      if ((await read($, pad)).peek !== undefined) await peekTick($, now, await read($, player), await footOf($))
     })
     await guard($, 'ui.input confirm', undefined, async () => {
-      await confirmTick($, await $.clock.now(), await read($, player))
+      await confirmTick($, await $.clock.now(), await read($, player), await footOf($))
     })
 
     return next(e)
