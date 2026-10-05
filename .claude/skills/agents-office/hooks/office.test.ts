@@ -1323,6 +1323,46 @@ test('presence writes on change and every 3 s', async ($, on) => {
   expect(JSON.parse(writes[1]?.text ?? '{}').heartbeatAt).toBe(4000)
 })
 
+test('the presence timer reads only changed foreign files into the remote atom, and share off clears it', async ($, on) => {
+  const dir = '/home/u/.claude/agents-office/presence'
+  const remoteRecord = JSON.stringify({
+    v: 1,
+    sessionId: 's2',
+    startedAt: 1,
+    heartbeatAt: 900,
+    share: 'all',
+    team: { label: 'other (main)', branch: 'main' },
+    agents: [{ id: 'main', label: 'main', tier: 'opus', role: 'lead', room: 'team:s2', pose: 'type', status: 'working' }],
+    player: null,
+  })
+  const reads: string[] = []
+  on('fs.list', () => ({
+    value: [
+      { name: 't1.json', kind: 'file', size: 1, mtimeMs: 900, isLink: false },
+      { name: 's2.json', kind: 'file', size: 1, mtimeMs: 900, isLink: false },
+    ],
+  }))
+  on('fs.read', (_$, e) => {
+    reads.push(e.path)
+    return { value: remoteRecord }
+  })
+  const remotes: unknown[] = []
+  on('state.set', ($$, e, next) => {
+    if (e.key === 'remote') remotes.push(e.value)
+    return next(e)
+  })
+  const { clock } = await startPresence($, on)
+  await clock.advance(1000)
+  await clock.advance(2000)
+
+  expect(reads).toEqual([`${dir}/s2.json`])
+  expect(remotes).toHaveLength(1)
+  expect(Object.keys(remotes[0] as Record<string, unknown>)).toEqual(['s2'])
+  await $.command.run(runOffice('share off'))
+  await clock.advance(1000)
+  expect(remotes[remotes.length - 1]).toEqual({})
+})
+
 test('a tool call with a path and a SendMessage never reach the presence file', async ($, on) => {
   const { clock, writes } = await startPresence($, on)
   await $.agent.spawn({ ...spawnArgs, prompt: 'hunter2 prompt', description: '/Users/x/secret.ts task' })

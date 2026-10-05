@@ -18,7 +18,10 @@ import {
   asShare,
   DEFAULT_SHARE,
   envValue,
+  mergeRemote,
   parseOfficeArgs,
+  parseRecord,
+  planReads,
   presenceDir,
   presencePath,
   PRESENCE_DIR_SUFFIX,
@@ -28,7 +31,7 @@ import {
   toTombstone,
   writeDue,
 } from './presence'
-import type { ShareMode } from './presence'
+import type { Parsed, Remote, ShareMode } from './presence'
 import type { PadState } from './pad'
 import { settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
@@ -76,8 +79,12 @@ const share = atom({ plugin: 'agents-office', key: 'share' } as const, DEFAULT_S
 
 // The publisher's bookkeeping (D18): the record text last written (without its heartbeat), when, and whether
 // the tombstone is out. No file paths or other text live here.
-type PresenceState = { lastText?: string; lastWriteAt: number; ended: boolean }
+// `mtimes` is the reader's: the mtime of each foreign file when it was last read (T15).
+type PresenceState = { lastText?: string; lastWriteAt: number; ended: boolean; mtimes?: Record<string, number> }
 const presence = atom({ plugin: 'agents-office', key: 'presence' } as const, { lastWriteAt: 0, ended: false } as PresenceState)
+
+// Other sessions' records keyed by sessionId (D20). Nothing draws them until T16.
+const remote = atom({ plugin: 'agents-office', key: 'remote' } as const, {} as Remote)
 
 // Log de-dup cache for guard failures, not drawn state (D49): a hook that fails the same
 // way every tick logs once per distinct name + message.
@@ -201,17 +208,17 @@ const writeTombstone = async ($: EngineInterface): Promise<void> => {
   if ((await read($, presence)).ended) return
   const now = await $.clock.now()
   await $.fs.write(path, JSON.stringify(toTombstone(id.sessionId, now)))
-  await update($, presence, () => ({ lastWriteAt: now, ended: true }))
+  await update($, presence, cur => ({ ...cur, lastWriteAt: now, ended: true }))
 }
 
-// The 1 s presence step (D18): writes the record when it changed or 3000 ms after the last write; `off`
-// writes one tombstone and then nothing. Nothing is written before the dir resolves.
-const presenceTick = async ($: EngineInterface): Promise<void> => {
+// The publishing half of the 1 s presence step (D18): writes the record when it changed or 3000 ms after
+// the last write. Nothing is written before the dir resolves.
+const publishTick = async ($: EngineInterface): Promise<void> => {
   const id = await read($, identity)
   const path = id?.dir === undefined ? undefined : presencePath(id.dir, id.sessionId)
   if (id === null || path === undefined) return
   const mode = await read($, share)
-  if (mode === 'off') return writeTombstone($)
+  if (mode === 'off') return
   const own = await read($, team)
   if (own === null) return
   const now = await $.clock.now()
@@ -229,7 +236,57 @@ const presenceTick = async ($: EngineInterface): Promise<void> => {
   // A tick that was running when session.end cancelled the timer must not write after the tombstone.
   if (presenceTimer === undefined) return
   await $.fs.write(path, JSON.stringify(record))
-  await update($, presence, () => ({ lastText: text, lastWriteAt: now, ended: false }))
+  await update($, presence, cur => ({ ...cur, lastText: text, lastWriteAt: now, ended: false }))
+}
+
+// The reading half (T15): lists the dir, reads only the files whose mtime changed and folds them into the
+// `remote` atom. A file that cannot be read or parsed keeps the last good snapshot. With share `off` nothing is
+// read and the snapshot is cleared.
+const readTick = async ($: EngineInterface): Promise<void> => {
+  const id = await read($, identity)
+  if (id?.dir === undefined) return
+  const state = await read($, presence)
+  const known = state.mtimes ?? {}
+  if ((await read($, share)) === 'off') {
+    if (Object.keys(known).length > 0) await update($, presence, cur => ({ ...cur, mtimes: {} }))
+    if (Object.keys(await read($, remote)).length > 0) await update($, remote, () => ({}))
+    return
+  }
+  const now = await $.clock.now()
+  const plan = planReads(await $.fs.list(id.dir), id.sessionId, known, now)
+  const parsed: Record<string, Parsed | null> = {}
+  const mtimes: Record<string, number> = {}
+  for (const file of plan.listed) {
+    const old = known[file]
+    if (old !== undefined) mtimes[file] = old
+  }
+  for (const file of plan.toRead) {
+    try {
+      parsed[file.sessionId] = parseRecord(await $.fs.read(`${id.dir}/${file.name}`)) ?? null
+    } catch {
+      // A file that vanished or is unreadable keeps the snapshot and is retried on the next tick.
+      continue
+    }
+    mtimes[file.sessionId] = file.mtimeMs
+  }
+  // Sharing may have been turned off while the files were read.
+  if ((await read($, share)) === 'off') return
+  const prev = await read($, remote)
+  const next = mergeRemote(prev, parsed, now, plan.listed)
+  if (next !== prev) await update($, remote, () => next)
+  if (JSON.stringify(mtimes) !== JSON.stringify(known)) await update($, presence, cur => ({ ...cur, mtimes }))
+}
+
+// The 1 s presence step: `off` writes one tombstone and reads nothing; otherwise publish, then read. Each half
+// has its own guard so a failing write cannot stop the reader.
+const presenceTick = async ($: EngineInterface): Promise<void> => {
+  if ((await read($, share)) === 'off') {
+    await guard($, 'presence tombstone', undefined, async () => writeTombstone($))
+    await guard($, 'presence read', undefined, async () => readTick($))
+    return
+  }
+  await guard($, 'presence write', undefined, async () => publishTick($))
+  await guard($, 'presence read', undefined, async () => readTick($))
 }
 
 // Removes presence files untouched for a day (D18). Only inside a dir named `.../agents-office/presence`,
@@ -552,6 +609,8 @@ type Timer = ReturnType<EngineInterface['clock']['every']>
 let loopTimer: Timer | undefined
 let refreshTimer: Timer | undefined
 let presenceTimer: Timer | undefined
+// True while a presence tick runs, so a slow read cannot overlap the next tick and overwrite newer state.
+let presenceBusy = false
 
 const startLoop = ($: EngineInterface): void => {
   loopTimer?.cancel()
@@ -575,7 +634,13 @@ const startRefresh = ($: EngineInterface): void => {
 const startPresence = ($: EngineInterface): void => {
   presenceTimer?.cancel()
   presenceTimer = $.clock.every(PRESENCE_MS, () => {
-    presenceTick($).catch(error => logOnce($, 'presence', String(error)))
+    if (presenceBusy) return
+    presenceBusy = true
+    presenceTick($)
+      .catch(error => logOnce($, 'presence', String(error)))
+      .finally(() => {
+        presenceBusy = false
+      })
   })
 }
 

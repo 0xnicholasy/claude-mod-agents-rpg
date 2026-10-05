@@ -18,3 +18,5 @@ export const EMOTE_MS = 3000
 export const INSPECT_MS = 6000
 export const PRESENCE_MS = 1000
 export const HEARTBEAT_MS = 3000
+// A presence file or heartbeat older than this drops its session (D18).
+export const STALE_MS = 10000
