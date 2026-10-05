@@ -6,6 +6,7 @@ import { buildOffice } from './map'
 import { DEFAULT_COLOR } from './raster'
 import type { Cell } from './raster'
 import { enterAtDoor } from './motion'
+import type { Player } from './player'
 import { countPairs, PAIR_BUDGET } from './pixels'
 import { FACINGS, figure, nameplate, POSES, ROLE_COLORS, SPRITE_PALETTE } from './sprites'
 import type { Facing, Pose, Role } from './sprites'
@@ -360,4 +361,17 @@ test('the player draws over agents in a white shirt with the plate you', () => {
   // No player, nothing extra: the same frame without it has no plate.
   const without = buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0 })
   expect((without[3] ?? []).map(c => String.fromCodePoint(c.ch)).join('')).not.toContain('you')
+})
+
+test('an emote shows above the player for 3 s', () => {
+  const base = { x: 10, y: 5, facing: 'down' as const, frame: 0, path: [] }
+  const player = { ...base, emote: '\u25c6', until: 3000 }
+  const glyphAt = (now: number, p: Player = player): number | undefined =>
+    buildFrame({ map, agents: {}, motion: {}, bubbles: [], now, player: p })[3]?.[11]?.ch
+
+  // The bubble row is two rows above the figure (the plate sits between), centred on it.
+  expect(glyphAt(0)).toBe(0x25c6)
+  expect(glyphAt(2999)).toBe(0x25c6)
+  expect(glyphAt(3000)).not.toBe(0x25c6)
+  expect(glyphAt(0, base)).not.toBe(0x25c6)
 })

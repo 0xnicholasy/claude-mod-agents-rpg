@@ -14,7 +14,7 @@ import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { INITIAL_PAD, onPadInput } from './pad'
 import type { PadState } from './pad'
-import { spawnPlayer, stepPlayer } from './player'
+import { settleEmote, spawnPlayer, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
 import { baseName, branchOf, teamLabel } from './team'
@@ -279,14 +279,18 @@ const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number): 
   const own = await read($, team)
   const current = await read($, player)
   if (own === null) return current
-  const intent = (await read($, pad)).intent
+  const padNow = await read($, pad)
+  const intent = padNow.intent
   const out =
     current === null
       ? { player: spawnPlayer(map, own.id), intent }
       : stepPlayer(current, map, intent, now, own.id)
-  if (out.player !== undefined && out.player !== current) {
-    const next = out.player
-    await update($, player, () => next)
+  const next = out.player === undefined ? undefined : settleEmote(out.player, padNow.emote, now)
+  if (next !== undefined && next !== current) await update($, player, () => next)
+  if (padNow.emote !== undefined && next !== undefined) {
+    // Only the emote that was applied is cleared; a newer press stays for the next tick.
+    const applied = padNow.emote
+    await update($, pad, cur => (cur.emote?.at === applied.at && cur.emote.glyph === applied.glyph ? { ...cur, emote: undefined } : cur))
   }
   if (out.intent !== undefined && intent !== undefined && out.intent !== intent) {
     // Only the taps this step consumed are removed, so a press that landed since the read is kept.
@@ -298,7 +302,7 @@ const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number): 
     )
   }
 
-  return out.player ?? current
+  return next ?? current
 }
 
 const tick = async ($: EngineInterface): Promise<void> => {

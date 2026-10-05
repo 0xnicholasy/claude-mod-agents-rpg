@@ -1,9 +1,9 @@
 // The player avatar (D13, D14). Pure: register.tsx reads the `player` and `pad` atoms and passes plain data in.
 import { canStand, FOOTPRINT_H, FOOTPRINT_W } from './map'
 import type { OfficeMap, Point, Rect } from './map'
-import type { Dir, Intent } from './pad'
+import type { Dir, Intent, PendingEmote } from './pad'
 import type { Facing } from './sprites'
-import { INTENT_MS } from './timing'
+import { EMOTE_MS, INTENT_MS } from './timing'
 
 export type Player = {
   x: number
@@ -66,4 +66,15 @@ export const stepPlayer = (
   if (!canStand(map, nx, ny)) return { player: { ...seated, facing }, intent: used }
 
   return { player: { ...seated, x: nx, y: ny, facing, frame: (seated.frame + 1) % 4, movedAt: now }, intent: used }
+}
+
+// Puts a pending emote on the player for EMOTE_MS from the press (D15) and clears one that has run out. The
+// shared `until` is cleared with it unless a chat line (T20) still uses it. Returns the same object when
+// nothing changes.
+export const settleEmote = (player: Player, pending: PendingEmote | undefined, now: number): Player => {
+  if (pending !== undefined) return { ...player, emote: pending.glyph, until: pending.at + EMOTE_MS }
+  if (player.emote === undefined || player.until === undefined || player.until > now) return player
+  const { emote: _emote, until: _until, ...rest } = player
+
+  return player.chat === undefined ? rest : { ...rest, until: player.until }
 }
