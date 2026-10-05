@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 24/26 done
+Progress: 24/35 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -18,12 +18,12 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - Render cannot write state; it writes through a `$.clock.after(0)` closure (v1 D20). The `ui.input` hook is not a render, so it may write.
 - `hooks.json` allows one module. There is one `on('session.start')`; new start-up work goes inside it, each piece in its own `guard`.
 - Raster limits: at most 1024 color pairs, width-1 BMP glyphs only, no sextants (U+1FB00). Each frame stays under 256 pairs, enforced by a test.
-- Keep the 3x2 footprint, the v1 D27 map contract, the 11-row compact map (v1 D51) and BFS.
+- Keep the 3x2 footprint, the v1 D27 map contract, the 11-row compact map (v1 D51) and BFS. (Amended by D53: the 3x2 footprint is the fallback below 72 columns; the mid 5x5 footprint is the default above it.)
 - At 80x24 the inline body is 11 rows, so the strip has 0 rows. Every text feature needs a no-strip path.
 - Privacy: presence never carries prompts, tool arguments, tool names, file paths, SendMessage text or transcripts.
 - Presence: each session writes only `<dir>/<sessionId>.json`, using absolute paths. `$.fs.write` creates directories. There is no fs delete; old files are removed only by the start-up `find -delete`.
 - Gate: `rtk proxy npm run check` (validate + typecheck + `claude plugin test`). Validate and test run locally only; CI runs typecheck. If plugin test reports "hooks modules are turned off", apply the v1 D18 fix.
-- `<worktree>` is the feat/agents-office-v2 worktree. LIVE means: `tmux new-session -d -s ao -x 80 -y 24 -c <worktree> claude; sleep 6; tmux send-keys -t ao '/office' Enter; sleep 4; tmux capture-pane -p -e -t ao`, then the todo's extra keys, then `tmux kill-session -t ao`. LIVE2 adds a second session, `ao2`, the same way.
+- `<worktree>` is the feat/agents-office-v2 worktree. LIVE means: `tmux new-session -d -s ao -x 80 -y 24 -c <worktree> claude; sleep 6; tmux send-keys -t ao '/office' Enter; sleep 4; tmux capture-pane -p -e -t ao`, then the todo's extra keys, then `tmux kill-session -t ao`. LIVE2 adds a second session, `ao2`, the same way. LIVE120 = LIVE with `-x 120 -y 40`. LIVE74 = LIVE with `-x 74 -y 24`.
 - FAKES (multi-team checks without extra sessions): a shell loop rewrites N fake presence records with a fresh `heartbeatAt` every 2 s. Delete the fake files afterwards.
 - Every merge leaves the branch green and `/office` usable. `register.tsx` and `office.test.ts` are hot spots, so the todos that touch them form one chain.
 - Implementation goes to a `sonnet` agent. The doc to update is README.md (T25 only).
@@ -114,6 +114,16 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - D50 T22 details. Shift+E (`E`) sets `pad.peek { at }`. The peek runs in the `ui.input` hook, not the tick: an open the plugin makes on its own waits undrawn below 144 columns, while one answering a key press is placed at any width (d.ts PaneOpenArgs; a tick-time `$.ui.open` drew nothing at 80x24 in LIVE). `peekTick` (register.tsx) finds the nearest agent within 2 tiles in the own roster only, so a remote agent is never peeked and a peek never carries another session's text; it writes the `peek` atom `{ agentId, label, lines }` and opens `office-peek` (`rows: 12`, no focus, so the pad keeps the keys). Nobody in range sets the inspect line `Nobody within 2 tiles.` and opens nothing. `peekLines` (inspect.ts) keeps the last 10 rows that carry text, oldest first, one cleaned line each cut to 120 characters; user rows are marked `> ` (D25 says text messages, so prompts of the own agent are shown here, unlike inspect's D16 tail). A messages deny, throw or no text shows `Nothing to show for <label>.`. A `ui.render` hook for `office-peek` draws the lines as truncating Text and writes nothing. The pane is a second tab beside Office; the Office tab stays shown and the pad keeps focus. LIVE (fresh session, no messages) opened `Peek: main` and the second tab read `Nothing to show for main.`; the 10-line content is covered by tests, because LIVE may not type a prompt. (T22, 2026-10-05) | confirms D25
 - D51 T23 details. `m` and `x` (lower case; `M` and `X` do nothing) set `pad.nudge` / `pad.interrupt`; like the peek, `confirmTick` runs in the `ui.input` hook, not the tick. It does not await the dialog, so the pad keeps working while it is open; the `asking` atom lets one dialog exist at a time, and both keys in one burst ask nothing. `m` needs an own non-main agent within 2 tiles (the own roster only, so a remote agent is never targeted); near main or nobody it does nothing and draws nothing. Both ask with `['No', 'Yes']` (`CONFIRM_OPTIONS`, No first) and only the exact label `Yes` acts (`isYes`): No, Escape (the ask rejects), a typed `Other` text such as `yes` and a throw all do nothing. Yes sends `$.session.send({ to: { agentId }, text: NUDGE_TEXT })` once (fixed text, nothing from a prompt) and logs `You nudged <label>`; a send that answers `isDelivered: false` or throws logs `Nudge to <label> failed`. `x` reads the main turn id from the new `turn` atom (`turn.start` writes it, `turn.complete` of main clears it) at the press, and a Yes aborts that id (a turn that ended meanwhile makes the abort fail and log `Interrupt failed`; a turn that began meanwhile is not touched). With no running turn at the press the dialog still opens (this lets LIVE show it with no model call) and a Yes logs `Interrupt skipped: no turn is running`. Review fixes: `m` skips main and done or leaving agents before the nearest search (a finished subagent would be resumed by a send, and a subagent beside main stays reachable); the dialog flag is claimed in one update and reset at session.start; `confirmTick` has its own guard and drops presses older than 1000 ms. Yes calls `$.turn.abort({ turnId })` and logs `You interrupted main`. Deviation from the done-when: LIVE could not run the `sleep 30` Bash turn or reach a subagent without sending a prompt to the model, which this run forbids; the abort and the nudge are covered by office tests ('a nudge needs a Yes', 'x aborts main only after Yes' and their No, dismiss and `yes` variants) and LIVE showed the `x` confirm dialog and its cancel. (T23, 2026-10-05) | confirms D25
 - D52 T24 details. The symlink loads: with `CLAUDE_CONFIG_DIR` pointed at a temp dir, `claude plugin list` run in `/tmp` and in the repo each shows one `agents-office@skills-dir` entry (Scope user, Status loaded, Path = the link), so the D26 copy fallback is not needed. The todo's `grep -c agents-office` prints 2 because the entry has a name line and a Path line that both match; `grep -c '❯ agents-office'` prints 1. `scripts/install-user.sh` links to the checkout it runs from (a worktree links its own copy), so the link target is that checkout's `.claude/skills/agents-office`. It honours `CLAUDE_CONFIG_DIR`, else `$HOME/.claude`; a re-run prints "nothing changed"; a real directory or a symlink to another target is refused (exit 1) unless `--force`, which replaces it. `uninstall-user.sh` removes the link only when `readlink` equals this checkout's mod folder and leaves a real directory or a foreign link alone (exit 1). Both are plain sh with no dependencies. Checked by a scratch script (not committed) against temp config dirs: fresh install, re-run, conflicting dir refused, foreign link refused, `--force` over both, uninstall, uninstall of a foreign link and of a directory, and the `HOME` fallback; the owner's real `~/.claude` was never touched. LIVE was not run: a session started with a temporary `CLAUDE_CONFIG_DIR` opens the first-run theme wizard (as in T14) and logging in was out of scope, so `/office` in a `/tmp` session is unconfirmed; the plugin list proves the load. (T24, 2026-10-05) | confirms D2, D26
+- D53 (owner, 2026-10-05). The owner rejected the 3x4-pixel (3x2-cell) figure and chose "Mid 5x5 cells". Owner's wording: "GPT style halved: eyes, hair, tie, legs, shoes kept." "Rooms grow to ~7 rows; 80x24 shows one room band and the camera scrolls." "Falls back to current 3x2 if the pane is tiny." This amends the Constraint "Keep the 3x2 footprint", D5 and v1 D27, and replaces the Backlog 5x3 item.
+- D54 (assumed, confirm by F03). Mid art: standing 5x10 px (5x5 cells), seated 8x10 px (8x5 cells; person in columns 0-4, monitor in columns 5-7 rows 3-6, desk top at px row 7, desk body at rows 8-9). Derived once from gpt-grids.json with the gpt-preview.mjs resample (dominant colour, eye wins), then re-lettered by hand into slots: H hair, S skin, T shirt, U shirt shade, K tie, P pants, F shoes, E eye, M mouth, D desk top, B desk body, N monitor frame, C screen, `.` floor. Shirt = tier and shade = a fixed darker tone per tier; pants = role and tie = pants colour; hair and skin come from hashKey; mouth = hair; eyes and shoes = 0x141414. Facings come from down/up/left/right. Side walks resample walk1-4 to 5 px and mirror for left. Down and up walks alternate the legs (frames 1 and 3 swap, 2 and 4 idle). Seated read is one frame; seated type toggles a hand pixel. The prop goes in the figure's top-right cell.
+- D55 (assumed, confirm by F02). OfficeMap.foot is the single source of the footprint; the cat has its own CAT_FOOT (3x2).
+- D56 (assumed, confirm by F04). Mid geometry: 7-row bands (sign/bubble row, plate row, 5 figure rows), a 5-row corridor, 5-wide doors, team desks 9 apart, shared anchors 6 apart, minimum interior widths 17 (team) and 13 (shared), map rows max(rows, 23) where 23 = 1+7+1+5+1+7+1, and map columns max(pane, teams x 18 + 1, 71).
+- D57 (assumed, confirm by F01, F08). Mid applies at 72 or more pane columns and 11 or more body rows. 60-71 columns keep the 3x2 layout and the v1 D51 bands. A footprint change reseats motion entries, the player path and the cat.
+- D58 (assumed, confirm by F05). The camera centres on the focus in both axes (the player's centre, else the own team room's centre). ▲ U+25B2 and ▼ U+25BC go at the middle column of the first and last view rows, falling back to `^`/`v`. ◀▶ and the inspect/chat overlay go on the first visible corridor row.
+- D59 (assumed, confirm by F08). In mid, the map comes first; strip rows appear only past 23 map rows.
+- D60 (assumed, confirm by F01, F06). 256 pairs per frame, counted after the crop. If over, shrink in this order: shade becomes one fixed darken; hair 5 to 3 tones; skin 4 to 3 tones.
+- D61 (assumed, confirm by F07). Inspect in mid uses the footprint-gap distance (2 or less). Plates are cut to 7 and centred on the person. The cat stands at person spot + (1, foot.h-2). The pad-cell skip uses the default view.
+- D62 (assumed, confirm by F09). The presence schema is unchanged; mixed-size panes clamp rx/ry, so positions are approximate.
 
 ## Todos
 
@@ -464,9 +474,90 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - done when: after `npm run install:user`, `claude plugin list` lists `agents-office` once when run in `/tmp` and once in the repo; `/office` opens in a session started in `/tmp`; uninstall removes only the link; the check stays green
 - verify: `rtk proxy npm run check`; `npm run install:user && (cd /tmp && claude plugin list | grep -c agents-office)` prints 1; the same in `<worktree>` prints 1; LIVE with `-c /tmp`; `npm run uninstall:user && test ! -L ~/.claude/skills/agents-office`
 
-### T25 Update the README for v2
+### F01 Spike: measure the mid figure, vertical crop and pair budget
 - status: todo
 - needs: T24
+- size: S
+- scope: Measurement only. Code goes on a scratch branch `spike/mid-figure` that is deleted afterwards; only TODO.md merges. (1) Record pane columns and body rows at 80x24, 120x40 and 74x24 from the `viewport` atom (debug log). Expected: 76x11, about 116x23, about 70x11. (2) Crop the current frame to 11 rows of a padded 23-row map at the two `cropFrame` call sites in `register.tsx`, and confirm the Raster and the blit keep the mounted size and the pad Input stays at the bottom left. (3) Compose 32 mid figures from the `gpt-preview.mjs` mid grids, recoloured per D54, and count pairs day and night, on the full frame and on an 11-row crop. (4) Check `isValidGlyph` for U+25B2 and U+25BC. (5) `grep -n` every `FOOTPRINT_W`/`FOOTPRINT_H` use. Add these lines to Constraints: LIVE120 = LIVE with `-x 120 -y 40`; LIVE74 = LIVE with `-x 74 -y 24`.
+- files: `docs/agents-office-v2/TODO.md` (D53-D62 amended with the numbers, Constraints)
+- done when: D57 states the measured pane sizes, D60 the pair counts, D58 the glyph result and D55 the footprint call sites; any number that breaks an assumption is flagged to the owner before F02
+- verify: `git branch --list 'spike/*'` prints nothing; `rtk proxy npm run check`; LIVE and LIVE120 captures of the scratch crop saved in the scratchpad
+
+### F02 Carry the footprint on the map
+- status: todo
+- needs: F01
+- size: M
+- scope: Add `type Footprint = { w: number; h: number }`, `SMALL_FOOT` (3x2), `MID_FOOT` (5x5) and `OfficeMap.foot`; `buildOffice` sets `SMALL_FOOT`. Every user listed in F01 (canStand, room making, frame, player, inspect, cat, presence, camera) reads `map.foot`; the cat gets its own `CAT_FOOT` (3x2). No behaviour change.
+- files: `hooks/map.ts`, `hooks/path.ts`, `hooks/frame.ts`, `hooks/player.ts`, `hooks/inspect.ts`, `hooks/cat.ts`, `hooks/presence.ts`, `hooks/camera.ts`, `hooks/register.tsx` (only if F01 lists it), their tests
+- done when: every existing test passes unchanged; `grep -n FOOTPRINT_ hooks/*.ts` matches nothing outside map.ts; a new test shows `canStand` on a map with `foot` 5x5 refuses a spot whose 25th cell is wall
+- verify: `rtk proxy npm run check`; map.test.ts 'canStand checks every cell of the map footprint'; LIVE and LIVE120 captures match the pre-change captures (3x2 figures, same rooms)
+
+### F03 Add the mid figure art and recolouring
+- status: todo
+- needs: F01
+- size: M
+- scope: New pure `midArt.ts` holds the D54 grids in semantic letters: 4 facings idle, 4 walk frames per facing, seated read, and seated type (2 frames). Add `midFigure({ pose, facing, frame, shirt, role, key, floor })` to `sprites.ts`. It maps slots to colours per D54 and returns 5x5 cells (standing) or 8x5 cells (seated) through `compose`, with props in the top-right cell. Extend `FIGURE_PALETTE`. Nothing draws it yet.
+- files: `hooks/midArt.ts` (new), `hooks/midArt.test.ts` (new), `hooks/sprites.ts`, `hooks/sprites.test.ts`
+- done when: tests show that every standing grid is 5x10 and every seated grid 8x10 using only slot letters; that down, left and right have an eye pixel and up has none; that down has the tie and a standing figure's bottom row is shoes; that walk frames 0-3 differ pairwise per facing; that shirt = tier, pants = tie = role, and hair/skin are stable per key; and that every colour is in `FIGURE_PALETTE`
+- verify: `rtk proxy npm run check`; midArt.test.ts 'grids use only slot letters' and 'the front view has eyes and a tie'; sprites.test.ts 'mid figures recolour by tier and role'; LIVE and LIVE120 unchanged-regression captures (nothing draws the art yet)
+
+### F04 Lay out the office at mid size
+- status: todo
+- needs: F02
+- size: M
+- scope: `buildOffice(columns, rows, teams, foot)`. With `MID_FOOT` it follows D56: bands of 7 interior rows, a 5-row corridor, doors 5 wide, team desks 9 apart with the lead first, shared anchors 6 apart, team minimum 17, shared minimum 13, rows max(rows, 23), columns max(pane, teams x 18 + 1, 71). The `SMALL_FOOT` path is unchanged. Not wired yet.
+- files: `hooks/map.ts`, `hooks/map.test.ts`
+- done when: tests at 76x11, 116x23 and 160x50 with 1, 2, 4 and 7 teams show that rooms never overlap; every anchor and doorStand passes `canStand` with 5x5; every room is reachable by `findPath` from the Reception doorStand; team desks are 9 apart; the map is 23 rows at 11 and at 23 body rows; and a 3x2 map at 60x11 is tile-identical to the previous output
+- verify: `rtk proxy npm run check`; map.test.ts 'mid rooms fit a 5x5 figure with a plate row', 'every mid room is reachable' and 'the small layout is unchanged'; LIVE and LIVE120 unchanged-regression captures
+
+### F05 Scroll the camera vertically
+- status: todo
+- needs: F02
+- size: M
+- scope: `camera.ts` works in 2D per D58. `viewFor` returns {x, y}, `focusOf` returns {x, y}, and `cropFrame` crops rows to the pane and draws ▲/▼ (or `^`/`v`). ◀/▶ and the overlay row move to the first visible corridor row, else the view's top row, and `buildFrame` takes `overlayRow`. A map that fits returns untouched, so the 3x2 layout looks the same. Update both `register.tsx` crop call sites.
+- files: `hooks/camera.ts`, `hooks/camera.test.ts`, `hooks/frame.ts`, `hooks/register.tsx` (tick blit, render), `hooks/office.test.ts`
+- done when: tests show that a 23-row map in an 11-row pane centred on a top-band room shows rows 0-10 with ▼ and no ▲; that a player in the bottom band moves the view down with ▲ shown; that ◀/▶ draw on a visible row; and that the office test blit is still the mounted size
+- verify: `rtk proxy npm run check`; camera.test.ts 'the view follows the player vertically' and 'edge marks stay inside the view'; LIVE and LIVE120 unchanged-regression captures (the 3x2 map always fits)
+
+### F06 Draw mid figures in the frame
+- status: todo
+- needs: F03, F04
+- size: M
+- scope: When `map.foot` is mid, `buildFrame` draws `midFigure` for agents, the player and remote players. Seated agents use the 8x5 seat at their desk. Plates are centred on the person and cut to 7. Bubbles are centred and follow D48. Re-run the D7/D60 pair test with a mid crowd, day and night, full and cropped.
+- files: `hooks/frame.ts`, `hooks/frame.test.ts`
+- done when: frame tests show that a mid map draws a 5x5 walking figure facing its next step; that a typing agent draws desk and monitor colours across 8 cells; that a top-desk bubble never covers the sign; and that 32 mid figures plus the cat stay under 256 pairs day and night
+- verify: `rtk proxy npm run check`; frame.test.ts 'a mid crowd stays under 256 pairs' and 'a seated mid figure carries its desk and monitor'; LIVE and LIVE120 unchanged-regression captures (not wired)
+
+### F07 Fit interactions to the mid footprint
+- status: todo
+- needs: F04
+- size: M
+- scope: Per D61. `nearest` uses the footprint-gap distance (2 or less) on mid maps and keeps D16 on small maps. The cat stands at person spot + (1, foot.h-2) with `CAT_FOOT`. `placeRemotePlayer` clamps a 3x2-sized `rx`/`ry` into a mid room and the reverse. The spawn and jump pad-cell skip uses the default-view pad cells.
+- files: `hooks/inspect.ts`, `hooks/cat.ts`, `hooks/presence.ts`, `hooks/player.ts`, their tests
+- done when: tests on a mid map show that an agent with a 2-cell gap is found and one with a 3-cell gap is not; that the cat never stands on a wall and walks tile by tile; that a remote player published from an 11-wide room lands on a standable tile of a 17-wide mid room, and the reverse; and that `]` arrives at a bottom-band anchor
+- verify: `rtk proxy npm run check`; inspect.test.ts 'mid inspect measures the gap between figures'; presence.test.ts 'a remote player moves between figure sizes'; LIVE and LIVE120 unchanged-regression captures
+
+### F08 Switch to mid figures at 72 columns and above
+- status: todo
+- needs: F05, F06, F07
+- size: M
+- scope: `loop.ts` adds `footFor(columns, rows)` per D57, and `mapFor` passes it. The strip follows D59 in mid. The render writes `viewport.foot`. When it differs from the last frame, the tick reseats every motion entry, clears the player path and respawns the cat. After a hot reload, a missing `foot` counts as small. Rewrite the office tests that assume the 3x2 layout at large sizes.
+- files: `hooks/loop.ts`, `hooks/loop.test.ts`, `hooks/register.tsx` (tick, render), `types/index.d.ts` (`viewport.foot`), `hooks/office.test.ts`
+- done when: tests show that `footFor(76, 11)` is mid and `footFor(70, 11)` is small; that a resize from 70 to 76 columns reseats every agent onto a standable tile within one tick; and that inline 23 rows gives 0 strip rows and a 23-row map
+- verify: `rtk proxy npm run check`; loop.test.ts 'mid starts at 72 columns'; office.test.ts 'a footprint change reseats the office'. LIVE: the capture shows a 5-row figure with eyes and a tie in the own team room, the top band whole, and ▼ at the bottom; after five `]` presses to reach a bottom room, ▲ shows. LIVE120: the whole office with no ▲▼. LIVE74: the 3x2 layout.
+
+### F09 Check mixed figure sizes across sessions
+- status: todo
+- needs: F08
+- size: S
+- scope: No schema change (D62). Run `ao` at 80x24 (mid) and `ao2` at 74x24 (3x2). Fix only clamp or placement bugs found; anything else goes to the Backlog.
+- files: `hooks/presence.ts`, `hooks/presence.test.ts` (only if a fix is needed)
+- done when: LIVE2 shows that `dddd` in `ao2` moves its white figure in `ao` within 2 s onto a standable tile, and that `ao` shows `ao2`'s team room; the reverse direction holds
+- verify: `rtk proxy npm run check`; LIVE2 (`ao` at 80x24, `ao2` at 74x24) and LIVE120 for `ao`, with both captures saved
+
+### T25 Update the README for v2
+- status: todo
+- needs: F09
 - size: M
 - scope: Rebase on `feat/agents-office` first; if PR #20 is still open, flag the overlap to the owner. Rewrite:
   - Run it: user-wide install, uninstall, and the note that the user-wide copy shadows a worktree's copy while developing.
@@ -475,6 +566,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
   - Controls (focus, WASD, 1-4, `[` `]`, e, E, t, m, x, Escape).
   - Shared office: presence dir, cadence, privacy, `/office share`.
   - Known limits: not pixel-identical, 1.5 s focus delay, the transcript view cannot be opened.
+  - README covers figure sizes, the 72-column fallback and the ▲▼ marks under Known limits/Controls.
 - files: `README.md`
 - done when: the README names no v1 room, and every key handled in `pad.ts` appears under Controls
 - verify: `rtk proxy npm run check`; `grep -nE 'Library|Dev Bay|Lobby|Break Room' README.md` prints nothing
@@ -538,3 +630,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 T22 done: Shift+E opens a `Peek: <label>` pane with the nearest own agent's last 10 text messages, never a remote agent's. See D50.
 - 2026-10-05 T23 done: `m` nudges the nearest own non-main agent and `x` interrupts main, each only after a No/Yes confirm that acts on the exact answer Yes. See D51.
 - 2026-10-05 T24 done: `npm run install:user` symlinks the mod into `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/agents-office` (idempotent, refuses a real dir or foreign link without `--force`) and `npm run uninstall:user` removes only a link to this repo; the symlink loads once. See D52.
+- 2026-10-05 owner rejected 3x2 figure; F01-F09 inserted (Mid 5x5, D53)
