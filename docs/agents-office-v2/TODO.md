@@ -153,7 +153,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; frame.test.ts: 'a crowd of 32 figures stays under 256 color pairs', 'a walking figure faces its next step'; motion.test.ts: 'walk frames cycle through 4'. LIVE: the capture shows `▀` cells forming main's figure in the Lobby.
 
 ### T05 Build the team-and-shared-room layout
-- status: done (#PR, 2026-10-05)
+- status: done (#28, 2026-10-05)
 - needs: none
 - size: M
 - scope: Add `buildOffice(columns, rows, teams, ownId)` and type `V2RoomId` to `map.ts`, next to v1 `buildMap` (which stays until T06).
