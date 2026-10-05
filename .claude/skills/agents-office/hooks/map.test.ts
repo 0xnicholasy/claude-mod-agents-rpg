@@ -61,11 +61,31 @@ test('every room has a sign inside its bounds and at least two floor anchors', (
       expect(inside(room.bounds, a)).toBe(true)
       expect(inside(room.bounds, { x: a.x + FOOTPRINT_W - 1, y: a.y + FOOTPRINT_H - 1 })).toBe(true)
       expect(a.y - 1).toBeGreaterThan(at(room.sign.cells, 0).y)
+      // No bottom-room desk footprint overlaps the room's doorStand footprint (top rooms
+      // centre their stand among the desks by design).
+      const apart = Math.abs(a.x - room.doorStand.x) >= FOOTPRINT_W || Math.abs(a.y - room.doorStand.y) >= FOOTPRINT_H
+      if (['lobby', 'meeting', 'break'].includes(room.id)) expect(apart).toBe(true)
     }
     for (let i = 1; i < room.anchors.length; i++) {
       expect(at(room.anchors, i).x - at(room.anchors, i - 1).x).toBeGreaterThanOrEqual(FOOTPRINT_W + 1)
     }
   }
+  }
+})
+
+test('sign rows are the literal wall or interior rows at 60x11, 60x12 and 60x18', () => {
+  // [columns, rows, top-room sign row, bottom-room sign row]
+  const expected: Array<[number, number, number, number]> = [
+    [60, 11, 0, 6],
+    [60, 12, 0, 7],
+    [60, 18, 1, 11],
+  ]
+  for (const [columns, rows, topY, bottomY] of expected) {
+    const map = buildMap(columns, rows)
+    for (const room of map.rooms) {
+      const isTop = ['devbay', 'library', 'server', 'phone'].includes(room.id)
+      for (const cell of room.sign.cells) expect(cell.y).toBe(isTop ? topY : bottomY)
+    }
   }
 })
 

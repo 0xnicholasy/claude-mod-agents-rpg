@@ -98,7 +98,7 @@ const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow
   // row above so the interior's first row stays free for the nameplate.
   const roomy = interiorRows >= FOOTPRINT_H + 2
   const signY = roomy ? interiorTop : interiorTop - 1
-  const anchors = Array.from({ length: count }, (_, i) => ({
+  const allAnchors = Array.from({ length: count }, (_, i) => ({
     x: x + offset + 4 * i,
     y: interiorTop + (roomy ? 2 : 1),
   }))
@@ -106,6 +106,12 @@ const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow
   // doorStand footprint never stands on the left-aligned sign.
   const doorX = doorBelow ? x + Math.floor((width - FOOTPRINT_W) / 2) : x + width - 4
   const doorStandY = doorBelow ? interiorTop + interiorRows - FOOTPRINT_H : interiorTop
+  // In a bottom room the doorStand is on the top interior rows, where short rooms also
+  // seat their desks, so a desk overlapping it is dropped. Top rooms keep every desk: their
+  // centred stand sits among the desks by design and dropping them would empty the Phone Booth.
+  const anchors = doorBelow
+    ? allAnchors
+    : allAnchors.filter(a => Math.abs(a.x - doorX) >= FOOTPRINT_W || Math.abs(a.y - doorStandY) >= FOOTPRINT_H)
   return {
     id: spec.id,
     name: spec.name,

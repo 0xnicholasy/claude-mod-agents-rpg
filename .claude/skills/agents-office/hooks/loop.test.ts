@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { rasterSize, stripRows } from './loop'
+import { bodyRowsFor, rasterSize, stripRows } from './loop'
 
 test('stripRows follows the table and neither map nor strip shrinks as the body grows', () => {
   const table: Array<[number, number, number]> = [
@@ -23,4 +23,23 @@ test('stripRows follows the table and neither map nor strip shrinks as the body 
     expect(stripRows(body + 1)).toBeGreaterThanOrEqual(stripRows(body))
     expect(body + 1 - stripRows(body + 1)).toBeGreaterThanOrEqual(body - stripRows(body))
   }
+})
+
+test('bodyRowsFor sizes an inline pane from the viewport and leaves other cases to bodyRows', () => {
+  // [viewport rows, expected body rows] with 13 chrome rows and a cap of 23.
+  const inline: Array<[number, number]> = [
+    [0, 7],
+    [13, 1],
+    [14, 1],
+    [24, 11],
+    [36, 23],
+    [37, 23],
+    [50, 23],
+  ]
+  for (const [viewportRows, body] of inline) {
+    // A viewport of 0 rows counts as unmeasured, so bodyRows (7) is used.
+    expect(bodyRowsFor('inline', 7, viewportRows)).toBe(body)
+  }
+  expect(bodyRowsFor('inline', 7, undefined)).toBe(7)
+  expect(bodyRowsFor('dock', 7, 50)).toBe(7)
 })

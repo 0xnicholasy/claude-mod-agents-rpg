@@ -854,6 +854,9 @@ test('a 14-row body shows the two newest strip lines', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /told a1: m2/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /told a1: m1/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /told a1: m0/ })).toBeUndefined()
+  // Oldest of the two first: m1 renders before m2.
+  expect(rows[0]?.text).toContain('m1')
+  expect(rows[1]?.text).toContain('m2')
   await ui.unmount()
 })
 
