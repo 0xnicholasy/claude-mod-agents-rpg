@@ -51,9 +51,11 @@ test("an agent's sprite and nameplate sit at its motion tile", () => {
   expect(grid[anchor.y]?.[anchor.x + 2]).toEqual({ ...art[0]?.[2], bg: FLOOR_BG })
   // A TRANSPARENT sprite cell leaves the floor cell untouched.
   expect(grid[anchor.y]?.[anchor.x]).toEqual({ ch: 0x20, fg: FLOOR_BG, bg: FLOOR_BG })
-  // Nameplate: 5 cells centred on the sprite, one row above.
+  // Nameplate: 5 cells one row above. Centred on the sprite it would start at x=0, a wall,
+  // so it shifts onto the floor and starts at x=1.
   const plate = nameplate('quick')
-  const left = anchor.x + 1 - Math.floor(plate.length / 2)
+  const left = 1
+  expect(grid[anchor.y - 1]?.[0]?.ch).toBe(0x2588)
   plate.forEach((cell, i) => expect(grid[anchor.y - 1]?.[left + i]).toEqual(cell))
 })
 
@@ -196,4 +198,39 @@ test('placeMotion reseats a walker whose path has an unstandable tile at an anch
   const reseated = placeMotion(map, roster, broken)
 
   expect(reseated.a).toMatchObject({ x: anchor.x, y: anchor.y, path: [] })
+})
+
+const WALL_CH = 0x2588
+const textAt = (grid: ReturnType<typeof buildFrame>, y: number, x: number, n: number): string =>
+  String.fromCodePoint(...Array.from({ length: n }, (_, i) => grid[y]?.[x + i]?.ch ?? 0x3f))
+
+test('a nameplate at a left-wall desk shifts onto the floor', () => {
+  const wide = buildMap(76, 11)
+  const desk = wide.rooms.find(r => r.id === 'lobby')?.anchors[0] ?? { x: 0, y: 0 }
+  const roster: Roster = { m: agent('m', { label: 'main', room: 'lobby', home: 'lobby' }) }
+  const grid = buildFrame({ map: wide, agents: roster, motion: { m: at(desk.x, desk.y) }, bubbles: [], now: 0 })
+  expect(grid[desk.y - 1]?.[0]?.ch).toBe(WALL_CH)
+  expect(textAt(grid, desk.y - 1, 1, 4)).toBe('main')
+  expect(grid[desk.y - 1]?.[5]?.ch).toBe(0x20)
+})
+
+test("a nameplate wider than its room is cut at the room's walls", () => {
+  const phone = map.rooms.find(r => r.id === 'phone')
+  const desk = phone?.anchors[0] ?? { x: 0, y: 0 }
+  const bounds = phone?.bounds ?? { x: 0, y: 0, w: 0, h: 0 }
+  const roster: Roster = { p: agent('p', { label: 'abcdefghijkl', room: 'phone', home: 'phone' }) }
+  const grid = buildFrame({ map, agents: roster, motion: { p: at(desk.x, desk.y) }, bubbles: [], now: 0 })
+  const y = desk.y - 1
+  expect(textAt(grid, y, bounds.x, bounds.w)).toBe('abcdefghijkl'.slice(0, bounds.w))
+  expect(grid[y]?.[bounds.x - 1]?.ch).toBe(WALL_CH)
+  expect(grid[y]?.[bounds.x + bounds.w]?.ch).toBe(WALL_CH)
+})
+
+test('no nameplate is drawn when the row above is a door or wall', () => {
+  const wide = buildMap(76, 11)
+  const stand = wide.rooms.find(r => r.id === 'lobby')?.doorStand ?? { x: 0, y: 0 }
+  const roster: Roster = { m: agent('m', { label: 'main', room: 'lobby', home: 'lobby' }) }
+  const bare = buildFrame({ map: wide, agents: {}, motion: {}, bubbles: [], now: 0 })
+  const grid = buildFrame({ map: wide, agents: roster, motion: { m: at(stand.x, stand.y) }, bubbles: [], now: 0 })
+  expect(grid[stand.y - 1]).toEqual(bare[stand.y - 1])
 })
