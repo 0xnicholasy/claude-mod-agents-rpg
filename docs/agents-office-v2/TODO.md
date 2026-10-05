@@ -138,7 +138,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; sprites.test.ts: 'every pose and facing draws 3x2 valid cells', 'walk frames differ', 'seated hides the legs behind the desk', 'hair and skin are stable per key'
 
 ### T04 Draw agents as people in the frame
-- status: done (#PR, 2026-10-05)
+- status: done (#27, 2026-10-05)
 - needs: T03
 - size: M
 - scope:
