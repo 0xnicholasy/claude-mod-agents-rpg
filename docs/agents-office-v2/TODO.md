@@ -440,7 +440,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; inspect.test.ts: 'peek keeps the last 10 text messages'; office.test.ts: 'the peek pane draws the lines'. LIVE as above.
 
 ### T23 Nudge an own agent with m and interrupt main with x
-- status: done (#PR, 2026-10-05)
+- status: done (#46, 2026-10-05)
 - needs: T22
 - size: M
 - scope: Per D25:
