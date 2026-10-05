@@ -373,7 +373,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; frame.test.ts: 'an anon team shows Session N'. LIVE2 as above.
 
 ### T18 Crop with a camera when team rooms overflow
-- status: done (#PR, 2026-10-05)
+- status: done (#41, 2026-10-05)
 - needs: T17
 - size: M
 - scope:
