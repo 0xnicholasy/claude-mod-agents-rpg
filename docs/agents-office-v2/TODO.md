@@ -246,7 +246,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; player.test.ts: 'a tap moves one tile', 'walls block', 'a held key moves one tile per tick'. LIVE as above.
 
 ### T10 Emote on keys 1-4
-- status: done (#PR, 2026-10-05)
+- status: done (#33, 2026-10-05)
 - needs: T09
 - size: S
 - scope: `applyKeys` maps 1-4 to the D15 glyphs on `player.emote`, with `until = now + EMOTE_MS`. frame.ts draws the glyph on the bubble row above the player's plate, and the tick clears it after `until`.
