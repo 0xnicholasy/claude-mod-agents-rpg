@@ -494,7 +494,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; map.test.ts 'canStand checks every cell of the map footprint'; LIVE and LIVE120 captures match the pre-change captures (3x2 figures, same rooms)
 
 ### F03 Add the mid figure art and recolouring
-- status: done (#PRNUM, 2026-10-05)
+- status: done (#51, 2026-10-05)
 - needs: F01
 - size: M
 - scope: New pure `midArt.ts` holds the D54 grids in semantic letters: 4 facings idle, 4 walk frames per facing, seated read, and seated type (2 frames). Add `midFigure({ pose, facing, frame, shirt, role, key, floor })` to `sprites.ts`. It maps slots to colours per D54 and returns 5x5 cells (standing) or 8x5 cells (seated) through `compose`, with props in the top-right cell. Extend `FIGURE_PALETTE`. Nothing draws it yet.
@@ -635,4 +635,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 owner rejected 3x2 figure; F01-F09 inserted (Mid 5x5, D53)
 - 2026-10-05 F01 done (#49): spike measured 76x11, 70x11 and 116x23 bodies; the 11-row vertical crop keeps the Raster size at both call sites; 32 mid figures peak at 185 pairs (day = night), so no D60 shrink; U+25B2 and U+25BC are valid; `FOOTPRINT_*` appears on 34 lines in 6 files. No OWNER CHECK. Corrections to F02, F05, F07, F08 in D63.
 - 2026-10-05 F02 done (#50): `OfficeMap.foot` (`Footprint`, `SMALL_FOOT`, `MID_FOOT`, `CAT_FOOT`) replaces `FOOTPRINT_*`; map.ts `makeRoom` uses `SMALL_FOOT` until F04 passes the footprint in; the two tests import `SMALL_FOOT`; new test 'canStand checks every cell of the map footprint'. LIVE and LIVE120 show the same 3x2 layout. No behaviour change.
-- 2026-10-05 F03 done (#PRNUM): `midArt.ts` holds the D54 grids (letters; left walks are mirrors of right); `midFigure` and `midFrameCount` in `sprites.ts`; `FIGURE_PALETTE` gains the near-black, desk body, monitor frame, player shade and five tier shades (the palette size bound in two tests moved from 32 to 48). Seated ignores facing (one grid). Nothing draws it yet; LIVE and LIVE120 unchanged.
+- 2026-10-05 F03 done (#51): `midArt.ts` holds the D54 grids (letters; left walks are mirrors of right); `midFigure` and `midFrameCount` in `sprites.ts`; `FIGURE_PALETTE` gains the near-black, desk body, monitor frame, player shade and five tier shades (the palette size bound in two tests moved from 32 to 48). Seated ignores facing (one grid). Nothing draws it yet; LIVE and LIVE120 unchanged.
