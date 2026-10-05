@@ -779,3 +779,18 @@ test('mid shoes show on the darkest room floors, day and night', () => {
   const grid = buildFrame({ map: mid, agents: { a1: agent('a1', { room: 'team:m0' }) }, motion: { a1: at(spot.x, spot.y) }, bubbles: [], now: 0, hour: 22 })
   expect(grid[spot.y + 4]?.[spot.x + 1]?.bg).toBe(MID_SHOE)
 })
+
+test('a bottom-left sign under the pad Input is drawn one cell right so its first letter stays readable', () => {
+  const mid = buildOffice(76, 23, midTeams(1), MID_FOOT)
+  const sign = mid.rooms.find(room => room.id === 'reception')?.sign
+  const first = sign?.cells[0]
+  expect(first).toBeDefined()
+  const pad = { x: 0, y: (first?.y ?? 0) - 1, w: 2, h: 2 }
+  const plain = buildFrame({ map: mid, agents: {}, motion: {}, bubbles: [], now: 0 })
+  const shifted = buildFrame({ map: mid, agents: {}, motion: {}, bubbles: [], now: 0, pad })
+  const text = (grid: Cell[][]) => String.fromCodePoint(...(sign?.cells ?? []).map(p => grid[p.y]?.[p.x + 1]?.ch ?? 0x3f))
+
+  expect(sign?.text.startsWith('Reception')).toBe(true)
+  expect(text(shifted).startsWith(sign?.text.slice(0, -1) ?? '?')).toBe(true)
+  expect(text(plain)).not.toBe(text(shifted))
+})

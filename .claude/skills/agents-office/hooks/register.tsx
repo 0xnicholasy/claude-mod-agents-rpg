@@ -805,6 +805,7 @@ const tick = async ($: EngineInterface): Promise<void> => {
     overlayFrom: span.from,
     overlayWidth: span.width,
     overlayRow: span.row,
+    pad: padRectAt(viewFor(map.columns, map.rows, size.columns, size.rows, focus)),
   })
   const cells = packCells(cropFrame(frame, map, size.columns, size.rows, focus))
   if (cells === lastFrameCells) return
@@ -1155,6 +1156,7 @@ export const register: Register = on => {
           overlayFrom: span.from,
           overlayWidth: span.width,
           overlayRow: span.row,
+          pad: padRectAt(viewFor(map.columns, map.rows, columns, rows, focus)),
         })
         const cells = packCells(cropFrame(grid, map, columns, rows, focus))
         // The newest `stripCount` lines under the Raster, oldest of them first (the log is
