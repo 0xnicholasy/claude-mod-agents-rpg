@@ -3,7 +3,7 @@
 // and passes plain data in.
 import type { Roster } from './agents'
 import { canStand, MID_FOOT, roomAt, tileAt } from './map'
-import type { OfficeMap, Point, RoomKind, TileKind } from './map'
+import type { OfficeMap, Point, Rect, RoomKind, TileKind } from './map'
 import { isValidGlyph } from './raster'
 import type { Cell } from './raster'
 import { drawnFacing, drawnFrame, drawnPose, targetOf } from './motion'
@@ -190,22 +190,38 @@ export type FrameInput = {
   overlayWidth?: number
   // The map row the overlay goes on when the view is cropped (camera.ts overlaySpan); default the corridor's first row.
   overlayRow?: number
+  // The cells the pad Input covers (player.ts padRectAt). A sign that starts under it is drawn one cell right when the
+  // tile past its end is floor, so its first letter stays readable.
+  pad?: Rect
   // The office cat (D24), drawn over the agents and under the players.
   cat?: Cat | null
   // Local hour 0-23; the map is tinted at night (D24). Undefined draws by day.
   hour?: number
 }
 
-export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, cat, hour, overlay, overlayFrom, overlayWidth, overlayRow }: FrameInput): Cell[][] => {
+export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, cat, hour, overlay, overlayFrom, overlayWidth, overlayRow, pad }: FrameInput): Cell[][] => {
   const shade: Shade = color => (hour === undefined ? color : tint(color, hour))
   const floors = floorColors(map, shade)
   const grid = map.tiles.map((row, y) => row.map((kind, x) => baseCell(kind, floors[y]?.[x] ?? shade(FLOOR_BG), shade)))
   for (const room of map.rooms) {
     // One glyph per code point (cells are per code point); a glyph the raster refuses draws as ?.
     const glyphs = Array.from(room.sign.text, g => g.codePointAt(0))
+    const first = room.sign.cells[0]
+    const last = room.sign.cells[room.sign.cells.length - 1]
+    const covered =
+      pad !== undefined &&
+      first !== undefined &&
+      first.y >= pad.y &&
+      first.y < pad.y + pad.h &&
+      first.x >= pad.x &&
+      first.x < pad.x + pad.w
+    // Move the sign just past the pad's right edge, and only when that many floor cells follow its end.
+    const need = covered && pad !== undefined && first !== undefined ? pad.x + pad.w - first.x : 0
+    const fits = last !== undefined && Array.from({ length: need }, (_, k) => tileAt(map, last.x + 1 + k, last.y)).every(t => t === 'floor')
+    const shift = fits ? need : 0
     room.sign.cells.forEach((p, i) => {
       const code = glyphs[i]
-      if (code !== undefined) put(grid, p.x, p.y, { ch: isValidGlyph(code) ? code : 0x3f, fg: shade(SIGN_FG), bg: shade(SIGN_BG) })
+      if (code !== undefined) put(grid, p.x + shift, p.y, { ch: isValidGlyph(code) ? code : 0x3f, fg: shade(SIGN_FG), bg: shade(SIGN_BG) })
     })
   }
 
