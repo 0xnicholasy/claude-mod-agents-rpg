@@ -62,3 +62,14 @@ test('an emote does not clear the pending walk and the newest emote wins', () =>
   expect(state.intent).toMatchObject({ key: 'd', taps: 1 })
   expect(state.emote?.glyph).toBe('~')
 })
+
+test('[ and ] set a pending jump, clear the intent, and a later WASD key cancels it', () => {
+  const walking = applyKeys(INITIAL_PAD, ['d', 'd'], 10)
+  const jumped = applyKeys(walking, [']'], 20)
+  expect(jumped.jump).toEqual({ dir: 'next', at: 20 })
+  expect(jumped.intent).toBeUndefined()
+  expect(applyKeys(jumped, ['['], 30).jump).toEqual({ dir: 'prev', at: 30 })
+  const cancelled = applyKeys(jumped, ['w'], 40)
+  expect(cancelled.jump).toBeUndefined()
+  expect(cancelled.intent).toEqual({ key: 'w', at: 40, taps: 1 })
+})

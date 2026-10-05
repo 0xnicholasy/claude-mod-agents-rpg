@@ -14,7 +14,7 @@ import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { INITIAL_PAD, onPadInput } from './pad'
 import type { PadState } from './pad'
-import { settleEmote, spawnPlayer, stepPlayer } from './player'
+import { settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
 import { baseName, branchOf, teamLabel } from './team'
@@ -281,10 +281,12 @@ const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number): 
   if (own === null) return current
   const padNow = await read($, pad)
   const intent = padNow.intent
+  // A pending room jump sets the path first, so its first tile is walked this tick.
+  const jumping = padNow.jump !== undefined && current !== null ? startJump(current, map, padNow.jump.dir) : current
   const out =
-    current === null
+    jumping === null
       ? { player: spawnPlayer(map, own.id), intent }
-      : stepPlayer(current, map, intent, now, own.id)
+      : stepPlayer(jumping, map, intent, now, own.id)
   const next = out.player === undefined ? undefined : settleEmote(out.player, padNow.emote, now)
   if (next !== undefined && next !== current) await update($, player, () => next)
   if (padNow.emote !== undefined && next !== undefined) {
@@ -292,13 +294,18 @@ const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number): 
     const applied = padNow.emote
     await update($, pad, cur => (cur.emote?.at === applied.at && cur.emote.glyph === applied.glyph ? { ...cur, emote: undefined } : cur))
   }
+  if (padNow.jump !== undefined && current !== null) {
+    const applied = padNow.jump
+    await update($, pad, cur => (cur.jump?.at === applied.at && cur.jump.dir === applied.dir ? { ...cur, jump: undefined } : cur))
+  }
   if (out.intent !== undefined && intent !== undefined && out.intent !== intent) {
     // Only the taps this step consumed are removed, so a press that landed since the read is kept.
     const used = intent.taps - out.intent.taps
+    const refreshed = out.intent.at
     await update($, pad, cur =>
-      cur.intent === undefined || cur.intent.key !== intent.key
+      cur.intent === undefined || cur.intent.key !== intent.key || cur.epoch !== padNow.epoch
         ? cur
-        : { ...cur, intent: { ...cur.intent, taps: Math.max(0, cur.intent.taps - used) } },
+        : { ...cur, intent: { ...cur.intent, taps: Math.max(0, cur.intent.taps - used), at: Math.max(cur.intent.at, refreshed) } },
     )
   }
 

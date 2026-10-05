@@ -70,6 +70,8 @@ declare module 'claude-code' {
         clear: string
         intent?: { key: 'w' | 'a' | 's' | 'd'; at: number; taps: number }
         emote?: { glyph: string; at: number }
+        jump?: { dir: 'next' | 'prev'; at: number }
+        epoch?: number
       }
     }
   }
