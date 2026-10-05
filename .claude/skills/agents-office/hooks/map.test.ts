@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { buildMap, canStand, FOOTPRINT_H, FOOTPRINT_W, OfficeTooSmall, roomAt, tileAt } from './map'
-import type { OfficeMap, Point, Rect } from './map'
+import { buildMap, buildOffice, canStand, FOOTPRINT_H, FOOTPRINT_W, OfficeTooSmall, roomAt, tileAt } from './map'
+import type { OfficeMap, Point, Rect, TeamSpec } from './map'
+import { findPath } from './path'
 
 const SIGNS: Record<string, string> = {
   devbay: 'Dev Bay',
@@ -226,4 +227,81 @@ test('every anchor and doorStand is a standable footprint and a footprint fits t
   }
   expect(canStand(buildMap(60, 18), 0, 0)).toBe(false)
   expect(canStand(buildMap(60, 18), 58, 8)).toBe(false)
+})
+
+const teamsOf = (n: number): TeamSpec[] => Array.from({ length: n }, (_, i) => ({ id: `team:s${i}` as const, label: `project-${i} (branch-${i})` }))
+const OFFICE_SIZES: Array<[number, number]> = [[60, 11], [60, 18], [100, 30]]
+const TEAM_COUNTS = [1, 2, 4, 6]
+const SHARED_IDS = ['reception', 'conference', 'kitchen', 'lab', 'booths']
+
+test('four team rooms fit at 60 columns', () => {
+  for (const rows of [11, 18]) {
+    const office = buildOffice(60, rows, teamsOf(6), 'team:s5')
+    const teamRooms = office.rooms.filter(r => r.kind === 'team')
+    expect(teamRooms.length).toBe(4)
+    expect(office.hidden).toBe(2)
+    // The own team is kept even though it is last in room order.
+    expect(teamRooms.map(r => r.id)).toEqual(['team:s0', 'team:s1', 'team:s2', 'team:s5'])
+    for (const r of teamRooms) expect(r.bounds.w).toBeGreaterThanOrEqual(11)
+    expect(office.rooms.filter(r => r.kind !== 'team').map(r => r.id)).toEqual(SHARED_IDS)
+  }
+  const four = buildOffice(60, 18, teamsOf(4), 'team:s0')
+  expect(four.hidden).toBe(0)
+  expect(four.rooms.filter(r => r.kind === 'team').length).toBe(4)
+  // Bottom-band interiors are 12/12/10/10/10 at 60 columns.
+  expect(four.rooms.filter(r => r.kind !== 'team').map(r => r.bounds.w)).toEqual([12, 12, 10, 10, 10])
+})
+
+test('team desks are 5 apart', () => {
+  for (const [columns, rows] of OFFICE_SIZES) {
+    for (const n of TEAM_COUNTS) {
+      const office = buildOffice(columns, rows, teamsOf(n), 'team:s0')
+      for (const room of office.rooms.filter(r => r.kind === 'team')) {
+        expect(room.anchors.length).toBeGreaterThanOrEqual(2)
+        for (let i = 1; i < room.anchors.length; i++) expect(at(room.anchors, i).x - at(room.anchors, i - 1).x).toBe(5)
+        for (const a of room.anchors) expect(inside(room.bounds, { x: a.x + FOOTPRINT_W - 1, y: a.y + FOOTPRINT_H - 1 })).toBe(true)
+      }
+    }
+  }
+})
+
+test('every room is reachable from Reception', () => {
+  for (const [columns, rows] of OFFICE_SIZES) {
+    for (const n of TEAM_COUNTS) {
+      const office = buildOffice(columns, rows, teamsOf(n), 'team:s0')
+      const reception = at(office.rooms.filter(r => r.id === 'reception'), 0)
+      for (const [i, a] of office.rooms.entries()) {
+        for (const b of office.rooms.slice(i + 1)) expect(overlap(a.bounds, b.bounds)).toBe(false)
+      }
+      for (const room of office.rooms) {
+        expect(room.anchors.length).toBeGreaterThanOrEqual(1)
+        expect(canStand(office, room.doorStand.x, room.doorStand.y)).toBe(true)
+        for (const a of room.anchors) {
+          expect(canStand(office, a.x, a.y)).toBe(true)
+          const same = a.x === reception.doorStand.x && a.y === reception.doorStand.y
+          expect(same || findPath(office, reception.doorStand, a).length > 0).toBe(true)
+        }
+      }
+    }
+  }
+})
+
+test('office signs are cut to the interior width and rooms tile the bands', () => {
+  const label = 'a-very-long-project-name (a-very-long-branch-name)'.repeat(2)
+  const long = [{ id: 'team:a', label }] as const
+  const office = buildOffice(60, 18, [...long], 'team:a')
+  const team = at(office.rooms, 0)
+  expect(team.sign.text).toBe(label.slice(0, team.bounds.w))
+  expect(team.sign.cells.length).toBe(team.bounds.w)
+  for (const room of office.rooms) {
+    expect(room.sign.cells.length).toBe(room.sign.text.length)
+    for (const c of room.sign.cells) expect(tileAt(office, c.x, c.y)).toBe('sign')
+  }
+  const wide = buildOffice(100, 30, teamsOf(1), 'team:s0')
+  expect(wide.rooms.filter(r => r.kind !== 'team').map(r => r.sign.text)).toEqual(['Reception', 'Conference', 'Kitchen', 'Test Lab', 'Booths'])
+  // At 60 columns the bottom signs share their row with the door or doorStand, so they stop short of it.
+  const compact = buildOffice(60, 11, teamsOf(1), 'team:s0')
+  expect(compact.rooms.filter(r => r.kind !== 'team').map(r => r.sign.text)).toEqual(['Reception', 'Conferenc', 'Kitchen', 'Test La', 'Booths'])
+  for (const room of compact.rooms) for (const d of room.door) expect(tileAt(compact, d.x, d.y)).toBe('door')
+  expect(() => buildOffice(59, 11, teamsOf(1), 'team:s0')).toThrow(OfficeTooSmall)
 })
