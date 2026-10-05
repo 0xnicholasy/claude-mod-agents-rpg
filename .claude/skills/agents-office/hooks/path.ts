@@ -10,7 +10,7 @@ const STEPS: ReadonlyArray<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1]
  * first entry is adjacent to `from`. Empty when `from === to`, or when `from` or `to` cannot stand, or when
  * `to` is not reachable.
  */
-export const findPath = (map: OfficeMap, from: Point, to: Point): Point[] => {
+export const findPath = (map: OfficeMap<string>, from: Point, to: Point): Point[] => {
   if (!canStand(map, from.x, from.y) || !canStand(map, to.x, to.y)) return []
   if (from.x === to.x && from.y === to.y) return []
   const size = map.columns * map.rows
