@@ -476,7 +476,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; `npm run install:user && (cd /tmp && claude plugin list | grep -c agents-office)` prints 1; the same in `<worktree>` prints 1; LIVE with `-c /tmp`; `npm run uninstall:user && test ! -L ~/.claude/skills/agents-office`
 
 ### F01 Spike: measure the mid figure, vertical crop and pair budget
-- status: done (#PR, 2026-10-05)
+- status: done (#49, 2026-10-05)
 - needs: T24
 - size: S
 - scope: Measurement only. Code goes on a scratch branch `spike/mid-figure` that is deleted afterwards; only TODO.md merges. (1) Record pane columns and body rows at 80x24, 120x40 and 74x24 from the `viewport` atom (debug log). Expected: 76x11, about 116x23, about 70x11. (2) Crop the current frame to 11 rows of a padded 23-row map at the two `cropFrame` call sites in `register.tsx`, and confirm the Raster and the blit keep the mounted size and the pad Input stays at the bottom left. (3) Compose 32 mid figures from the `gpt-preview.mjs` mid grids, recoloured per D54, and count pairs day and night, on the full frame and on an 11-row crop. (4) Check `isValidGlyph` for U+25B2 and U+25BC. (5) `grep -n` every `FOOTPRINT_W`/`FOOTPRINT_H` use. Add these lines to Constraints: LIVE120 = LIVE with `-x 120 -y 40`; LIVE74 = LIVE with `-x 74 -y 24`.
@@ -632,4 +632,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 T23 done: `m` nudges the nearest own non-main agent and `x` interrupts main, each only after a No/Yes confirm that acts on the exact answer Yes. See D51.
 - 2026-10-05 T24 done: `npm run install:user` symlinks the mod into `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/agents-office` (idempotent, refuses a real dir or foreign link without `--force`) and `npm run uninstall:user` removes only a link to this repo; the symlink loads once. See D52.
 - 2026-10-05 owner rejected 3x2 figure; F01-F09 inserted (Mid 5x5, D53)
-- 2026-10-05 F01 done (#PR): spike measured 76x11, 70x11 and 116x23 bodies; the 11-row vertical crop keeps the Raster size at both call sites; 32 mid figures peak at 185 pairs (day = night), so no D60 shrink; U+25B2 and U+25BC are valid; `FOOTPRINT_*` appears on 34 lines in 6 files. No OWNER CHECK. Corrections to F02, F05, F07, F08 in D63.
+- 2026-10-05 F01 done (#49): spike measured 76x11, 70x11 and 116x23 bodies; the 11-row vertical crop keeps the Raster size at both call sites; 32 mid figures peak at 185 pairs (day = night), so no D60 shrink; U+25B2 and U+25BC are valid; `FOOTPRINT_*` appears on 34 lines in 6 files. No OWNER CHECK. Corrections to F02, F05, F07, F08 in D63.
