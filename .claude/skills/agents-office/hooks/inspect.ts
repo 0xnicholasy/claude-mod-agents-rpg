@@ -5,23 +5,39 @@
 import type { OfficeAgent, Roster } from './agents'
 import { clean } from './log'
 import type { Motion } from './frame'
-import type { Point } from './map'
+import { SMALL_FOOT } from './map'
+import type { Footprint, Point } from './map'
 
-// How far (Manhattan tiles between footprint origins) the player can inspect.
+// How far the player can inspect: Manhattan tiles between footprint origins on the small map (D16), the Manhattan
+// gap between the two footprints on a mid map (D61).
 export const INSPECT_RANGE = 2
 // Characters of an own agent's last text appended to the line.
 export const TEXT_TAIL = 60
 // A room name is cut to this many characters, so a long team label leaves room for the elapsed time at 80 columns.
 export const ROOM_CHARS = 14
 
-// The nearest agent with a motion entry within INSPECT_RANGE of the player; ties go to the lower id.
-export const nearest = (agents: Roster, motion: Motion, from: Point, range = INSPECT_RANGE): OfficeAgent | undefined => {
+// Tiles between two footprints of size `foot` with the given origin offsets: the empty cells in x plus the empty
+// cells in y, so touching or overlapping figures are 0 apart.
+const footGap = (foot: Footprint, dx: number, dy: number): number => Math.max(0, Math.abs(dx) - foot.w) + Math.max(0, Math.abs(dy) - foot.h)
+
+// The nearest agent with a motion entry within INSPECT_RANGE of the player; ties go to the lower id. `foot` is the
+// map's footprint: the small one keeps the origin distance, any larger one measures the gap between figures.
+export const nearest = (
+  agents: Roster,
+  motion: Motion,
+  from: Point,
+  range = INSPECT_RANGE,
+  foot: Footprint = SMALL_FOOT,
+): OfficeAgent | undefined => {
   let best: OfficeAgent | undefined
   let bestDist = Infinity
   for (const agent of Object.values(agents)) {
     const at = motion[agent.id]
     if (at === undefined) continue
-    const dist = Math.abs(at.x - from.x) + Math.abs(at.y - from.y)
+    const dist =
+      foot.w === SMALL_FOOT.w && foot.h === SMALL_FOOT.h
+        ? Math.abs(at.x - from.x) + Math.abs(at.y - from.y)
+        : footGap(foot, at.x - from.x, at.y - from.y)
     if (dist > range) continue
     if (dist < bestDist || (dist === bestDist && best !== undefined && agent.id < best.id)) {
       best = agent

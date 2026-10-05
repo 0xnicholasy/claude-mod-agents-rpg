@@ -1,7 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import type { OfficeAgent, Roster } from './agents'
 import { asShare, placeRemotePlayer, remotePlayersOf, toPresencePlayer, envValue, MAX_RECORD_BYTES, mergeRemote, parseOfficeArgs, parseRecord, planReads, presenceDir, presencePath, signature, toRecord, toTombstone, writeDue } from './presence'
-import { buildOffice, canStand as canStandAt } from './map'
+import { buildOffice, canStand as canStandAt, MID_FOOT } from './map'
+import type { OfficeMap } from './map'
 import type { Parsed, PresenceRecord } from './presence'
 
 test('presence dir prefers CLAUDE_CONFIG_DIR', () => {
@@ -285,4 +286,32 @@ test('a published player carries only its documented keys and a forged expiry is
   expect(remotePlayersOf(forged, map)[0]).toMatchObject({ emoteUntil: 3020, chatUntil: 5020 })
   // A chat that has run out is not published, and the emote keeps its own expiry.
   expect(toPresencePlayer(map, { x: 20, y: 3, facing: 'up', emote: '!', emoteUntil: 2000, chat: 'hello', chatUntil: 1000 }, 1500)).toMatchObject({ emote: '!', emoteUntil: 2000 })
+})
+
+test('a remote player moves between figure sizes', () => {
+  const teams = [1, 2, 3, 4, 5].map(n => ({ id: `team:s${n}` as const, label: `p${n}` }))
+  const small = buildOffice(60, 18, teams)
+  const mid = buildOffice(100, 23, teams.slice(0, 2), MID_FOOT)
+  const roomOf = (map: OfficeMap) => {
+    const room = map.rooms.find(r => r.id === 'team:s1')
+    if (room === undefined) throw new Error('no team room')
+    return room
+  }
+  const smallRoom = roomOf(small)
+  const midRoom = roomOf(mid)
+  const inside = (map: OfficeMap, at: { x: number; y: number } | undefined, room: ReturnType<typeof roomOf>): boolean =>
+    at !== undefined &&
+    canStandAt(map, at.x, at.y) &&
+    at.x >= room.bounds.x && at.x + map.foot.w <= room.bounds.x + room.bounds.w &&
+    at.y >= room.bounds.y && at.y + map.foot.h <= room.bounds.y + room.bounds.h
+  expect(smallRoom.bounds.w).toBeLessThan(17)
+  expect(midRoom.bounds.w).toBeGreaterThanOrEqual(17)
+  // The far corner of a small room (a 3x2 figure) lands on a standable tile of the mid room.
+  const fromSmall = { room: 'team:s1' as const, rx: smallRoom.bounds.w - 3, ry: smallRoom.bounds.h - 2, facing: 'down' as const }
+  expect(inside(mid, placeRemotePlayer(mid, fromSmall), midRoom)).toBe(true)
+  // The far corner of a mid room (a 5x5 figure) lands on a standable tile of the small room.
+  const fromMid = { room: 'team:s1' as const, rx: midRoom.bounds.w - 5, ry: midRoom.bounds.h - 5, facing: 'up' as const }
+  expect(inside(small, placeRemotePlayer(small, fromMid), smallRoom)).toBe(true)
+  // A figure beside the left wall of the mid room stays at the left edge of the small one.
+  expect(placeRemotePlayer(small, { ...fromMid, rx: 0, ry: 0 })).toMatchObject({ x: smallRoom.bounds.x })
 })

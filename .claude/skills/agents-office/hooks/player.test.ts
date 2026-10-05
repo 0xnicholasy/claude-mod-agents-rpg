@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
-import { buildOffice, canStand, roomAt } from './map'
+import { buildOffice, canStand, MID_FOOT, roomAt } from './map'
 import type { OfficeMap } from './map'
 import type { Intent } from './pad'
-import { jumpOrder, padRect, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
+import { jumpOrder, padRect, padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { INTENT_MS } from './timing'
 
@@ -162,4 +162,37 @@ test('a path that no longer starts next to the player is dropped', () => {
   const out = stepPlayer(far, map, undefined, 0, 'team:t1')
   expect(out.player?.path).toEqual([])
   expect(out.player?.x).toBe(start.x)
+})
+
+const midMap: OfficeMap = buildOffice(100, 23, [{ id: 'team:t1', label: 'proj' }, { id: 'team:t2', label: 'two' }], MID_FOOT)
+
+test('on a mid map ] walks to a bottom-band anchor of the next shared room', () => {
+  const player = spawnPlayer(midMap, 'team:t1')
+  if (player === undefined) throw new Error('no spawn')
+  const order = jumpOrder(midMap)
+  const lastTeam = order.findIndex(room => room.kind !== 'team') - 1
+  const from = order[lastTeam]
+  const to = order[lastTeam + 1]
+  if (from === undefined || to === undefined) throw new Error('no rooms')
+  const jumped = startJump({ ...player, x: from.doorStand.x, y: from.doorStand.y, path: [] }, midMap, 'next')
+  const end = jumped.path[jumped.path.length - 1]
+
+  expect(to.bounds.y).toBeGreaterThan(midMap.corridor.y)
+  expect(end).toEqual(to.anchors[0])
+  expect(jumped.path.length).toBeGreaterThan(0)
+})
+
+test('the pad cells follow the view bottom-left, not the map bottom', () => {
+  // A view of 11 rows scrolled to the top of the 23-row map: its pad cells are rows 9-10, x 0-1.
+  expect(padRectAt({ x: 0, y: 0, height: 11 })).toEqual({ x: 0, y: 9, w: 2, h: 2 })
+  expect(padRectAt({ x: 4, y: 12, height: 11 })).toEqual({ x: 4, y: 21, w: 2, h: 2 })
+  expect(padRectAt({ x: 0, y: 0, height: midMap.rows })).toEqual(padRect(midMap))
+  // A spawn avoids the cells it is given: put the pad over the own doorStand and the spawn moves on.
+  const room = midMap.rooms.find(r => r.id === 'team:t1')
+  if (room === undefined) throw new Error('no team room')
+  const over = { x: room.doorStand.x, y: room.doorStand.y, w: 2, h: 2 }
+  const spawned = spawnPlayer(midMap, 'team:t1', over)
+
+  expect(spawned).toBeDefined()
+  expect(spawned !== undefined && spawned.x === room.doorStand.x && spawned.y === room.doorStand.y).toBe(false)
 })

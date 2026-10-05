@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 29/35 done
+Progress: 30/35 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -128,6 +128,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - D64 (owner review of F03, 2026-10-05). Mid art faces reworked, amending D54 grids: the old grids read as hooded blobs (hair on rows 0-2 and the sides of the eye row left 5 skin pixels). New grids are face first: hair on rows 0-1 and the corners of row 2, 3 skin pixels on row 2, 5 on the eye row, a mouth on row 4 (down); the up view is hair only; the side view puts the face on the facing side with the mouth at the edge. Walk frames now keep rows 0-7 identical to the idle grid (the hands no longer swap) and change only the legs (rows 8-9): frames 1 and 3 shift the legs in opposite directions, frames 2 and 4 are the idle grid, so a facing has 3 distinct walk grids, not 4. Seated reuses the down head and torso in columns 0-4. Left is the exact mirror of right.
 - D65 (F04, 2026-10-05). Amends D56: mid team desks are centred for the 8-cell seated figure (D54), not the 5-cell footprint, so at the 17-column minimum the desks sit at the room's left edge and 9 apart and the second seat ends on the last interior column. Standing positions still use the 5x5 footprint. `buildOffice` throws for a footprint that is neither `SMALL_FOOT` nor `MID_FOOT`.
 - D66 (F05, 2026-10-05). Confirms D58. `viewFor(mapColumns, mapRows, paneColumns, paneRows, focus)` returns `{ x, y, width, height }` (the spec's {x, y} plus the clamped size). `focusOf` returns the player's top-left plus `floor(foot/2)` in each axis (x stays `player.x + 1` for 3x2), else the own room's centre. `overlaySpan(map, paneColumns, paneRows, focus)` also returns `row`, the mark row (first visible corridor row, else the view's top row, stepped one row inward when it would be the first or last view row under a ▲ or ▼, so the marks never cover the inspect line); `buildFrame` takes it as `overlayRow`. `cropFrame` returns the grid itself only when the map fits both axes. Both register.tsx call sites pass the raster rows; the pad Input stays `bottom={0}` of the Raster wrapper, so it is already at the view's bottom-left, and `padRect` is untouched (F07 owns the spawn skip, D63c). `mapAt` and `rasterSize` stay as they are until F08.
+- D67 (F07, 2026-10-05). Confirms D61 and D63c. `nearest(agents, motion, from, range, foot = SMALL_FOOT)`: a 3x2 `foot` keeps the D16 origin distance; any other measures the gap between two figures, `max(0, |dx| - foot.w) + max(0, |dy| - foot.h)`, against `INSPECT_RANGE` 2. The cat steps and rests on `{ ...map, foot: CAT_FOOT }` (so a 5x5 map never blocks it) and its spots are person spot + (1, foot.h - 2) on a map whose footprint is bigger than the cat's, the spot itself on the small map. `placeRemotePlayer` needed no change: its clamp already uses `map.foot`, and the new test covers 3x2 to 5x5 and back. `spawnPlayer`, `startJump` and `stepPlayer` take a trailing `pad: Rect` (default `padRect(map)`); `padRectAt(view)` gives the 2x2 cells at the view's bottom-left. Deviation: `register.tsx` is touched (allowed only for the pad skip): `stepPlayerTick` takes the pane size and passes `padRectAt(viewFor(...))`, and `inspectTick` passes `map.foot` to `nearest`. `peekTick` and `confirmTick` (the `E`, `m` calls from the ui.input hook) take a `foot` from `footOf($)`, which rebuilds the map from the viewport, so peek and nudge agree with inspect. The pad skip uses the view focused on the player before this tick's step (best effort: a jump recentres the camera, so near a clamped corner the skip can differ from the drawn view).
 
 ## Todos
 
@@ -533,7 +534,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; frame.test.ts 'a mid crowd stays under 256 pairs' and 'a seated mid figure carries its desk and monitor'; LIVE and LIVE120 unchanged-regression captures (not wired)
 
 ### F07 Fit interactions to the mid footprint
-- status: todo
+- status: done (#55, 2026-10-05)
 - needs: F04
 - size: M
 - scope: Per D61. `nearest` uses the footprint-gap distance (2 or less) on mid maps and keeps D16 on small maps. The cat stands at person spot + (1, foot.h-2) with `CAT_FOOT`. `placeRemotePlayer` clamps a 3x2-sized `rx`/`ry` into a mid room and the reverse. The spawn and jump pad-cell skip uses the cells under the Input at the current view bottom-left (D63).
@@ -582,6 +583,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - done when: the skill is removed from the branch, TODO.md is archived, and the landing PR into feat/agents-office (or main, per D3) is open and approved by the owner
 
 ## Backlog
+- F08: once `viewport.foot` exists, make `footOf` (register.tsx) read it instead of rebuilding the map; the 'Nobody within 2 tiles.' hint now means a 2-cell gap on mid.
 - F04 follow-up: at the 71-column minimum the shared rooms are 13 wide and the bottom signs stop short of the 5-wide door, so 'Reception' draws as 'Receptio' and 'Conference' as 'Conferen'. Decide in F08 whether to widen Reception or accept the cut.
 - Shoe and eye near-black 0x141414 has about 1.4:1 contrast against the darkest room floor (F03 review); check on real floors in F06 and lighten if the shoes vanish.
 - A 5x3-cell large figure on maps of 18 rows or more (brief, optional).
@@ -643,3 +645,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 F03b done: mid figure faces reworked (D64); `midArt.ts` builds walk frames from the idle grid so the head stays still; tests and the sprites walk-distinct count (4 to 3) updated.
 - 2026-10-05 F04 done (#53): `buildOffice(columns, rows, teams, foot = SMALL_FOOT)` lays out MID_FOOT per D56 (7-row bands, 5-row corridor, 5-wide doors, team desks 9 apart, shared anchors 6 apart; rows above 23 go a third to the corridor, the rest to the two bands). Shared rooms get equal base widths (13 each at the 71-column floor), so the shared anchors at 13 wide keep one anchor beside the door. `makeRoom` takes the footprint; `virtualColumns` takes an optional footprint. Small layout unchanged (snapshot test). Not wired. LIVE and LIVE120 unchanged. No OWNER CHECK.
 - 2026-10-05 F05 done (#54): `camera.ts` is 2D (D66): `viewFor`/`focusOf` take and return x and y, `cropFrame` crops rows and draws ▲/▼ at the middle column of the first and last view row, ◀/▶ and the inspect line use the first visible corridor row else the view's top row (`overlayRow`). Both register.tsx crop sites pass the raster rows. A map that fits returns untouched, so LIVE and LIVE120 show the same 3x2 office. Vertical behaviour is covered by camera tests on a 23-row mid map in an 11-row pane. No OWNER CHECK.
+- 2026-10-05 F07 done (#55): `nearest` takes the map footprint (gap distance on mid, D16 on small); the cat walks on a CAT_FOOT map and rests at person spot + (1, foot.h - 2) on mid; the spawn and jump pad skip takes a `pad` Rect (`padRectAt(view)`, wired in `stepPlayerTick`); `placeRemotePlayer` already clamped between sizes, now tested. Small layout unchanged; LIVE and LIVE120 show the same 3x2 office. No OWNER CHECK. Deviation in D67.
