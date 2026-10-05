@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { OfficeAgent, Roster } from './agents'
 import type { Motion } from './frame'
-import { elapsedText, inspectText, lastTextOf, nearest } from './inspect'
+import { elapsedText, inspectText, lastTextOf, nearest, peekLines, PEEK_WIDTH } from './inspect'
 
 const agent = (id: string, extra: Partial<OfficeAgent> = {}): OfficeAgent => ({
   id,
@@ -49,4 +49,22 @@ test('own text keeps its last 60 cleaned characters', () => {
   expect(lastTextOf([{ role: 'assistant', text: 'answer' }, { role: 'user', text: 'my prompt' }])).toBe('answer')
   expect(lastTextOf([{ role: 'user', text: 'my prompt' }])).toBeUndefined()
   expect(lastTextOf([])).toBeUndefined()
+})
+
+test('peek keeps the last 10 text messages', () => {
+  const rows = Array.from({ length: 14 }, (_, i) => ({ role: i % 2 === 0 ? 'user' : 'assistant', text: `line ${i}` }))
+  // Tool rows carry no text and are dropped before the cut.
+  const mixed = [...rows.slice(0, 7), { role: 'user', text: '' }, ...rows.slice(7), { role: 'assistant', text: '  \n ' }]
+  const lines = peekLines(mixed)
+
+  expect(lines).toHaveLength(10)
+  expect(lines[0]).toBe('> line 4')
+  expect(lines.at(-1)).toBe('line 13')
+  expect(lines[1]).toBe('line 5')
+  // A user row is marked, control characters are cleaned and a long line is cut.
+  expect(peekLines([{ role: 'user', text: 'hi\u0007 there' }, { role: 'assistant', text: 'x'.repeat(500) }])).toEqual([
+    expect.stringMatching(/^> hi.? there$/),
+    'x'.repeat(PEEK_WIDTH),
+  ])
+  expect(peekLines([])).toEqual([])
 })

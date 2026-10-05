@@ -76,6 +76,7 @@ declare module 'claude-code' {
         seed: number
       } | null
       inspect: { agentId: string; text: string; until: number } | null
+      peek: { agentId: string; label: string; lines: string[] } | null
       identity: { sessionId: string; startedAt: number; dir?: string } | null
       share: 'all' | 'anon' | 'off'
       presence: { lastText?: string; lastWriteAt: number; ended: boolean; mtimes?: Record<string, number> }
@@ -118,6 +119,7 @@ declare module 'claude-code' {
         jump?: { dir: 'next' | 'prev'; at: number }
         epoch?: number
         inspect?: { at: number }
+        peek?: { at: number }
         mode?: 'chat'
         draft?: string
         base?: number

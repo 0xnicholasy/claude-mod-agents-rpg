@@ -1202,6 +1202,66 @@ test('inspect shows for 6 s and a messages deny keeps the base text', async ($, 
   await ui.unmount()
 })
 
+test('the peek pane draws the lines', async ($, on) => {
+  const clock = mock.clock(on)
+  const opened: Array<{ id: string; title?: string; focus?: true }> = []
+  on('ui.open', (_$, e) => {
+    opened.push({ id: e.id, title: e.title, focus: e.focus })
+    return { value: { isPlaced: true } }
+  })
+  on('ui.blit', () => ({ value: {} }))
+  on('agent.list', () => ({ value: [] }))
+  on('session.messages', () => ({
+    value: [
+      { role: 'user', text: 'fix the bug', toolUses: [] },
+      { role: 'assistant', text: 'Looking at it now', toolUses: [] },
+      { role: 'user', text: '', toolUses: [], toolResults: [] },
+      { role: 'assistant', text: 'Found it', toolUses: [] },
+    ],
+  }))
+  stubSession(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(11))
+  await clock.advance(100)
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: ']', kind: 'change' })
+  await clock.advance(6000)
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: '[', kind: 'change' })
+  await clock.advance(6000)
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'E', kind: 'change' })
+  await clock.advance(200)
+
+  // Opened without focus, titled for the agent; the pad keeps the keys.
+  expect(opened.filter(o => o.id === 'office-peek')).toEqual([{ id: 'office-peek', title: 'Peek: main', focus: undefined }])
+  const peek = await $.ui.mount({ ...paneAt(11), requestId: 'office-peek' })
+  const texts = (await peek.findAll({ type: 'Text' })).map(t => String(t.text))
+  expect(texts).toEqual(['> fix the bug', 'Looking at it now', 'Found it'])
+  await peek.unmount()
+  await ui.unmount()
+})
+
+test('a messages deny shows Nothing to show in the peek pane', async ($, on) => {
+  const clock = mock.clock(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.blit', () => ({ value: {} }))
+  on('agent.list', () => ({ value: [] }))
+  on('session.messages', () => ({ value: { deny: 'no transcript' } }))
+  stubSession(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(11))
+  await clock.advance(100)
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: ']', kind: 'change' })
+  await clock.advance(6000)
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: '[', kind: 'change' })
+  await clock.advance(6000)
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'E', kind: 'change' })
+  await clock.advance(200)
+  const peek = await $.ui.mount({ ...paneAt(11), requestId: 'office-peek' })
+
+  expect((await peek.findAll({ type: 'Text' })).map(t => String(t.text))).toEqual(['Nothing to show for main.'])
+  await peek.unmount()
+  await ui.unmount()
+})
+
 // A store kept in a map, so a test can read what the plugin persisted ($ has no store member).
 const stubStore = (on: On, entries: Record<string, unknown> = {}): Map<string, unknown> => {
   const kept = new Map<string, unknown>(Object.entries(entries))

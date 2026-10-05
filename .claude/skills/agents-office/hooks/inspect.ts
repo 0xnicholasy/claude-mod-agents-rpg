@@ -59,6 +59,21 @@ export const inspectText = (
   return parts.join(' | ')
 }
 
+// Peek (D25): the last PEEK_MAX rows that carry text, oldest first, one cleaned line each cut to PEEK_WIDTH
+// characters. Tool rows (no text) are dropped; a user row is marked `> ` so the two voices stay apart. Only the
+// caller's own agents are ever passed in (D16, D25).
+export const PEEK_MAX = 10
+export const PEEK_WIDTH = 120
+export const peekLines = (messages: ReadonlyArray<{ role: string; text: string }>): string[] =>
+  messages
+    .flatMap(row => {
+      const text = clean(row.text)
+
+      return text === '' ? [] : [`${row.role === 'user' ? '> ' : ''}${text}`]
+    })
+    .slice(-PEEK_MAX)
+    .map(line => Array.from(line).slice(0, PEEK_WIDTH).join(''))
+
 // The text of the newest assistant message row that has any, or undefined. User rows are skipped: they hold
 // prompts, which are never shown (D16).
 export const lastTextOf = (messages: ReadonlyArray<{ role: string; text: string }>): string | undefined => {

@@ -80,6 +80,13 @@ test('lower-case e asks to inspect and E does not', () => {
   expect(applyKeys(INITIAL_PAD, ['E'], 70).inspect).toBeUndefined()
 })
 
+test('Shift+E asks to peek and lower-case e does not', () => {
+  expect(applyKeys(INITIAL_PAD, ['E'], 70).peek).toEqual({ at: 70 })
+  expect(applyKeys(INITIAL_PAD, ['e'], 70).peek).toBeUndefined()
+  // Chat mode keeps every key, `E` included, as text.
+  expect(typed('E').peek).toBeUndefined()
+})
+
 const typed = (keys: string): ReturnType<typeof applyKeys> => applyKeys(INITIAL_PAD, ['t', ...Array.from(keys)], 10)
 
 test('t, hi there, Enter sends the chat line and moves nobody', () => {

@@ -24,6 +24,8 @@ export type PadState = {
   epoch?: number
   // An `e` press waiting for the tick to inspect the nearest agent (D39).
   inspect?: { at: number }
+  // An `E` press waiting for the tick to open the peek pane (D25).
+  peek?: { at: number }
   // `t` enters chat mode (D23, D47): keys build `draft` and move nothing until Enter sends or cancels it.
   mode?: 'chat'
   draft?: string
@@ -102,6 +104,7 @@ export const applyKeys = (state: PadState, keys: readonly string[], now: number)
   let jump = state.jump
   let epoch = state.epoch
   let inspect = state.inspect
+  let peek = state.peek
   for (const raw of keys) {
     // Chat mode (D47): every key, WASD and digits included, is text for the draft.
     if (mode === 'chat') {
@@ -118,7 +121,11 @@ export const applyKeys = (state: PadState, keys: readonly string[], now: number)
     }
     const glyph = emoteOf(raw)
     if (glyph !== undefined) emote = { glyph, at: now }
-    // Only a lower-case `e`: `E` is reserved for peek (D13).
+    // Shift+E asks to peek at the nearest agent (D25); lower-case `e` inspects.
+    if (raw === 'E') {
+      peek = { at: now }
+      continue
+    }
     if (raw === 'e') {
       inspect = { at: now }
       continue
@@ -136,7 +143,7 @@ export const applyKeys = (state: PadState, keys: readonly string[], now: number)
     intent = { key, at: now, taps: intent !== undefined && intent.key === key ? Math.min(intent.taps + 1, MAX_TAPS) : 1 }
   }
 
-  return { ...state, mode, draft, intent, emote, jump, epoch, inspect }
+  return { ...state, mode, draft, intent, emote, jump, epoch, inspect, peek }
 }
 
 // One `ui.input` change: diffs the value, applies the keys and flips the clear marker so the Input is
