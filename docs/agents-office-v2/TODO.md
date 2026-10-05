@@ -345,7 +345,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; presence.test.ts: 'a stale or tombstoned session is dropped', 'a partial file keeps the last snapshot'
 
 ### T16 Draw every session's team room and agents
-- status: done (#PR, 2026-10-05)
+- status: done (#39, 2026-10-05)
 - needs: T15
 - size: M
 - scope:
