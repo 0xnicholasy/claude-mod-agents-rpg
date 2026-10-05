@@ -4,16 +4,16 @@ import { CAT_FUR, CAT_PALETTE } from './cat'
 import type { Cat } from './cat'
 import type { Bubble, Motion } from './frame'
 import type { OfficeAgent, Roster, Tier } from './agents'
-import { buildOffice } from './map'
+import { buildOffice, MID_FOOT } from './map'
 import { DEFAULT_COLOR } from './raster'
 import type { Cell } from './raster'
 import { enterAtDoor, step } from './motion'
-import { overlaySpan } from './camera'
+import { cropFrame, focusOf, overlaySpan } from './camera'
 import { orderedTeams, remoteRoster, routeRemote } from './presence'
 import type { PresenceAgent, PresenceRecord, Remote } from './presence'
 import type { Player } from './player'
 import { countPairs, PAIR_BUDGET } from './pixels'
-import { FACINGS, figure, nameplate, POSES, ROLE_COLORS, SPRITE_PALETTE } from './sprites'
+import { FACINGS, figure, MID_SHOE, midFigure, nameplate, POSES, ROLE_COLORS, SPRITE_PALETTE } from './sprites'
 import type { Facing, Pose, Role } from './sprites'
 import { canStand } from './map'
 import type { OfficeMap } from './map'
@@ -669,4 +669,113 @@ test('an emote or a bubble at a top-room desk never covers the sign', () => {
   const chatting = buildFrame({ map: compact, agents: {}, motion: {}, bubbles: [], now: 0, player: { ...player, emote: undefined, chat: 'hi all', chatUntil: 100 } })
   expect(signOf(chatting)).toBe(room?.sign.text)
   expect(withEmote.every(r => r.length === 80)).toBe(true)
+})
+
+const midTeams = (n: number): Array<{ id: `team:${string}`; label: string }> =>
+  Array.from({ length: n }, (_, i) => ({ id: `team:m${i}` as const, label: `proj${i}` }))
+
+test('a mid map draws a 5x5 walking figure facing its next step', () => {
+  const mid = buildOffice(76, 23, midTeams(1), MID_FOOT)
+  const room = mid.rooms[0]
+  const spot = room?.anchors[0] ?? { x: 1, y: 2 }
+  const roster: Roster = { a1: agent('a1', { label: 'walker', room: 'team:m0', pose: 'walk' }) }
+  const motion: Motion = { a1: { x: spot.x, y: spot.y, path: [{ x: spot.x + 1, y: spot.y }], frame: 1 } }
+  const grid = buildFrame({ map: mid, agents: roster, motion, bubbles: [], now: 0 })
+  const art = midFigure({ pose: 'walk', facing: 'right', frame: 1, shirt: 'opus', role: 'dev', key: 'a1', floor: FLOOR_BG })
+
+  expect(art).toHaveLength(5)
+  expect(art.every(row => row.length === 5)).toBe(true)
+  art.forEach((row, dy) => row.forEach((cell, dx) => expect(grid[spot.y + dy]?.[spot.x + dx]).toEqual(cell)))
+  // The same agent on the small map still draws the 3x2 figure.
+  const small = buildOffice(60, 18, [{ id: 'team:t1', label: 'proj' }])
+  const smallSpot = small.rooms[0]?.anchors[0] ?? { x: 1, y: 2 }
+  const smallGrid = buildFrame({ map: small, agents: { a1: agent('a1', { pose: 'walk' }) }, motion: { a1: at(smallSpot.x, smallSpot.y) }, bubbles: [], now: 0 })
+  expect(smallGrid[smallSpot.y + 4]?.[smallSpot.x]).toEqual(buildFrame({ map: small, agents: {}, motion: {}, bubbles: [], now: 0 })[smallSpot.y + 4]?.[smallSpot.x])
+})
+
+test('a seated mid figure carries its desk and monitor', () => {
+  const mid = buildOffice(76, 23, midTeams(1), MID_FOOT)
+  const spot = mid.rooms[0]?.anchors[0] ?? { x: 1, y: 2 }
+  const roster: Roster = { a1: agent('a1', { label: 'a-very-long-name', room: 'team:m0', pose: 'type' }) }
+  const grid = buildFrame({ map: mid, agents: roster, motion: { a1: at(spot.x, spot.y) }, bubbles: [], now: 300 })
+  const art = midFigure({ pose: 'type', facing: 'down', frame: 1, shirt: 'opus', role: 'dev', key: 'a1', floor: FLOOR_BG })
+
+  expect(art).toHaveLength(5)
+  expect(art.every(row => row.length === 8)).toBe(true)
+  art.forEach((row, dy) => row.forEach((cell, dx) => expect(grid[spot.y + dy]?.[spot.x + dx]).toEqual(cell)))
+  // Desk top and desk body colours sit across the 8 cells at the bottom, the monitor frame beside the head.
+  expect(grid[spot.y + 3]?.[spot.x]?.bg).toBe(0x8d6e63)
+  expect(grid[spot.y + 4]?.[spot.x]?.fg).toBe(0x5d4037)
+  expect(grid[spot.y + 3]?.[spot.x + 7]?.bg).toBe(0x8d6e63)
+  expect(grid[spot.y + 1]?.[spot.x + 5]?.bg).toBe(0x37474f)
+  // The plate is cut to 7 and centred on the person (the figure's 5 columns).
+  const plate = String.fromCodePoint(...(grid[spot.y - 1] ?? []).filter(c => c.bg === 0x202028).map(c => c.ch))
+  expect(plate).toBe('a-very-')
+  expect(grid[spot.y - 1]?.[spot.x + 2]?.bg).toBe(0x202028)
+})
+
+test('a mid top-desk bubble never covers the sign', () => {
+  const mid = buildOffice(76, 23, midTeams(2), MID_FOOT)
+  const room = mid.rooms[0]
+  const signOf = (grid: Cell[][]): string => String.fromCodePoint(...(room?.sign.cells ?? []).map(p => grid[p.y]?.[p.x]?.ch ?? 0x3f))
+  const spot = room?.anchors[0] ?? { x: 1, y: 2 }
+  const roster: Roster = { a1: agent('a1', { label: 'q', room: 'team:m0' }) }
+  const bubble: Bubble = { agentId: 'a1', text: 'a rather long bubble line', until: 1000 }
+  const said = buildFrame({ map: mid, agents: roster, motion: { a1: at(spot.x, spot.y) }, bubbles: [bubble], now: 0 })
+  const player = { x: spot.x, y: spot.y, facing: 'down' as const, frame: 0, path: [], emote: '!', emoteUntil: 3000, chat: 'hello there everyone', chatUntil: 100 }
+  const talking = buildFrame({ map: mid, agents: {}, motion: {}, bubbles: [], now: 0, player })
+
+  expect(signOf(said)).toBe(room?.sign.text)
+  expect(signOf(talking)).toBe(room?.sign.text)
+  expect(said.some(r => r.some(c => c.bg === BUBBLE_BG))).toBe(true)
+  expect(said.every(r => r.length === mid.columns)).toBe(true)
+})
+
+for (const hour of [12, 22]) {
+  test(`a mid crowd stays under 256 pairs at ${hour}:00`, () => {
+    const tiers: Tier[] = ['haiku', 'sonnet', 'opus', 'fable', 'grey']
+    const roles = Object.keys(ROLE_COLORS) as Role[]
+    const mid = buildOffice(160, 23, midTeams(4), MID_FOOT)
+    const roster: Roster = {}
+    const motion: Motion = {}
+    const spots = mid.rooms.flatMap(r => r.anchors)
+    for (let i = 0; i < 32; i++) {
+      const spot = spots[i % spots.length] ?? { x: 1, y: 2 }
+      const walking = i % 3 === 0
+      roster[`c${i}`] = agent(`c${i}`, {
+        pose: walking ? 'walk' : POSES[i % POSES.length] ?? 'idle',
+        tier: tiers[i % tiers.length] ?? 'grey',
+        role: roles[i % roles.length] ?? 'dev',
+      })
+      motion[`c${i}`] = { ...at(spot.x, spot.y, i), path: walking ? [{ x: spot.x + 1, y: spot.y }] : [] }
+    }
+    const cat: Cat = { x: 14, y: 15, facing: 'left', frame: 1, path: [{ x: 15, y: 15 }], restUntil: 0, seed: 1 }
+    const full = buildFrame({ map: mid, agents: roster, motion, bubbles: [], now: 300, hour, cat })
+    const allowed = new Set([...OFFICE_PALETTE.map(c => tint(c, hour)), ...SPRITE_PALETTE, ...CAT_PALETTE])
+
+    expect(countPairs(full)).toBeLessThan(PAIR_BUDGET)
+    expect(full.flat().some(c => c.fg === CAT_FUR || c.bg === CAT_FUR)).toBe(true)
+    expect(full.flat().every(c => c.fg === DEFAULT_COLOR || allowed.has(c.fg) || allowed.has(tint(c.fg, hour)))).toBe(true)
+    for (const room of mid.rooms) {
+      const crop = cropFrame(full, mid, 76, 11, focusOf(mid, room.doorStand, 'team:m0'))
+      expect(crop).toHaveLength(11)
+      expect(countPairs(crop)).toBeLessThan(PAIR_BUDGET)
+    }
+  })
+}
+
+test('mid shoes show on the darkest room floors, day and night', () => {
+  const lum = (c: number): number => {
+    const lin = (v: number): number => (v / 255 <= 0.03928 ? v / 255 / 12.92 : (((v / 255) + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * lin((c >> 16) & 255) + 0.7152 * lin((c >> 8) & 255) + 0.0722 * lin(c & 255)
+  }
+  const contrast = (a: number, b: number): number => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05)
+  for (const floor of Object.values(ROOM_FLOORS)) {
+    for (const hour of [12, 22]) expect(contrast(MID_SHOE, tint(floor, hour))).toBeGreaterThan(2.5)
+  }
+  // The shoes the frame draws are that colour, under the legs of a standing mid figure.
+  const mid = buildOffice(76, 23, midTeams(1), MID_FOOT)
+  const spot = mid.rooms[0]?.anchors[0] ?? { x: 1, y: 2 }
+  const grid = buildFrame({ map: mid, agents: { a1: agent('a1', { room: 'team:m0' }) }, motion: { a1: at(spot.x, spot.y) }, bubbles: [], now: 0, hour: 22 })
+  expect(grid[spot.y + 4]?.[spot.x + 1]?.bg).toBe(MID_SHOE)
 })
