@@ -5,6 +5,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "validate": "claude plugin validate .claude/skills/agents-office",
     "test": "claude plugin test .claude/skills/agents-office",
+    "install:user": "sh scripts/install-user.sh",
+    "uninstall:user": "sh scripts/uninstall-user.sh",
     "check": "npm run validate && npm run typecheck && npm run test"
   },
   "devDependencies": {
