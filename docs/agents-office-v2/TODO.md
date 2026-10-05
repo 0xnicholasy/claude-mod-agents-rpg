@@ -271,7 +271,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; player.test.ts: 'a room jump walks tile by tile', 'WASD cancels a jump'. LIVE as above.
 
 ### T12 Inspect the nearest agent with e
-- status: done (#PR, 2026-10-05)
+- status: done (#35, 2026-10-05)
 - needs: T11
 - size: M
 - scope:
