@@ -224,7 +224,7 @@ const MID_BAND_ROWS = 7
 const MID_CORRIDOR_ROWS = 5
 
 const isSmall = (foot: Footprint): boolean => foot.w === SMALL_FOOT.w && foot.h === SMALL_FOOT.h
-const isMid = (foot: Footprint): boolean => foot.w === MID_FOOT.w && foot.h === MID_FOOT.h
+export const isMid = (foot: Footprint): boolean => foot.w === MID_FOOT.w && foot.h === MID_FOOT.h
 
 // Width of the virtual map: the pane's, or wider when every team needs its minimum room (D45). Rooms never
 // hide; camera.ts crops the view to the pane.

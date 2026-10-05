@@ -13,7 +13,9 @@ declare module 'claude-code' {
   interface PluginState {
     'agents-office': {
       opened: boolean
-      viewport: { columns: number; rows: number; strip?: number }
+      viewport: { columns: number; rows: number; strip?: number; foot?: { w: number; h: number } }
+      // The footprint the motion, player and cat were last seated for; null until the first tick (read as small).
+      seatFoot: { w: number; h: number } | null
       agents: Record<
         string,
         {

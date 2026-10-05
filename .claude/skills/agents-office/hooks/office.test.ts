@@ -1,10 +1,10 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { buildOffice } from './map'
+import { buildOffice, canStand, MID_FOOT } from './map'
 import { findPath } from './path'
 import { NUDGE_TEXT } from './pad'
-import { STRIP_ROWS } from './timing'
+import { STRIP_ROWS, TICK_MS } from './timing'
 import type { OfficeMap } from './map'
 const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }])
 
@@ -1156,8 +1156,9 @@ test('an inline pane on a 160x50 terminal stops at 23 body rows', async ($, on) 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount(viewportPane('inline', 156, 1, { columns: 160, rows: 50, isFullscreen: false }))
 
-  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 156, rows: 18 } })
-  expect(await ui.findAll({ type: 'Text' })).toHaveLength(5)
+  // 156 columns is mid: the 23-row body is all map and has no strip rows (D59, D63d).
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 156, rows: 23 } })
+  expect(await ui.findAll({ type: 'Text' })).toHaveLength(0)
   await ui.unmount()
 })
 
@@ -1691,4 +1692,44 @@ test('a finished subagent is never nudged', async ($, on) => {
   expect(run.calls.asks).toEqual([])
   expect(run.calls.sends).toEqual([])
   await run.ui.unmount()
+})
+
+test('a footprint change reseats the office', async ($, on) => {
+  const clock = mock.clock(on)
+  const writes: Record<string, unknown> = {}
+  on('state.set', ($, e, next) => {
+    writes[e.key] = e.value
+    return next(e)
+  })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', () => ({ value: {} }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const dock = (columns: number) => ({ ...paneProps, placement: 'dock', bodyColumns: columns, scroll: { offset: 0, bodyRows: 20 } }) as const
+  const ui = await $.ui.mount({ plugin: 'agents-office', surface: 'terminal', component: 'Pane', requestId: 'office', props: dock(70) })
+  await clock.advance(TICK_MS * 3)
+  type Entry = { x: number; y: number }
+  const small = (writes.motion as Record<string, Entry>).main
+  expect(small).toBeDefined()
+  expect(writes.seatFoot).toBeUndefined()
+
+  // 70 to 76 columns crosses the mid threshold: within a tick or two every entry stands on the mid map.
+  await ui.redraw(dock(76))
+  await clock.advance(TICK_MS * 3)
+  const own = writes.team as { id: `team:${string}`; label: string }
+  const mid = buildOffice(76, 20, [{ id: own.id, label: own.label }], MID_FOOT)
+  const motion = writes.motion as Record<string, Entry>
+  expect(writes.seatFoot).toEqual(MID_FOOT)
+  expect(writes.viewport).toMatchObject({ columns: 76, foot: MID_FOOT })
+  expect(Object.keys(motion)).toContain('main')
+  for (const entry of Object.values(motion)) expect(canStand(mid, entry.x, entry.y)).toBe(true)
+  expect(motion.main).not.toEqual(small)
+
+  // And back: the small layout reseats the same way.
+  await ui.redraw(dock(70))
+  await clock.advance(TICK_MS * 3)
+  const small2 = buildOffice(70, 20, [{ id: own.id, label: own.label }])
+  expect(writes.seatFoot).toEqual({ w: 3, h: 2 })
+  for (const entry of Object.values(writes.motion as Record<string, Entry>)) expect(canStand(small2, entry.x, entry.y)).toBe(true)
+  await ui.unmount()
 })
