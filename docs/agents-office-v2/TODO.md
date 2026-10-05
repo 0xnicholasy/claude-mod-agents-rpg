@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 26/35 done
+Progress: 27/35 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -494,7 +494,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; map.test.ts 'canStand checks every cell of the map footprint'; LIVE and LIVE120 captures match the pre-change captures (3x2 figures, same rooms)
 
 ### F03 Add the mid figure art and recolouring
-- status: todo
+- status: done (#PRNUM, 2026-10-05)
 - needs: F01
 - size: M
 - scope: New pure `midArt.ts` holds the D54 grids in semantic letters: 4 facings idle, 4 walk frames per facing, seated read, and seated type (2 frames). Add `midFigure({ pose, facing, frame, shirt, role, key, floor })` to `sprites.ts`. It maps slots to colours per D54 and returns 5x5 cells (standing) or 8x5 cells (seated) through `compose`, with props in the top-right cell. Extend `FIGURE_PALETTE`. Nothing draws it yet.
@@ -579,6 +579,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - done when: the skill is removed from the branch, TODO.md is archived, and the landing PR into feat/agents-office (or main, per D3) is open and approved by the owner
 
 ## Backlog
+- Shoe and eye near-black 0x141414 has about 1.4:1 contrast against the darkest room floor (F03 review); check on real floors in F06 and lighten if the shoes vanish.
 - A 5x3-cell large figure on maps of 18 rows or more (brief, optional).
 - Replace presence polling with `classic.FileChanged` + `watchPaths` once spike S4 is confirmed.
 - Try focusing the pad without the 1500 ms delay (untested in S1b).
@@ -634,3 +635,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 owner rejected 3x2 figure; F01-F09 inserted (Mid 5x5, D53)
 - 2026-10-05 F01 done (#49): spike measured 76x11, 70x11 and 116x23 bodies; the 11-row vertical crop keeps the Raster size at both call sites; 32 mid figures peak at 185 pairs (day = night), so no D60 shrink; U+25B2 and U+25BC are valid; `FOOTPRINT_*` appears on 34 lines in 6 files. No OWNER CHECK. Corrections to F02, F05, F07, F08 in D63.
 - 2026-10-05 F02 done (#50): `OfficeMap.foot` (`Footprint`, `SMALL_FOOT`, `MID_FOOT`, `CAT_FOOT`) replaces `FOOTPRINT_*`; map.ts `makeRoom` uses `SMALL_FOOT` until F04 passes the footprint in; the two tests import `SMALL_FOOT`; new test 'canStand checks every cell of the map footprint'. LIVE and LIVE120 show the same 3x2 layout. No behaviour change.
+- 2026-10-05 F03 done (#PRNUM): `midArt.ts` holds the D54 grids (letters; left walks are mirrors of right); `midFigure` and `midFrameCount` in `sprites.ts`; `FIGURE_PALETTE` gains the near-black, desk body, monitor frame, player shade and five tier shades (the palette size bound in two tests moved from 32 to 48). Seated ignores facing (one grid). Nothing draws it yet; LIVE and LIVE120 unchanged.

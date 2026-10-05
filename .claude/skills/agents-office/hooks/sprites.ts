@@ -1,6 +1,7 @@
 import { DEFAULT_COLOR, isValidGlyph, type Cell } from './raster'
 import type { Tier } from './agents'
 import { compose, type Px } from './pixels'
+import { MID_IDLE, MID_SEAT_READ, MID_SEAT_TYPE, MID_WALK, type Grid } from './midArt'
 
 export type Pose = 'idle' | 'walk' | 'read' | 'type' | 'run' | 'call' | 'talk'
 
@@ -48,6 +49,18 @@ const DESK = 0x8d6e63
 const SCREEN = 0x81d4fa
 const SCREEN_ALT = 0x4fa3c7
 const EYE = 0x1a1a1a
+// Mid figures (v2 D54): eyes and shoes share one near-black; the shirt shade is a fixed darker tone per tier.
+const MID_DARK = 0x141414
+const DESK_BODY = 0x5d4037
+const MONITOR_FRAME = 0x37474f
+const PLAYER_SHADE = 0xb0b0b0
+const SHIRT_SHADES: Readonly<Record<Tier, number>> = Object.freeze({
+  haiku: 0x2e8fbd,
+  sonnet: 0x3e8e41,
+  opus: 0xc7862f,
+  fable: 0x8e3fa0,
+  grey: 0x6e6e6e,
+})
 
 export const ROLE_COLORS: Readonly<Record<Role, number>> = Object.freeze({
   // D6 gave 0x263238, which is indistinguishable from the floor (0x2b303b): the lead's legs vanished.
@@ -68,6 +81,8 @@ export const FIGURE_PALETTE: readonly number[] = Object.freeze([
   ...SKIN_TONES,
   DESK, SCREEN, SCREEN_ALT, EYE,
   PROP_TERM, PROP_PHONE, PROP_TALK,
+  MID_DARK, DESK_BODY, MONITOR_FRAME, PLAYER_SHADE,
+  ...Object.values(SHIRT_SHADES),
 ])
 
 // FNV-1a, 32 bit. Picks hair and skin from a figure key.
@@ -152,4 +167,43 @@ export const figure = (o: FigureOpts): Cell[][] => {
 }
 
 // Every color a figure or nameplate can draw; a frame adds only the office colors.
+
+// Mid figures: reads are one frame, types two, walks four; everything else is one idle frame per facing.
+export const midFrameCount = (pose: Pose): number => {
+  if (pose === 'walk') return 4
+  if (pose === 'type' || pose === 'run' || pose === 'call' || pose === 'talk') return 2
+  return 1
+}
+
+export const midFigure = (o: FigureOpts): Cell[][] => {
+  const tier: Tier = o.shirt === 'player' ? 'grey' : (Object.hasOwn(TIER_COLORS, o.shirt) ? o.shirt : 'grey')
+  const shirt = o.shirt === 'player' ? PLAYER_SHIRT : TIER_COLORS[tier]
+  const shade = o.shirt === 'player' ? PLAYER_SHADE : SHIRT_SHADES[tier]
+  const pants = Object.hasOwn(ROLE_COLORS, o.role) ? ROLE_COLORS[o.role] : ROLE_COLORS.dev
+  const h = hashKey(o.key)
+  const hair = HAIR_TONES[h % HAIR_TONES.length] ?? HAIR_TONES[0]!
+  const skin = SKIN_TONES[Math.floor(h / HAIR_TONES.length) % SKIN_TONES.length] ?? SKIN_TONES[0]!
+  const facing: Facing = Object.hasOwn(MID_IDLE, o.facing) ? o.facing : 'down'
+  const n = midFrameCount(o.pose)
+  const f = Number.isInteger(o.frame) ? ((o.frame % n) + n) % n : 0
+  const colors: Readonly<Record<string, Px>> = {
+    H: hair, S: skin, T: shirt, U: shade, K: pants, P: pants, F: MID_DARK, E: MID_DARK, M: hair,
+    D: DESK, B: DESK_BODY, N: MONITOR_FRAME, C: SCREEN, '.': '.',
+  }
+  // Seated figures ignore facing: one grid, with the monitor on the right (D54).
+  const grid: Grid =
+    o.pose === 'read' ? MID_SEAT_READ
+    : o.pose === 'type' ? (MID_SEAT_TYPE[f] ?? MID_SEAT_READ)
+    : o.pose === 'walk' ? (MID_WALK[facing][f] ?? MID_IDLE[facing])
+    : MID_IDLE[facing]
+  const art: Px[][] = grid.map(row => Array.from(row, ch => colors[ch] ?? '.'))
+  if (o.pose === 'run' || o.pose === 'call' || o.pose === 'talk') {
+    const prop = o.pose === 'run' ? PROP_TERM : o.pose === 'call' ? PROP_PHONE : PROP_TALK
+    // Top-right cell (pixels 4,0 and 4,1): frame 0 puts the prop on its top pixel, frame 1 fills the cell.
+    art[0]![4] = prop
+    if (f === 1) art[1]![4] = prop
+  }
+  return compose(art, o.floor)
+}
+
 export const SPRITE_PALETTE: readonly number[] = Object.freeze([...FIGURE_PALETTE, PLATE_FG, PLATE_BG])
