@@ -10,7 +10,7 @@ const paneProps = {
   isFocused: false,
   bodyColumns: 60,
   placement: 'inline',
-  // 18 map rows plus the strip rows reserved under the Raster (D29).
+  // 18 map rows plus the 5 strip rows of a full-height body (D29, D52).
   scroll: { offset: 0, bodyRows: 18 + STRIP_ROWS },
   view: {},
 } as const
@@ -57,7 +57,7 @@ test('a 50x12 pane shows the widen line and ticks do not blit', async ($, on) =>
   expect(
     await ui.find({
       type: 'Text',
-      text: 'Office needs a 60x23 pane, this one is 50x12. Widen or heighten the terminal.',
+      text: 'Office needs a 60x12 pane, this one is 50x12. Widen or heighten the terminal.',
     }),
   ).toBeDefined()
   expect(await ui.find({ type: 'Raster' })).toBeUndefined()
@@ -66,16 +66,16 @@ test('a 50x12 pane shows the widen line and ticks do not blit', async ($, on) =>
   await ui.unmount()
 })
 
-test('the widen line and Raster switch at the 60x23 body-size boundary', async ($, on) => {
+test('the widen line and Raster switch at the 60x12 body-size boundary', async ($, on) => {
   mock.clock(on)
   stubSession(on)
   on('agent.list', () => ({ value: [] }))
   on('ui.blit', () => ({ value: {} }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const cases = [
-    { columns: 59, rows: 23, raster: false },
-    { columns: 60, rows: 22, raster: false },
-    { columns: 60, rows: 23, raster: true },
+    { columns: 59, rows: 12, raster: false },
+    { columns: 60, rows: 11, raster: false },
+    { columns: 60, rows: 12, raster: true },
   ]
   for (const c of cases) {
     const ui = await $.ui.mount({
@@ -87,7 +87,7 @@ test('the widen line and Raster switch at the 60x23 body-size boundary', async (
     })
     if (c.raster) {
       expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({
-        props: { columns: 60, rows: 18 },
+        props: { columns: 60, rows: 12 },
       })
       expect(await ui.find({ type: 'Text', text: /Office needs a/ })).toBeUndefined()
     } else {
@@ -95,7 +95,7 @@ test('the widen line and Raster switch at the 60x23 body-size boundary', async (
       expect(
         await ui.find({
           type: 'Text',
-          text: `Office needs a 60x23 pane, this one is ${c.columns}x${c.rows}. Widen or heighten the terminal.`,
+          text: `Office needs a 60x12 pane, this one is ${c.columns}x${c.rows}. Widen or heighten the terminal.`,
         }),
       ).toBeDefined()
       expect(await ui.find({ type: 'Raster' })).toBeUndefined()
@@ -843,6 +843,20 @@ test('the strip always renders exactly five truncating rows', async ($, on) => {
   await ui.unmount()
 })
 
+test('a 14-row body shows the two newest strip lines', async ($, on) => {
+  const { ui } = await startOffice($, on)
+  await $.agent.spawn({ ...spawnArgs, name: 'a1' })
+  for (let i = 0; i < 3; i += 1) await $.tool.call({ tool: 'SendMessage', to: 'a1', message: `m${i}` })
+  await ui.redraw({ ...paneProps, placement: 'dock', scroll: { offset: 0, bodyRows: 14 } })
+  const rows = await ui.findAll({ type: 'Text' })
+
+  expect(rows).toHaveLength(2)
+  expect(await ui.find({ type: 'Text', text: /told a1: m2/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /told a1: m1/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /told a1: m0/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('the strip shows main told a1: hello', async ($, on) => {
   const { ui } = await startOffice($, on)
   await $.agent.spawn({ ...spawnArgs, name: 'a1' })
@@ -940,4 +954,52 @@ test('a hook body that throws is logged as "agents-office: <name> threw" and the
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
   expect(logs.filter(text => /^agents-office: .+ threw /.test(text))).not.toEqual([])
+})
+
+const viewportPane = (placement: 'dock' | 'inline', bodyColumns: number, bodyRows: number, viewport: { columns: number; rows: number; isFullscreen: boolean }) =>
+  ({
+    plugin: 'agents-office',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'office',
+    props: { ...paneProps, placement, bodyColumns, scroll: { offset: 0, bodyRows } },
+    viewport,
+  }) as const
+
+test('an inline pane sizes from the viewport, not from a 1-row bodyRows', async ($, on) => {
+  mock.clock(on)
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', () => ({ value: {} }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(viewportPane('inline', 76, 1, { columns: 80, rows: 24, isFullscreen: false }))
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 76, rows: 12 } })
+  expect(await ui.findAll({ type: 'Text' })).toHaveLength(2)
+  await ui.unmount()
+})
+
+test('an inline pane on a 160x50 terminal stops at 23 body rows', async ($, on) => {
+  mock.clock(on)
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', () => ({ value: {} }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(viewportPane('inline', 156, 1, { columns: 160, rows: 50, isFullscreen: false }))
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 156, rows: 18 } })
+  expect(await ui.findAll({ type: 'Text' })).toHaveLength(5)
+  await ui.unmount()
+})
+
+test('a docked pane sizes from bodyRows and ignores the viewport', async ($, on) => {
+  mock.clock(on)
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', () => ({ value: {} }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(viewportPane('dock', 60, 40, { columns: 200, rows: 50, isFullscreen: true }))
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 60, rows: 35 } })
+  await ui.unmount()
 })

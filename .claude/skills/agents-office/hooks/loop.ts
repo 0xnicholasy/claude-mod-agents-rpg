@@ -6,8 +6,9 @@ import type { OfficeMap } from './map'
 import { STRIP_ROWS, STRIP_SMALL_ROWS } from './timing'
 
 // Rows the terminal keeps under an inline pane (blank, rule, prompt, rule, 4 status
-// lines) plus the pane's 2 border rows; measured live at 80x24 on 2026-10-05 (D50).
-export const INLINE_CHROME_ROWS = 10
+// lines, 1 trailing row) plus the pane's 2 border rows; measured live at 80x24 on
+// 2026-10-05 (D50). A fresh session's two /office echo lines clip 2 more rows.
+export const INLINE_CHROME_ROWS = 11
 // Tallest inline body: the full map plus a full strip. /office asks for this many rows.
 export const INLINE_MAX_ROWS = FULL_ROWS + STRIP_ROWS
 

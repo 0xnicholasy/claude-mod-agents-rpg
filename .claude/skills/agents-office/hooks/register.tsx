@@ -8,12 +8,12 @@ import type { ChoreoState } from './choreo'
 import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { arrived, pushLog, reported, told } from './log'
-import { mapFor, rasterSize } from './loop'
+import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
 import { MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { OfficeMap } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { packCells } from './raster'
-import { LIST_MS, STRIP_ROWS, TICK_MS } from './timing'
+import { LIST_MS, TICK_MS } from './timing'
 
 const PANE = 'office'
 const opened = atom({ plugin: 'agents-office', key: 'opened' } as const, false)
@@ -295,8 +295,9 @@ const startRefresh = ($: EngineInterface): void => {
 }
 
 const openOffice = async ($: EngineInterface): Promise<void> => {
-  // Without rows an inline pane opens a third of the terminal tall, too short for the office.
-  await $.ui.open({ id: PANE, title: 'Office', rows: MIN_ROWS + STRIP_ROWS, columns: MIN_COLUMNS })
+  // Without rows an inline pane opens a third of the terminal tall. The inline height
+  // follows the tree, so this caps it; the render sizes itself from the viewport (D50).
+  await $.ui.open({ id: PANE, title: 'Office', rows: INLINE_MAX_ROWS, columns: MIN_COLUMNS })
   await update($, opened, () => true)
 }
 
@@ -438,7 +439,8 @@ export const register: Register = on => {
         }
 
         const { Raster } = $.ui.resolve(e)
-        const { columns, rows } = rasterSize(e.props.bodyColumns, e.props.scroll.bodyRows)
+        const bodyRows = bodyRowsFor(e.props.placement, e.props.scroll.bodyRows, e.viewport?.rows)
+        const { columns, rows, strip: stripCount } = rasterSize(e.props.bodyColumns, bodyRows)
         // Drawing is pure: a state write inside the hook is denied. A timer closure
         // runs in its own dispatch, where the write is allowed (TODO.md D20).
         $.clock.after(0, () => {
@@ -458,7 +460,7 @@ export const register: Register = on => {
           return (
             <Box flexDirection="column">
               <Text>
-                {`Office needs a ${MIN_COLUMNS}x${MIN_ROWS + STRIP_ROWS} pane, this one is ${e.props.bodyColumns}x${e.props.scroll.bodyRows}. Widen or heighten the terminal.`}
+                {`Office needs a ${MIN_COLUMNS}x${MIN_ROWS} pane, this one is ${e.props.bodyColumns}x${bodyRows}. Widen or heighten the terminal.`}
               </Text>
             </Box>
           )
@@ -471,9 +473,11 @@ export const register: Register = on => {
           now: await $.clock.now(),
         })
         const cells = packCells(grid)
-        // Newest five lines under the Raster; empty rows keep the height stable.
+        // The newest `stripCount` lines under the Raster, oldest of them first (the log is
+        // stored oldest first); empty rows keep the height stable.
         const lines = await read($, log)
-        const strip = Array.from({ length: STRIP_ROWS }, (_, i) => lines[i] ?? ' ')
+        const newest = stripCount > 0 ? lines.slice(-stripCount) : []
+        const strip = Array.from({ length: stripCount }, (_, i) => newest[i] ?? ' ')
 
         return (
           <Box flexDirection="column">
