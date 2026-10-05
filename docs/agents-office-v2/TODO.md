@@ -196,7 +196,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; office.test.ts: the 8 renamed room tests plus 'a v1 roster is migrated on the first tick'. LIVE: the capture shows the `Reception` sign and a team sign with the repo basename.
 
 ### T07 Label the team room with project and branch
-- status: done (#PR, 2026-10-05)
+- status: done (#30, 2026-10-05)
 - needs: T06
 - size: S
 - scope: Inside the existing session.start (own guard), run `$.process.run(['git', '-C', e.cwd, 'branch', '--show-current'])` and update `team.label`/`branch`. New pure `team.ts` has `teamLabel(cwd, stdout, ok)`, which passes text through `clean` and falls back per D12.
