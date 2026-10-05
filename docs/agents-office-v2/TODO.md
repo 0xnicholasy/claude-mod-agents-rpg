@@ -103,7 +103,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `git worktree list`; `git branch --list 'spike/*'`; `test ! -e .claude/worktrees/agents-office-spikes && echo gone`
 
 ### T02 Add the half-block pixel compositor and pair counter
-- status: done (#PR, 2026-10-05)
+- status: done (#25, 2026-10-05)
 - needs: none
 - size: S
 - scope: New pure `pixels.ts`:
