@@ -1,4 +1,4 @@
-// Pure messaging choreography (D38): a SendMessage walks both agents to the Meeting
+// Pure messaging choreography (D38): a SendMessage walks both agents to the Conference
 // Room, shows the speaker's bubble, then sends both back. No `$`; register.tsx reads
 // the atoms, passes plain data in and writes the changed atoms back.
 import { onComplete } from './agents'
@@ -78,7 +78,7 @@ const onAnchor = (map: OfficeMap, room: RoomId, at: Point): boolean =>
 
 /**
  * Starts a meeting from `from` to the agent `to` names. Both get a `meet` script and
- * a path to a Meeting Room anchor. With no usable peer (non-string, unknown, self),
+ * a path to a Conference Room anchor. With no usable peer (non-string, unknown, self),
  * a speaker or peer that is done, leaving or already in a meeting, no map, or a
  * missing motion entry, nobody walks and `from` only gets the 4000 ms bubble.
  */
@@ -101,7 +101,7 @@ export const startMeet = (state: ChoreoState, from: string, to: unknown, text: s
     return { ...state, bubbles: withBubble(state.bubbles, { agentId: speaker.id, text: shown, until: now + BUBBLE_MS }) }
   }
 
-  const motion = assignTarget(assignTarget(state.motion, map, speaker.id, 'meeting'), map, peer.id, 'meeting')
+  const motion = assignTarget(assignTarget(state.motion, map, speaker.id, 'conference'), map, peer.id, 'conference')
   // Where each agent was heading when the meeting started (its desk), read before the walk is assigned.
   const origin = (agent: OfficeAgent): Point => {
     const { x, y } = targetOf(state.motion[agent.id] ?? { x: 0, y: 0, path: [], frame: 0 })
@@ -123,15 +123,15 @@ export const startMeet = (state: ChoreoState, from: string, to: unknown, text: s
     motion,
     agents: {
       ...state.agents,
-      [speaker.id]: { ...speaker, room: 'meeting', script: script(speaker, true) },
-      [peer.id]: { ...peer, room: 'meeting', script: script(peer, false) },
+      [speaker.id]: { ...speaker, room: 'conference', script: script(speaker, true) },
+      [peer.id]: { ...peer, room: 'conference', script: script(peer, false) },
     },
   }
 }
 
 /**
  * Moves every script one step along. Called each tick, after the agents have
- * stepped: drops expired bubbles; when both reach their Meeting Room anchors the
+ * stepped: drops expired bubbles; when both reach their Conference Room anchors the
  * speaker's bubble shows for BUBBLE_MS; when it expires both walk back to the tile they
  * left (their `returnAt`, else the first free anchor of `returnRoom`) with their pose restored; the script is cleared once back. A script
  * whose peer vanished, finished or cannot reach the room is released. Returns the
@@ -174,8 +174,8 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
   }
 
   // One step of a completion walk (T09). Every phase falls back to the next without a
-  // jump: an unreachable Lobby shows the bubbles where the agent stands; an unreachable
-  // Break Room ends the script in place.
+  // jump: an unreachable Reception shows the bubbles where the agent stands; an unreachable
+  // Kitchen ends the script in place.
   const advanceReport = (agent: OfficeAgent, script: ReportScript): void => {
     if (map === undefined) return
     const at = motion[agent.id]
@@ -185,16 +185,16 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
       motion = assignTarget(motion, map, agent.id, agent.home)
       return
     }
-    if (script.phase === 'toLobby') {
+    if (script.phase === 'toReception') {
       // Resuming (a report started with no pane, or a path left from before): keep a path only
-      // when it ends on a Lobby anchor, else retarget to the Lobby now.
-      const headsToLobby = (entry: Motion[string]): boolean => entry.path.length > 0 && onAnchor(map, 'lobby', targetOf(entry))
-      if (at !== undefined && headsToLobby(at)) return
-      if (at !== undefined && !onAnchor(map, 'lobby', at)) {
-        motion = assignTarget(motion, map, agent.id, 'lobby')
+      // when it ends on a Reception anchor, else retarget to Reception now.
+      const headsToReception = (entry: Motion[string]): boolean => entry.path.length > 0 && onAnchor(map, 'reception', targetOf(entry))
+      if (at !== undefined && headsToReception(at)) return
+      if (at !== undefined && !onAnchor(map, 'reception', at)) {
+        motion = assignTarget(motion, map, agent.id, 'reception')
         const routed = motion[agent.id]
-        if (routed !== undefined && headsToLobby(routed)) return
-        // Lobby unreachable: drop the stale path and show the bubbles where it stands.
+        if (routed !== undefined && headsToReception(routed)) return
+        // Reception unreachable: drop the stale path and show the bubbles where it stands.
         if (routed !== undefined && routed.path.length > 0) motion = { ...motion, [agent.id]: { ...routed, path: [] } }
       } else if (at !== undefined && at.path.length > 0) {
         motion = { ...motion, [agent.id]: { ...at, path: [] } }
@@ -213,14 +213,14 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
       setAgent({
         ...agent,
         status: 'leaving',
-        room: 'break',
+        room: 'kitchen',
         pose: 'idle',
-        script: { kind: 'report', phase: 'toBreak', stopped: script.stopped },
+        script: { kind: 'report', phase: 'toKitchen', stopped: script.stopped },
       })
-      motion = assignTarget(motion, map, agent.id, 'break')
+      motion = assignTarget(motion, map, agent.id, 'kitchen')
       return
     }
-    // toBreak: arrived (or no path to follow) ends the script; expire takes it from there.
+    // toKitchen: arrived (or no path to follow) ends the script; expire takes it from there.
     if (at === undefined || at.path.length === 0) setAgent(clearScript(agent))
   }
 
@@ -266,7 +266,7 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
         continue
       }
       if (mine.path.length > 0 || theirs.path.length > 0) continue
-      if (!onAnchor(map, 'meeting', mine) || !onAnchor(map, 'meeting', theirs)) {
+      if (!onAnchor(map, 'conference', mine) || !onAnchor(map, 'conference', theirs)) {
         release(id)
         release(peer.id)
         continue
@@ -317,8 +317,8 @@ export const advanceScripts = (state: ChoreoState, now: number): ChoreoState => 
 
 /**
  * Starts the completion walk for the agent whose turn ended (T09): it is marked done,
- * walks to the Lobby, shows "done" (or "stopped" when `reason` is not 'answer') while its
- * parent (or main) shows "got it" for BUBBLE_MS, then walks to the Break Room as
+ * walks to Reception, shows "done" (or "stopped" when `reason` is not 'answer') while its
+ * parent (or main) shows "got it" for BUBBLE_MS, then walks to the Kitchen as
  * `leaving`. A meeting it was in is released first, so the peer returns normally.
  * A teammate only turns idle (D26); main, an unknown agent or one already finished
  * changes nothing. With no map or motion entry the agent is only marked done.
@@ -338,17 +338,17 @@ export const startReport = (state: ChoreoState, agentId: string, now: number, re
   const { map } = released
   const walking: OfficeAgent = {
     ...bare,
-    room: 'lobby',
+    room: 'reception',
     pose: 'idle',
-    script: { kind: 'report', phase: 'toLobby', stopped: reason !== 'answer' },
+    script: { kind: 'report', phase: 'toReception', stopped: reason !== 'answer' },
   }
   const agents = { ...released.agents, [agentId]: walking }
   if (map === undefined || released.motion[agentId] === undefined) return { ...released, agents }
 
-  const routed = assignTarget(released.motion, map, agentId, 'lobby')
+  const routed = assignTarget(released.motion, map, agentId, 'reception')
   const entry = routed[agentId]
-  // No path to the Lobby: a path left toward another room is dropped, never walked.
-  if (entry !== undefined && entry.path.length > 0 && !onAnchor(map, 'lobby', targetOf(entry))) {
+  // No path to Reception: a path left toward another room is dropped, never walked.
+  if (entry !== undefined && entry.path.length > 0 && !onAnchor(map, 'reception', targetOf(entry))) {
     return { ...released, agents, motion: { ...routed, [agentId]: { ...entry, path: [] } } }
   }
 

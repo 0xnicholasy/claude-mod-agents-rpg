@@ -1,9 +1,11 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { buildMap } from './map'
+import { buildOffice } from './map'
 import { findPath } from './path'
 import { STRIP_ROWS } from './timing'
+import type { OfficeMap } from './map'
+const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
 
 const paneProps = {
   title: 'Office',
@@ -348,6 +350,7 @@ test('no blit happens before the pane renders', async ($, on) => {
 const stubSession = (on: On, logs?: string[]): void => {
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'office' } }))
+  on('session.id', () => ({ value: 't1' }))
   on('ui.log', (_$, e) => {
     logs?.push(e.text)
 
@@ -545,7 +548,7 @@ test('a spawned agent is drawn on the first tick after the spawn', async ($, on)
   await ui.unmount()
 })
 
-test('a spawned agent is at the Lobby door, then one tile further per 100 ms tick', async ($, on) => {
+test('a spawned agent enters at the Reception door, then one tile further per 100 ms tick', async ($, on) => {
   const clock = mock.clock(on)
   const positions: Array<{ x: number; y: number }> = []
   on('state.set', ($, e, next) => {
@@ -567,9 +570,9 @@ test('a spawned agent is at the Lobby door, then one tile further per 100 ms tic
   await clock.advance(100)
   await clock.advance(100)
 
-  const lobby = buildMap(60, 18).rooms.find(r => r.id === 'lobby')
+  const reception = buildMap(60, 18).rooms.find(r => r.id === 'reception')
   expect(positions).toHaveLength(3)
-  expect(positions[0]).toEqual(lobby?.doorStand)
+  expect(positions[0]).toEqual(reception?.doorStand)
   for (const [i, p] of positions.slice(1).entries()) {
     const prev = positions[i]
     expect(Math.abs(p.x - (prev?.x ?? 0)) + Math.abs(p.y - (prev?.y ?? 0))).toBe(1)
@@ -580,15 +583,25 @@ test('a spawned agent is at the Lobby door, then one tile further per 100 ms tic
 type MotionWrite = Record<string, { x: number; y: number; path: Array<{ x: number; y: number }> }>
 
 // Starts a session with a mounted pane and returns a reader for the latest motion write.
-const startOffice = async ($: Engine, on: On) => {
+// `v1Roster`, when given, replaces the first roster write (the session.start seed), as if a v1 mod had stored it.
+const startOffice = async ($: Engine, on: On, v1Roster?: Record<string, unknown>) => {
   const clock = mock.clock(on)
+  let seedPending = v1Roster !== undefined
   let latest: MotionWrite = {}
   let latestBubbles: Array<{ agentId: string; text: string; until: number }> = []
   let latestRoster: string[] = []
+  let latestAgents: Record<string, { room: string; home: string; pose: string }> = {}
   const logs: string[] = []
   on('state.set', ($, e, next) => {
     // StateWrite types `value` as the union of every atom; only the motion, bubbles and agents atoms are read.
-    if (e.key === 'agents') latestRoster = Object.keys(e.value as Record<string, unknown>)
+    if (e.key === 'agents' && seedPending) {
+      seedPending = false
+      return next({ ...e, value: v1Roster as never })
+    }
+    if (e.key === 'agents') {
+      latestRoster = Object.keys(e.value as Record<string, unknown>)
+      latestAgents = e.value as typeof latestAgents
+    }
     if (e.key === 'motion') latest = e.value as MotionWrite
     if (e.key === 'bubbles') latestBubbles = e.value as typeof latestBubbles
     return next(e)
@@ -603,7 +616,7 @@ const startOffice = async ($: Engine, on: On) => {
   const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
   await clock.advance(100)
 
-  return { clock, ui, logs, motion: () => latest, bubbles: () => latestBubbles, roster: () => latestRoster }
+  return { clock, ui, logs, motion: () => latest, bubbles: () => latestBubbles, roster: () => latestRoster, agents: () => latestAgents }
 }
 
 const endsAtAnchor = (entry: MotionWrite[string] | undefined, room: string): boolean => {
@@ -613,12 +626,23 @@ const endsAtAnchor = (entry: MotionWrite[string] | undefined, room: string): boo
   return end !== undefined && anchors.some(a => a.x === end.x && a.y === end.y)
 }
 
-test('a Read call on the main loop sends main toward the Library and the tool still runs', async ($, on) => {
-  const { ui, motion } = await startOffice($, on)
+test('a Read call seats main at its team desk in the read pose and the tool still runs', async ($, on) => {
+  const { ui, motion, agents } = await startOffice($, on)
   const result = await $.tool.call({ tool: 'Read', file_path: 'x' })
+  const desk = buildMap(60, 18).rooms.find(r => r.id === 'team:t1')?.anchors[0]
 
   expect(result).toMatchObject({ result: 'stub' })
-  expect(endsAtAnchor(motion().main, 'library')).toBe(true)
+  expect(agents().main).toMatchObject({ room: 'team:t1', pose: 'read' })
+  expect(motion().main).toMatchObject({ x: desk?.x, y: desk?.y, path: [] })
+  await ui.unmount()
+})
+
+test('a Bash call walks main to the Test Lab', async ($, on) => {
+  const { ui, motion, agents } = await startOffice($, on)
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+
+  expect(agents().main).toMatchObject({ room: 'lab', pose: 'run' })
+  expect(endsAtAnchor(motion().main, 'lab')).toBe(true)
   await ui.unmount()
 })
 
@@ -631,35 +655,52 @@ test('a subagent-scoped call moves that agent and not main', async ($, on) => {
   // hook (D9, observed in T01B); the cast is a test-only workaround.
   await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as never)
 
-  expect(endsAtAnchor(motion().a1, 'server')).toBe(true)
+  expect(endsAtAnchor(motion().a1, 'lab')).toBe(true)
   expect(motion().main).toEqual(mainBefore)
   await ui.unmount()
 })
 
 test('a repeated tool call does not re-path the agent', async ($, on) => {
   const { ui, motion } = await startOffice($, on)
-  await $.tool.call({ tool: 'Read', file_path: 'x' })
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
   const first = motion()
-  expect(endsAtAnchor(first.main, 'library')).toBe(true)
-  await $.tool.call({ tool: 'Read', file_path: 'y' })
+  expect(endsAtAnchor(first.main, 'lab')).toBe(true)
+  await $.tool.call({ tool: 'Bash', command: 'pwd' })
 
   expect(motion()).toBe(first)
   await ui.unmount()
 })
 
-test('a spawned Explore agent walks to a Library anchor', async ($, on) => {
+test('a spawned Explore agent walks to a team desk', async ($, on) => {
   const { ui, motion } = await startOffice($, on)
   await $.agent.spawn({ ...spawnArgs, subagentType: 'Explore' })
 
-  expect(endsAtAnchor(motion().a1, 'library')).toBe(true)
+  expect(endsAtAnchor(motion().a1, 'team:t1')).toBe(true)
   await ui.unmount()
 })
 
-test('a spawned default agent walks to a Dev Bay anchor', async ($, on) => {
+test('a spawned default agent enters at Reception and walks to a team desk', async ($, on) => {
   const { ui, motion } = await startOffice($, on)
   await $.agent.spawn(spawnArgs)
 
-  expect(endsAtAnchor(motion().a1, 'devbay')).toBe(true)
+  expect(endsAtAnchor(motion().a1, 'team:t1')).toBe(true)
+  await ui.unmount()
+})
+
+test('a v1 roster is migrated on the first tick', async ($, on) => {
+  const v1 = (id: string, room: string): Record<string, unknown> => ({
+    id, label: id, tier: 'grey', status: 'working', room, pose: 'idle', home: room, teammate: false,
+  })
+  const roster = { main: v1('main', 'lobby'), a1: v1('a1', 'devbay'), a2: v1('a2', 'library'), a3: v1('a3', 'server') }
+  const { clock, ui, agents } = await startOffice($, on, roster)
+  await clock.advance(100)
+  await clock.advance(100)
+
+  expect(agents().main).toMatchObject({ room: 'reception', home: 'team:t1' })
+  expect(agents().a1).toMatchObject({ room: 'team:t1', home: 'team:t1' })
+  expect(agents().a2).toMatchObject({ room: 'team:t1', home: 'team:t1' })
+  expect(agents().a3).toMatchObject({ room: 'lab', home: 'lab' })
+  expect(JSON.stringify(agents())).not.toMatch(/lobby|devbay|library|server|meeting|break|phone/)
   await ui.unmount()
 })
 
@@ -687,7 +728,7 @@ test('main messaging a1 meets, shows the bubble for 4 s, then both return to the
   const message = 'please review the parser changes and report back to me'
   await $.tool.call({ tool: 'SendMessage', to: 'a1', message })
 
-  const meeting = buildMap(60, 18).rooms.find(r => r.id === 'meeting')?.anchors ?? []
+  const meeting = buildMap(60, 18).rooms.find(r => r.id === 'conference')?.anchors ?? []
   const inMeeting = (id: 'main' | 'a1'): boolean => {
     const at = motion()[id]
     return at !== undefined && at.path.length === 0 && meeting.some(a => a.x === at.x && a.y === at.y)
@@ -715,7 +756,7 @@ test('main messaging a1 meets, shows the bubble for 4 s, then both return to the
   await ui.unmount()
 })
 
-test('a finished subagent reports, walks to the Break Room, leaves, and never teleports', async ($, on) => {
+test('a finished subagent reports in Reception, walks to the Kitchen, leaves, and never teleports', async ($, on) => {
   const { clock, ui, motion, bubbles, roster } = await startOffice($, on)
   const bound = longestPath()
   await $.agent.spawn(spawnArgs)
@@ -729,22 +770,22 @@ test('a finished subagent reports, walks to the Break Room, leaves, and never te
   // The hook returns the downstream (stub) result unchanged.
   expect(result).toEqual({ text: 'done' })
 
-  const breakRoom = buildMap(60, 18).rooms.find(r => r.id === 'break')?.bounds
-  const inBreak = (at: MotionWrite[string] | undefined): boolean =>
-    breakRoom !== undefined &&
+  const kitchen = buildMap(60, 18).rooms.find(r => r.id === 'kitchen')?.bounds
+  const inKitchen = (at: MotionWrite[string] | undefined): boolean =>
+    kitchen !== undefined &&
     at !== undefined &&
     at.path.length === 0 &&
-    at.x >= breakRoom.x &&
-    at.x < breakRoom.x + breakRoom.w &&
-    at.y >= breakRoom.y &&
-    at.y < breakRoom.y + breakRoom.h
+    at.x >= kitchen.x &&
+    at.x < kitchen.x + kitchen.w &&
+    at.y >= kitchen.y &&
+    at.y < kitchen.y + kitchen.h
   const texts = new Set<string>()
   let previous = before
   expect(previous).toBeDefined()
   let heldSince: number | undefined
   let goneAt: number | undefined
   let ticks = 0
-  // Lobby walk, 4 s of bubbles, Break Room walk; the 5 s floor is shorter than all that.
+  // Reception walk, 4 s of bubbles, Kitchen walk; the 5 s floor is shorter than all that.
   while (goneAt === undefined && ticks < 3 * bound + 100) {
     await clock.advance(100)
     ticks += 1
@@ -755,10 +796,10 @@ test('a finished subagent reports, walks to the Break Room, leaves, and never te
     }
     if (!roster().includes('a1')) {
       goneAt = ticks
-      // It left only from the Break Room, at least 5000 ms after the turn completed.
-      expect(inBreak(previous)).toBe(true)
+      // It left only from the Kitchen, at least 5000 ms after the turn completed.
+      expect(inKitchen(previous)).toBe(true)
       expect(ticks * 100).toBeGreaterThanOrEqual(5000)
-    } else if (heldSince === undefined && inBreak(at) && ticks * 100 >= 5000) {
+    } else if (heldSince === undefined && inKitchen(at) && ticks * 100 >= 5000) {
       heldSince = ticks
     }
     previous = at ?? previous
@@ -793,11 +834,11 @@ test('a bubble expires on the tick even when no pane was ever drawn', async ($, 
   expect(latest).toEqual([])
 })
 
-test('the strip shows quick-search arrived in the Library after it reaches the room', async ($, on) => {
+test('the strip shows quick-search arrived in its team room after it reaches the room', async ($, on) => {
   const { clock, ui, motion } = await startOffice($, on)
   const bound = longestPath()
   await $.agent.spawn({ ...spawnArgs, subagentType: 'quick-search' })
-  // Retarget before it walks anywhere, so the only arrival is the Library one.
+  // Retarget before it walks anywhere, so the only arrival is the team-room one.
   await $.tool.call({ tool: 'Read', file_path: 'x', agentId: 'a1' } as never)
   for (let i = 0; i < bound && (motion().a1?.path.length ?? 1) > 0; i += 1) {
     await clock.advance(100)
@@ -805,7 +846,7 @@ test('the strip shows quick-search arrived in the Library after it reaches the r
   expect(motion().a1?.path).toEqual([])
   await ui.redraw(paneProps)
 
-  expect(await ui.find({ type: 'Text', text: /quick-search arrived in the Library/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /quick-search arrived in the office/ })).toBeDefined()
   // Late ticks must not log the same walk again (A3).
   await clock.advance(2000)
   await ui.redraw(paneProps)
@@ -813,7 +854,7 @@ test('the strip shows quick-search arrived in the Library after it reaches the r
   await ui.unmount()
 })
 
-test('a SendMessage meeting logs the told line and no arrival in the Meeting Room', async ($, on) => {
+test('a SendMessage meeting logs the told line and no arrival in the Conference Room', async ($, on) => {
   const { clock, ui } = await startOffice($, on)
   await $.agent.spawn({ ...spawnArgs, name: 'a1' })
   await $.tool.call({ tool: 'SendMessage', to: 'a1', message: 'hello' })
@@ -821,7 +862,7 @@ test('a SendMessage meeting logs the told line and no arrival in the Meeting Roo
   await ui.redraw(paneProps)
 
   expect(await ui.find({ type: 'Text', text: /main told a1: hello/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /arrived in the Meeting Room/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /arrived in the Conference Room/ })).toBeUndefined()
   await ui.unmount()
 })
 

@@ -1,8 +1,8 @@
 // Pure frame pieces only: `claude plugin validate` refuses a `$` passed to a
 // function imported from another file, so `startLoop` and `tick` live in
 // register.tsx and call these (TODO.md D19). Durations live in timing.ts.
-import { buildMap, FULL_ROWS, MIN_COLUMNS, MIN_ROWS } from './map'
-import type { OfficeMap } from './map'
+import { buildOffice, FULL_ROWS, MIN_COLUMNS, MIN_ROWS } from './map'
+import type { OfficeMap, TeamSpec } from './map'
 import { STRIP_ROWS, STRIP_SMALL_ROWS } from './timing'
 
 // Rows an inline pane never gets: 9 rows below it, its 2 border rows, and the 2 transcript
@@ -40,16 +40,16 @@ export const rasterSize = (
 export const isOfficeSize = (columns: number, rows: number): boolean =>
   columns >= MIN_COLUMNS && rows >= MIN_ROWS
 
-// One-entry cache keyed on columns,rows: a pure cache like lastFrameCells
-// (D32), so render, tick and spawn share one map per size.
+// One-entry cache keyed on columns, rows, the own team and the team list: a pure cache like
+// lastFrameCells (D32), so render, tick and spawn share one map per size.
 let cached: { key: string; map: OfficeMap } | undefined
 
-// The map for a raster size, or undefined below the 60x12 minimum.
-export const mapFor = (columns: number, rows: number): OfficeMap | undefined => {
+// The map for a raster size and a team list in room order, or undefined below the 60x11 minimum.
+export const mapFor = (columns: number, rows: number, teams: TeamSpec[], ownId: string): OfficeMap | undefined => {
   if (!isOfficeSize(columns, rows)) return undefined
-  const key = `${columns},${rows}`
+  const key = `${columns},${rows},${ownId},${teams.map(t => `${t.id}=${t.label}`).join('|')}`
   if (cached?.key === key) return cached.map
-  const map = buildMap(columns, rows)
+  const map = buildOffice(columns, rows, teams, ownId)
   cached = { key, map }
 
   return map

@@ -1,14 +1,16 @@
 import { expect, test } from 'claude-code/testing'
-import { buildFrame, DOOR_BG, FLOOR_BG, OFFICE_PALETTE, placeMotion, SIGN_BG, SIGN_FG, BUBBLE_BG, BUBBLE_FG } from './frame'
+import { buildFrame, DOOR_BG, FLOOR_BG, OFFICE_PALETTE, placeMotion, ROOM_FLOORS, SIGN_BG, SIGN_FG, BUBBLE_BG, BUBBLE_FG } from './frame'
 import type { Bubble, Motion } from './frame'
 import type { OfficeAgent, Roster, Tier } from './agents'
-import { buildMap } from './map'
+import { buildOffice } from './map'
 import { DEFAULT_COLOR } from './raster'
 import type { Cell } from './raster'
 import { enterAtDoor } from './motion'
 import { countPairs, PAIR_BUDGET } from './pixels'
 import { FACINGS, figure, nameplate, POSES, ROLE_COLORS, SPRITE_PALETTE } from './sprites'
 import type { Facing, Pose, Role } from './sprites'
+import type { OfficeMap } from './map'
+const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
 
 const map = buildMap(60, 18)
 
@@ -17,8 +19,8 @@ const agent = (id: string, over: Partial<OfficeAgent> = {}): OfficeAgent => ({
   label: id,
   tier: 'opus',
   status: 'working',
-  room: 'devbay',
-  home: 'devbay',
+  room: 'team:t1',
+  home: 'team:t1',
   pose: 'idle',
   teammate: false,
   ...over,
@@ -26,7 +28,7 @@ const agent = (id: string, over: Partial<OfficeAgent> = {}): OfficeAgent => ({
 
 const at = (x: number, y: number, frame = 0): Motion[string] => ({ x, y, path: [], frame })
 
-const devbay = map.rooms.find(r => r.id === 'devbay')
+const devbay = map.rooms.find(r => r.id === 'team:t1')
 const anchor = devbay?.anchors[0] ?? { x: 0, y: 0 }
 
 test('frame draws every room sign at its anchor', () => {
@@ -34,7 +36,7 @@ test('frame draws every room sign at its anchor', () => {
 
   expect(grid).toHaveLength(18)
   expect(grid.every(row => row.length === 60)).toBe(true)
-  expect(map.rooms).toHaveLength(7)
+  expect(map.rooms).toHaveLength(6)
   for (const room of map.rooms) {
     const drawn = room.sign.cells.map(p => grid[p.y]?.[p.x])
     expect(String.fromCodePoint(...drawn.map(c => c?.ch ?? 0x3f))).toBe(room.sign.text)
@@ -130,6 +132,18 @@ test('office and figure colors stay inside the palettes and the pair budget', ()
 
   expect([...colors].every(c => allowed.has(c))).toBe(true)
   expect(countPairs(grid)).toBeLessThan(PAIR_BUDGET)
+})
+
+test('each room kind has its own floor color and no sign names a v1 room', () => {
+  const grid = buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0 })
+  expect(new Set(Object.values(ROOM_FLOORS)).size).toBe(6)
+  for (const room of map.rooms) {
+    const { x, y, w, h } = room.bounds
+    expect(grid[y + h - 1]?.[x + w - 1]?.bg).toBe(ROOM_FLOORS[room.kind])
+    expect(room.sign.text).not.toMatch(/Library|Dev Bay|Lobby|Break|Meeting|Server|Phone Booth/)
+  }
+  // The corridor keeps the base floor.
+  expect(grid[map.corridor.y]?.[map.corridor.x]?.bg).toBe(FLOOR_BG)
 })
 
 test('a crowd of 32 figures stays under 256 color pairs', () => {
@@ -249,7 +263,7 @@ test('a bubble at the right edge draws up to the edge and nothing past it', () =
 })
 
 test('placeMotion treats the end of a walker path as held', () => {
-  const walking = enterAtDoor({}, map, 'a', 'devbay')
+  const walking = enterAtDoor({}, map, 'a', 'team:t1')
   const first = devbay?.anchors[0]
   const second = devbay?.anchors[1]
   const placed = placeMotion(map, { a: agent('a'), b: agent('b') }, walking)
@@ -272,8 +286,8 @@ const textAt = (grid: ReturnType<typeof buildFrame>, y: number, x: number, n: nu
 
 test('a nameplate at a left-wall desk shifts onto the floor', () => {
   const wide = buildMap(76, 11)
-  const desk = wide.rooms.find(r => r.id === 'lobby')?.anchors[0] ?? { x: 0, y: 0 }
-  const roster: Roster = { m: agent('m', { label: 'main', room: 'lobby', home: 'lobby' }) }
+  const desk = wide.rooms.find(r => r.id === 'reception')?.anchors[0] ?? { x: 0, y: 0 }
+  const roster: Roster = { m: agent('m', { label: 'main', room: 'reception', home: 'reception' }) }
   const grid = buildFrame({ map: wide, agents: roster, motion: { m: at(desk.x, desk.y) }, bubbles: [], now: 0 })
   expect(grid[desk.y - 1]?.[0]?.ch).toBe(WALL_CH)
   expect(textAt(grid, desk.y - 1, 1, 4)).toBe('main')
@@ -281,10 +295,10 @@ test('a nameplate at a left-wall desk shifts onto the floor', () => {
 })
 
 test("a nameplate wider than its room is cut at the room's walls", () => {
-  const phone = map.rooms.find(r => r.id === 'phone')
+  const phone = map.rooms.find(r => r.id === 'booths')
   const desk = phone?.anchors[0] ?? { x: 0, y: 0 }
   const bounds = phone?.bounds ?? { x: 0, y: 0, w: 0, h: 0 }
-  const roster: Roster = { p: agent('p', { label: 'abcdefghijkl', room: 'phone', home: 'phone' }) }
+  const roster: Roster = { p: agent('p', { label: 'abcdefghijkl', room: 'booths', home: 'booths' }) }
   const grid = buildFrame({ map, agents: roster, motion: { p: at(desk.x, desk.y) }, bubbles: [], now: 0 })
   const y = desk.y - 1
   expect(textAt(grid, y, bounds.x, bounds.w)).toBe('abcdefghijkl'.slice(0, bounds.w))
@@ -294,8 +308,8 @@ test("a nameplate wider than its room is cut at the room's walls", () => {
 
 test('no nameplate is drawn when the row above is a door or wall', () => {
   const wide = buildMap(76, 11)
-  const stand = wide.rooms.find(r => r.id === 'lobby')?.doorStand ?? { x: 0, y: 0 }
-  const roster: Roster = { m: agent('m', { label: 'main', room: 'lobby', home: 'lobby' }) }
+  const stand = wide.rooms.find(r => r.id === 'reception')?.doorStand ?? { x: 0, y: 0 }
+  const roster: Roster = { m: agent('m', { label: 'main', room: 'reception', home: 'reception' }) }
   const bare = buildFrame({ map: wide, agents: {}, motion: {}, bubbles: [], now: 0 })
   const grid = buildFrame({ map: wide, agents: roster, motion: { m: at(stand.x, stand.y) }, bubbles: [], now: 0 })
   expect(grid[stand.y - 1]).toEqual(bare[stand.y - 1])
