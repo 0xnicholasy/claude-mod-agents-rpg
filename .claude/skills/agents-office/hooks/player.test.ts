@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
-import { buildOffice, canStand } from './map'
+import { buildOffice, canStand, roomAt } from './map'
 import type { OfficeMap } from './map'
 import type { Intent } from './pad'
-import { padRect, settleEmote, spawnPlayer, stepPlayer } from './player'
+import { jumpOrder, padRect, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { INTENT_MS } from './timing'
 
@@ -88,4 +88,63 @@ test('an emote lasts 3000 ms from the press and then clears', () => {
   const gone = settleEmote(shown, undefined, 4000)
   expect(gone.emote).toBeUndefined()
   expect(gone.until).toBeUndefined()
+})
+
+test('a burst of 4 taps applies all 4 at one tick per 100 ms (D37)', () => {
+  // Regression: staleness used to be measured from the newest press, so the 4th tap (consumed 300 ms in) expired.
+  let player = start
+  let intent: Intent | undefined = tap('d', 1000, 4)
+  for (let i = 0; i < 4; i++) {
+    const out = stepPlayer(player, map, intent, 1000 + i * 100, 'team:t1')
+    player = out.player ?? player
+    intent = out.intent
+  }
+  expect(player.x).toBe(start.x + 4)
+  expect(intent?.taps).toBe(0)
+})
+
+test('a backlog that stops being consumed still goes stale', () => {
+  const out = stepPlayer(start, map, tap('d', 0, 4), INTENT_MS + 50, 'team:t1')
+  expect(out.player?.x).toBe(start.x)
+  expect(out.intent?.taps).toBe(0)
+})
+
+test('a room jump walks tile by tile', () => {
+  const jump = startJump(start, map, 'next')
+  expect(jump.path.length).toBeGreaterThan(1)
+  const steps = jump.path.length
+  let player = jump
+  for (let i = 0; i < steps; i++) {
+    const before = player
+    player = stepPlayer(player, map, undefined, i * 100, 'team:t1').player ?? player
+    expect(Math.abs(player.x - before.x) + Math.abs(player.y - before.y)).toBe(1)
+  }
+  const target = jumpOrder(map)[1]
+  expect(player.path).toEqual([])
+  expect(roomAt(map, player.x, player.y)).toBe(target?.id)
+})
+
+test('WASD cancels a jump', () => {
+  const jump = startJump(start, map, 'next')
+  const out = stepPlayer(jump, map, tap('d', 0), 0, 'team:t1')
+  expect(out.player?.path).toEqual([])
+  expect(out.player?.x).toBe(start.x + 1)
+})
+
+test('[ from the first room goes to the last and ] wraps back', () => {
+  const order = jumpOrder(map)
+  const last = order[order.length - 1]
+  let player = startJump(start, map, 'prev')
+  while (player.path.length > 0) player = stepPlayer(player, map, undefined, 0, 'team:t1').player ?? player
+  expect(roomAt(map, player.x, player.y)).toBe(last?.id)
+  player = startJump(player, map, 'next')
+  while (player.path.length > 0) player = stepPlayer(player, map, undefined, 0, 'team:t1').player ?? player
+  expect(roomAt(map, player.x, player.y)).toBe(order[0]?.id)
+})
+
+test('a path that no longer starts next to the player is dropped', () => {
+  const far: Player = { ...start, path: [{ x: start.x + 5, y: start.y }] }
+  const out = stepPlayer(far, map, undefined, 0, 'team:t1')
+  expect(out.player?.path).toEqual([])
+  expect(out.player?.x).toBe(start.x)
 })
