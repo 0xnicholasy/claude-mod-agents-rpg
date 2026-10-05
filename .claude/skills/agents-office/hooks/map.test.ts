@@ -274,3 +274,103 @@ test('same-label teams in a narrow room keep distinguishable signs', () => {
   expect(fitSign('project-long 12', 6)).toBe('pro 12')
   expect(fitSign('project-long 12', 3)).toBe('pro')
 })
+
+const MID_SIZES: Array<[number, number]> = [[76, 11], [116, 23], [160, 50]]
+const MID_TEAM_COUNTS = [1, 2, 4, 7]
+const midLayout = (columns: number, rows: number, n: number): OfficeMap => buildOffice(columns, rows, teamsOf(n), MID_FOOT)
+
+test('mid rooms fit a 5x5 figure with a plate row', () => {
+  for (const [columns, rows] of MID_SIZES) {
+    for (const n of MID_TEAM_COUNTS) {
+      const map = midLayout(columns, rows, n)
+      expect(map.foot).toEqual(MID_FOOT)
+      expect(map.rows).toBe(Math.max(rows, 23))
+      expect(map.columns).toBe(Math.max(columns, n * 18 + 1, 71))
+      for (let i = 0; i < map.rooms.length; i++) {
+        const room = at(map.rooms, i)
+        for (let j = i + 1; j < map.rooms.length; j++) expect(overlap(room.bounds, at(map.rooms, j).bounds)).toBe(false)
+        expect(canStand(map, room.doorStand.x, room.doorStand.y)).toBe(true)
+        expect(room.door).toHaveLength(MID_FOOT.w)
+        expect(room.anchors.length).toBeGreaterThan(0)
+        for (const a of room.anchors) {
+          expect(canStand(map, a.x, a.y)).toBe(true)
+          expect(inside(room.bounds, a)).toBe(true)
+          // Sign row, plate row, then the 5 figure rows.
+          expect(a.y - room.bounds.y).toBe(2)
+          expect(tileAt(map, a.x, a.y - 1)).toBe('floor')
+        }
+        if (room.kind === 'team') {
+          expect(room.bounds.w).toBeGreaterThanOrEqual(17)
+          expect(room.bounds.h).toBeGreaterThanOrEqual(7)
+        } else {
+          expect(room.bounds.w).toBeGreaterThanOrEqual(13)
+        }
+      }
+      expect(map.corridor.h).toBeGreaterThanOrEqual(5)
+    }
+  }
+})
+
+test('every mid room is reachable', () => {
+  for (const [columns, rows] of MID_SIZES) {
+    for (const n of MID_TEAM_COUNTS) {
+      const map = midLayout(columns, rows, n)
+      const reception = at(map.rooms.filter(r => r.id === 'reception'), 0)
+      const seen = reachable(map, reception.doorStand)
+      for (const room of map.rooms) {
+        expect(seen.has(`${room.doorStand.x},${room.doorStand.y}`)).toBe(true)
+        for (const a of room.anchors) {
+          const same = a.x === reception.doorStand.x && a.y === reception.doorStand.y
+          expect(same || findPath(map, reception.doorStand, a).length > 0).toBe(true)
+        }
+      }
+    }
+  }
+})
+
+test('mid desks are spaced for the seated figure and stay inside the room', () => {
+  for (const [columns, rows] of MID_SIZES) {
+    for (const n of MID_TEAM_COUNTS) {
+      const map = midLayout(columns, rows, n)
+      for (const room of map.rooms) {
+        const xs = room.anchors.map(a => a.x)
+        for (let i = 1; i < xs.length; i++) expect(at(xs, i) - at(xs, i - 1)).toBe(room.kind === 'team' ? 9 : 6)
+        // The lead's desk is the leftmost anchor; every seated figure (8 wide) fits the interior.
+        if (room.kind === 'team') {
+          expect(at(xs, 0)).toBeLessThanOrEqual(room.bounds.x + 4)
+          for (const x of xs) expect(x + 8).toBeLessThanOrEqual(room.bounds.x + room.bounds.w)
+        }
+      }
+    }
+  }
+  for (const width of [60, 71, 90]) expect(() => buildOffice(width, 23, teamsOf(1), { w: 4, h: 4 })).toThrow()
+})
+
+test('the small layout is unchanged', () => {
+  const small = buildOffice(60, 11, teamsOf(2))
+  const glyph = { floor: '.', wall: '#', door: 'd', sign: 's' }
+  expect(small.tiles.map(row => row.map(k => glyph[k]).join(''))).toEqual([
+    '#ssssssssssssssssssss##########ssssssssssssssssssss#########',
+    '#.............................#............................#',
+    '#.............................#............................#',
+    '#.............................#............................#',
+    '##############ddd##########################ddd##############',
+    '#..........................................................#',
+    '#..........................................................#',
+    '#sssssssssddd#sssssssssddd#sssssssddd#sssssssddd#ssssss#ddd#',
+    '#............#............#..........#..........#..........#',
+    '#............#............#..........#..........#..........#',
+    '#............#............#..........#..........#..........#',
+  ])
+  expect(small.rooms.map(r => [r.id, r.doorStand, r.anchors])).toEqual([
+    ['team:s0', { x: 14, y: 2 }, [1, 6, 11, 16, 21, 26].map(x => ({ x, y: 2 }))],
+    ['team:s1', { x: 43, y: 2 }, [31, 36, 41, 46, 51, 56].map(x => ({ x, y: 2 }))],
+    ['reception', { x: 10, y: 8 }, [1, 5].map(x => ({ x, y: 9 }))],
+    ['conference', { x: 23, y: 8 }, [14, 18].map(x => ({ x, y: 9 }))],
+    ['kitchen', { x: 34, y: 8 }, [{ x: 28, y: 9 }]],
+    ['lab', { x: 45, y: 8 }, [{ x: 39, y: 9 }]],
+    ['booths', { x: 56, y: 8 }, [{ x: 50, y: 9 }]],
+  ])
+  expect(small.foot).toEqual(SMALL_FOOT)
+  expect(buildOffice(60, 11, teamsOf(2), SMALL_FOOT)).toEqual(small)
+})

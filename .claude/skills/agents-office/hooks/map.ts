@@ -27,7 +27,7 @@ export type Room = {
   // Room label drawn on the top interior row (the wall row above in a 3-row
   // room); `cells` are its tile positions.
   sign: { text: string; cells: Point[] }
-  // The three door cells in the wall row, left to right.
+  // The door cells in the wall row, left to right: one per footprint column.
   door: Point[]
   // Footprint top-left just inside the door.
   doorStand: Point
@@ -106,14 +106,15 @@ type RowBand = { interiorTop: number; interiorRows: number; doorRow: number }
 
 // `pitch` is the distance between desk anchors: the footprint plus the gap. `doorInset` is how far a
 // bottom-row door starts from the room's right edge.
-const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow: boolean, pitch: number, doorInset: number): Room => {
+const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow: boolean, pitch: number, doorInset: number, foot: Footprint, span: number = foot.w): Room => {
   const { interiorTop, interiorRows, doorRow } = band
-  const gap = pitch - SMALL_FOOT.w
+  // `span` is the width a desk takes: the footprint's, or a seated figure's in the mid team rooms.
+  const gap = pitch - span
   const count = Math.max(1, Math.floor((width + gap) / pitch))
   const offset = Math.floor((width - (pitch * count - gap)) / 2)
-  // Rooms with fewer than SMALL_FOOT.h + 2 interior rows put the sign on the wall
+  // Rooms with fewer than foot.h + 2 interior rows put the sign on the wall
   // row above so the interior's first row stays free for the nameplate.
-  const roomy = interiorRows >= SMALL_FOOT.h + 2
+  const roomy = interiorRows >= foot.h + 2
   const signY = roomy ? interiorTop : interiorTop - 1
   const allAnchors = Array.from({ length: count }, (_, i) => ({
     x: x + offset + pitch * i,
@@ -121,14 +122,14 @@ const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow
   }))
   // Top-row rooms centre the door; bottom-row rooms put it at the right so the
   // doorStand footprint never stands on the left-aligned sign.
-  const doorX = doorBelow ? x + Math.floor((width - SMALL_FOOT.w) / 2) : x + width - doorInset
-  const doorStandY = doorBelow ? interiorTop + interiorRows - SMALL_FOOT.h : interiorTop
+  const doorX = doorBelow ? x + Math.floor((width - foot.w) / 2) : x + width - doorInset
+  const doorStandY = doorBelow ? interiorTop + interiorRows - foot.h : interiorTop
   // In a bottom room the doorStand is on the top interior rows, where short rooms also
   // seat their desks, so a desk overlapping it is dropped. Top rooms keep every desk: their
   // centred stand sits among the desks by design and dropping them would empty the Phone Booths.
   const anchors = doorBelow
     ? allAnchors
-    : allAnchors.filter(a => Math.abs(a.x - doorX) >= SMALL_FOOT.w || Math.abs(a.y - doorStandY) >= SMALL_FOOT.h)
+    : allAnchors.filter(a => Math.abs(a.x - doorX) >= foot.w || Math.abs(a.y - doorStandY) >= foot.h)
   // A bottom room's sign shares its row with the door (wall row) or the doorStand (interior row), so it is
   // cut before them.
   const sign = doorBelow ? cut(spec.sign, width) : cut(spec.sign, doorX - x)
@@ -138,7 +139,7 @@ const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow
     kind: spec.kind,
     bounds: { x, y: interiorTop, w: width, h: interiorRows },
     sign: { text: sign, cells: Array.from(sign, (_, i) => ({ x: x + i, y: signY })) },
-    door: [0, 1, 2].map(i => ({ x: doorX + i, y: doorRow })),
+    door: Array.from({ length: foot.w }, (_, i) => ({ x: doorX + i, y: doorRow })),
     doorStand: { x: doorX, y: doorStandY },
     anchors,
   }
@@ -210,19 +211,53 @@ const SHARED: Spec[] = [
   { id: 'booths', name: 'Phone Booths', sign: 'Booths', width: 10, kind: 'booths' },
 ]
 
+// Mid layout (D56): 7-row bands (sign row, plate row, 5 figure rows), a 5-row corridor, 5-wide doors,
+// team desks 9 apart, shared anchors 6 apart.
+export const MID_TEAM_MIN_WIDTH = 17
+export const MID_SHARED_MIN_WIDTH = 13
+// A seated figure is 8 cells wide (midArt MID_SEAT_W): team desks are laid out for it, 9 apart.
+const MID_SEAT_W = 8
+export const MID_MIN_ROWS = 23
+const MID_TEAM_PITCH = 9
+const MID_SHARED_PITCH = 6
+const MID_BAND_ROWS = 7
+const MID_CORRIDOR_ROWS = 5
+
+const isSmall = (foot: Footprint): boolean => foot.w === SMALL_FOOT.w && foot.h === SMALL_FOOT.h
+const isMid = (foot: Footprint): boolean => foot.w === MID_FOOT.w && foot.h === MID_FOOT.h
+
 // Width of the virtual map: the pane's, or wider when every team needs its minimum room (D45). Rooms never
 // hide; camera.ts crops the view to the pane.
-export const virtualColumns = (columns: number, teamCount: number): number => Math.max(columns, teamCount * (TEAM_MIN_WIDTH + 1) + 1)
+export const virtualColumns = (columns: number, teamCount: number, foot: Footprint = SMALL_FOOT): number =>
+  isMid(foot)
+    ? Math.max(columns, teamCount * (MID_TEAM_MIN_WIDTH + 1) + 1, SHARED.length * (MID_SHARED_MIN_WIDTH + 1) + 1)
+    : Math.max(columns, teamCount * (TEAM_MIN_WIDTH + 1) + 1)
+
+// Rows above MID_MIN_ROWS go a third to the corridor and the rest to the two bands, as in the small layout.
+const midBands = (rows: number): { topRows: number; corridorRows: number; bottomRows: number } => {
+  const extra = Math.max(0, rows - MID_MIN_ROWS)
+  const rest = extra - Math.floor(extra / 3)
+  return {
+    topRows: MID_BAND_ROWS + Math.floor(rest / 2),
+    corridorRows: MID_CORRIDOR_ROWS + Math.floor(extra / 3),
+    bottomRows: MID_BAND_ROWS + rest - Math.floor(rest / 2),
+  }
+}
 
 /**
  * Layout of the v2 office: one team room per team in the top band, the five shared rooms in the bottom band
  * (D10). Each team room's first anchor is its lead's desk; look a team's room up by id. `teams` must already be in room order.
  * When the teams need more than `columns`, the map is wider than the pane (`map.columns`, D45) and the caller crops it.
  */
-export const buildOffice = (paneColumns: number, rows: number, teams: TeamSpec[]): OfficeMap => {
-  if (paneColumns < MIN_COLUMNS || rows < MIN_ROWS) throw new OfficeTooSmall(paneColumns, rows)
-  const columns = virtualColumns(paneColumns, teams.length)
-  const { topRows, corridorRows, bottomRows } = rowBands(rows)
+export const buildOffice = (paneColumns: number, paneRows: number, teams: TeamSpec[], foot: Footprint = SMALL_FOOT): OfficeMap => {
+  if (paneColumns < MIN_COLUMNS || paneRows < MIN_ROWS) throw new OfficeTooSmall(paneColumns, paneRows)
+  const mid = isMid(foot)
+  if (!mid && !isSmall(foot)) throw new Error(`map: no layout for a ${foot.w}x${foot.h} footprint`)
+  const rows = mid ? Math.max(paneRows, MID_MIN_ROWS) : paneRows
+  const columns = virtualColumns(paneColumns, teams.length, foot)
+  const { topRows, corridorRows, bottomRows } = mid ? midBands(rows) : rowBands(rows)
+  const teamPitch = mid ? MID_TEAM_PITCH : TEAM_PITCH
+  const sharedPitch = mid ? MID_SHARED_PITCH : 4
   const shown = teams
 
   const topBand: RowBand = { interiorTop: 1, interiorRows: topRows, doorRow: topRows + 1 }
@@ -240,17 +275,18 @@ export const buildOffice = (paneColumns: number, rows: number, teams: TeamSpec[]
       const width = i === 0 ? base + total - base * shown.length : base
       const sign = fitSign(team.label, width)
       const spec: Spec = { id: team.id, name: team.label, sign, width, kind: 'team' }
-      placed.push(makeRoom(spec, x, width, topBand, true, TEAM_PITCH, 4))
+      placed.push(makeRoom(spec, x, width, topBand, true, teamPitch, 4, foot, mid ? MID_SEAT_W : foot.w))
       x += width + 1
     })
   }
-  const widths = stretch(SHARED, columns - SHARED.length - 1)
+  const sharedSpecs = mid ? SHARED.map(spec => ({ ...spec, width: MID_SHARED_MIN_WIDTH })) : SHARED
+  const widths = stretch(sharedSpecs, columns - SHARED.length - 1)
   let x = 1
   SHARED.forEach((spec, i) => {
     const width = widths[i] ?? spec.width
-    placed.push(makeRoom(spec, x, width, bottomBand, false, 4, 3))
+    placed.push(makeRoom(spec, x, width, bottomBand, false, sharedPitch, foot.w, foot))
     x += width + 1
   })
 
-  return { columns, rows, tiles: paintTiles(columns, rows, corridor, placed), rooms: placed, corridor, foot: SMALL_FOOT }
+  return { columns, rows, tiles: paintTiles(columns, rows, corridor, placed), rooms: placed, corridor, foot }
 }
