@@ -24,3 +24,6 @@ export const PRESENCE_MS = 1000
 export const HEARTBEAT_MS = 3000
 // A presence file or heartbeat older than this drops its session (D18).
 export const STALE_MS = 10000
+// The office cat rests this long between walks (D24).
+export const CAT_REST_MIN_MS = 5000
+export const CAT_REST_MAX_MS = 15000

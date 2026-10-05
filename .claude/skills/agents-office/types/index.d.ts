@@ -66,6 +66,15 @@ declare module 'claude-code' {
         chat?: string
         until?: number
       } | null
+      cat: {
+        x: number
+        y: number
+        facing: 'left' | 'right'
+        frame: number
+        path: Array<{ x: number; y: number }>
+        restUntil: number
+        seed: number
+      } | null
       inspect: { agentId: string; text: string; until: number } | null
       identity: { sessionId: string; startedAt: number; dir?: string } | null
       share: 'all' | 'anon' | 'off'
