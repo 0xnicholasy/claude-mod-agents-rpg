@@ -329,7 +329,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; presence.test.ts: 'a record never carries paths or message text', 'records cap at 32 agents and 8 KB'; office.test.ts: 'presence writes on change and every 3 s', 'session.end writes a tombstone'. LIVE as above.
 
 ### T15 Read other sessions' presence
-- status: done (#PR, 2026-10-05)
+- status: done (#38, 2026-10-05)
 - needs: T14
 - size: M
 - scope: On the same 1 s timer:
