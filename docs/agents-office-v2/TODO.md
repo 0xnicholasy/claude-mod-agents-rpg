@@ -413,7 +413,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; pad.test.ts: 'chat mode swallows WASD', 'chat is cut to 40 cleaned characters'. LIVE2 as above.
 
 ### T21 Add the office cat and a day/night tint
-- status: done (#PR, 2026-10-05)
+- status: done (#44, 2026-10-05)
 - needs: T20
 - size: M
 - scope: Per D24:
