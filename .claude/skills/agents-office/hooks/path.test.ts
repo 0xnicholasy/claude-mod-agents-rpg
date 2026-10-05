@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { buildOffice, canStand, FOOTPRINT_H, FOOTPRINT_W, tileAt } from './map'
 import type { OfficeMap, Point, Room } from './map'
 import { findPath } from './path'
-const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
+const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }])
 
 const at = <T>(items: T[], i: number): T => {
   const item = items[i]

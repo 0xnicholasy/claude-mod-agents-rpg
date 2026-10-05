@@ -129,9 +129,12 @@ export type FrameInput = {
   player?: Player | null
   // Inspect text drawn over the corridor's first row, for panes with no strip rows (D39).
   overlay?: string
+  // The columns the overlay may use when the view is cropped (camera.ts overlaySpan); default the whole corridor.
+  overlayFrom?: number
+  overlayWidth?: number
 }
 
-export const buildFrame = ({ map, agents, motion, bubbles, now, player, overlay }: FrameInput): Cell[][] => {
+export const buildFrame = ({ map, agents, motion, bubbles, now, player, overlay, overlayFrom, overlayWidth }: FrameInput): Cell[][] => {
   const floors = floorColors(map)
   const grid = map.tiles.map((row, y) => row.map((kind, x) => baseCell(kind, floors[y]?.[x] ?? FLOOR_BG)))
   for (const room of map.rooms) {
@@ -139,8 +142,6 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, overlay 
     const glyphs = Array.from(room.sign.text, g => g.codePointAt(0))
     room.sign.cells.forEach((p, i) => {
       const code = glyphs[i]
-      // The `+N` mark owns the right end of the top wall row, so a sign on that row stops before it.
-      if (p.y === 0 && map.hidden > 0 && p.x >= map.columns - 2 - `+${map.hidden}`.length) return
       if (code !== undefined) put(grid, p.x, p.y, { ch: isValidGlyph(code) ? code : 0x3f, fg: SIGN_FG, bg: SIGN_BG })
     })
   }
@@ -233,18 +234,12 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, overlay 
     })
   }
 
-  // Teams hidden for lack of width (D21): a `+N` mark at the right end of the top band, over the sign row.
-  if (map.hidden > 0) {
-    const mark = textCells(`+${map.hidden}`, SIGN_FG, SIGN_BG)
-    mark.forEach((cell, i) => put(grid, map.columns - 1 - mark.length + i, 0, cell))
-  }
-
   // Inspect text (D39): one row over the corridor, cut to the corridor's width, on top of everything.
   if (overlay !== undefined && overlay !== '') {
     const { x, y, w } = map.corridor
     textCells(overlay, BUBBLE_FG, BUBBLE_BG)
-      .slice(0, w)
-      .forEach((cell, i) => put(grid, x + i, y, cell))
+      .slice(0, overlayWidth ?? w)
+      .forEach((cell, i) => put(grid, (overlayFrom ?? x) + i, y, cell))
   }
 
   return grid

@@ -40,8 +40,6 @@ export type OfficeMap = {
   tiles: TileKind[][]
   rooms: Room[]
   corridor: Rect
-  // Teams left out because they do not fit at the minimum room width (D21).
-  hidden: number
 }
 export type TeamSpec = { id: `team:${string}`; label: string }
 
@@ -207,26 +205,20 @@ const SHARED: Spec[] = [
   { id: 'booths', name: 'Phone Booths', sign: 'Booths', width: 10, kind: 'booths' },
 ]
 
-// The teams that get a room: all of them when they fit, else the first ones that fit with the
-// own team kept in place of the last one when it would be cut (D21).
-const visibleTeams = (teams: TeamSpec[], ownId: string, columns: number): TeamSpec[] => {
-  // n rooms need n interiors of TEAM_MIN_WIDTH plus n + 1 walls.
-  const fit = Math.max(0, Math.floor((columns - 1) / (TEAM_MIN_WIDTH + 1)))
-  if (teams.length <= fit) return teams
-  const head = teams.slice(0, fit)
-  if (head.some(t => t.id === ownId)) return head
-  const own = teams.find(t => t.id === ownId)
-  return own && fit > 0 ? [...head.slice(0, fit - 1), own] : head
-}
+// Width of the virtual map: the pane's, or wider when every team needs its minimum room (D45). Rooms never
+// hide; camera.ts crops the view to the pane.
+export const virtualColumns = (columns: number, teamCount: number): number => Math.max(columns, teamCount * (TEAM_MIN_WIDTH + 1) + 1)
 
 /**
  * Layout of the v2 office: one team room per team in the top band, the five shared rooms in the bottom band
- * (D10). Each team room's first anchor is its lead's desk; look a team's room up by id, since the own team can take the last slot when others are hidden. `teams` must already be in room order.
+ * (D10). Each team room's first anchor is its lead's desk; look a team's room up by id. `teams` must already be in room order.
+ * When the teams need more than `columns`, the map is wider than the pane (`map.columns`, D45) and the caller crops it.
  */
-export const buildOffice = (columns: number, rows: number, teams: TeamSpec[], ownId: string): OfficeMap => {
-  if (columns < MIN_COLUMNS || rows < MIN_ROWS) throw new OfficeTooSmall(columns, rows)
+export const buildOffice = (paneColumns: number, rows: number, teams: TeamSpec[]): OfficeMap => {
+  if (paneColumns < MIN_COLUMNS || rows < MIN_ROWS) throw new OfficeTooSmall(paneColumns, rows)
+  const columns = virtualColumns(paneColumns, teams.length)
   const { topRows, corridorRows, bottomRows } = rowBands(rows)
-  const shown = visibleTeams(teams, ownId, columns)
+  const shown = teams
 
   const topBand: RowBand = { interiorTop: 1, interiorRows: topRows, doorRow: topRows + 1 }
   const corridor: Rect = { x: 1, y: topRows + 2, w: columns - 2, h: corridorRows }
@@ -255,5 +247,5 @@ export const buildOffice = (columns: number, rows: number, teams: TeamSpec[], ow
     x += width + 1
   })
 
-  return { columns, rows, tiles: paintTiles(columns, rows, corridor, placed), rooms: placed, corridor, hidden: teams.length - shown.length }
+  return { columns, rows, tiles: paintTiles(columns, rows, corridor, placed), rooms: placed, corridor }
 }

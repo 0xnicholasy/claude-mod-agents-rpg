@@ -6,7 +6,7 @@ import { jumpOrder, padRect, settleEmote, spawnPlayer, startJump, stepPlayer } f
 import type { Player } from './player'
 import { INTENT_MS } from './timing'
 
-const map: OfficeMap = buildOffice(60, 18, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
+const map: OfficeMap = buildOffice(60, 18, [{ id: 'team:t1', label: 'proj' }])
 const spawned = spawnPlayer(map, 'team:t1')
 if (spawned === undefined) throw new Error('no spawn')
 const start: Player = spawned
@@ -16,7 +16,7 @@ test('the player spawns at the own team doorStand, clear of the pad cells', () =
   const room = map.rooms.find(r => r.id === 'team:t1')
   expect(start).toMatchObject({ x: room?.doorStand.x, y: room?.doorStand.y, facing: 'down', path: [] })
   for (const rows of [11, 12, 18, 24]) {
-    const m = buildOffice(60, rows, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
+    const m = buildOffice(60, rows, [{ id: 'team:t1', label: 'proj' }])
     const p = spawnPlayer(m, 'team:t1')
     const r = padRect(m)
     expect(p).toBeDefined()

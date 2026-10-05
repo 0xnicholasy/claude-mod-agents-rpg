@@ -4,7 +4,7 @@ import type { OfficeAgent, Roster, SpawnInput } from './agents'
 import { buildOffice } from './map'
 import type { OfficeMap } from './map'
 const HOME = 'team:t1'
-const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
+const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }])
 
 const input = (over: Partial<SpawnInput> = {}): SpawnInput => ({
   subagentType: 'general-purpose',

@@ -45,11 +45,11 @@ export const isOfficeSize = (columns: number, rows: number): boolean =>
 let cached: { key: string; map: OfficeMap } | undefined
 
 // The map for a raster size and a team list in room order, or undefined below the 60x11 minimum.
-export const mapFor = (columns: number, rows: number, teams: TeamSpec[], ownId: string): OfficeMap | undefined => {
+export const mapFor = (columns: number, rows: number, teams: TeamSpec[]): OfficeMap | undefined => {
   if (!isOfficeSize(columns, rows)) return undefined
-  const key = `${columns},${rows},${ownId},${teams.map(t => `${t.id}=${t.label}`).join('|')}`
+  const key = `${columns},${rows},${teams.map(t => `${t.id}=${t.label}`).join('|')}`
   if (cached?.key === key) return cached.map
-  const map = buildOffice(columns, rows, teams, ownId)
+  const map = buildOffice(columns, rows, teams)
   cached = { key, map }
 
   return map
