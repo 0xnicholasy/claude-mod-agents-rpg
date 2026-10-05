@@ -224,7 +224,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; pad.test.ts: 'a coalesced burst yields every key', 'the clear space is not a key'; office.test.ts: 'the pane draws the pad input'. LIVE as above.
 
 ### T09 Walk a player avatar with WASD
-- status: done (#PR, 2026-10-05)
+- status: done (#32, 2026-10-05)
 - needs: T08
 - size: M
 - scope:
