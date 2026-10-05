@@ -257,7 +257,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; frame.test.ts: 'an emote shows above the player for 3 s'. LIVE as above.
 
 ### T11 Jump rooms with [ and ]
-- status: done (#PR, 2026-10-05)
+- status: done (#34, 2026-10-05)
 - needs: T10
 - size: S
 - scope: `]` and `[` set `player.path` to the next or previous room in canonical order (team rooms, then shared rooms), wrapping at the ends. The target is the room's first free anchor. Any WASD key clears the path, and `stepPlayer` walks one tile per tick.
