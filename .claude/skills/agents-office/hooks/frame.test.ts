@@ -346,3 +346,18 @@ test('main draws with lead pants, other roster entries without a role draw as de
   expect(grid[first.y + 1]?.[first.x]?.bg).toBe(ROLE_COLORS.lead)
   expect(grid[second.y + 1]?.[second.x]?.bg).toBe(ROLE_COLORS.dev)
 })
+
+test('the player draws over agents in a white shirt with the plate you', () => {
+  const player = { x: 10, y: 4, facing: 'right' as const, frame: 0, path: [] }
+  const grid = buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0, player })
+  const top = grid[4]?.slice(10, 13) ?? []
+
+  expect(top.every(c => c.ch === 0x2580)).toBe(true)
+  // The shirt is the third pixel row: the foreground of the bottom cell row.
+  expect((grid[5] ?? []).slice(10, 13).some(c => c.fg === 0xf5f5f5)).toBe(true)
+  const plate = (grid[3] ?? []).map(c => String.fromCodePoint(c.ch)).join('')
+  expect(plate).toContain('you')
+  // No player, nothing extra: the same frame without it has no plate.
+  const without = buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0 })
+  expect((without[3] ?? []).map(c => String.fromCodePoint(c.ch)).join('')).not.toContain('you')
+})

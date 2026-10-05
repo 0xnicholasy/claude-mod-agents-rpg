@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { applyKeys, INITIAL_PAD, onPadInput, readKeys } from './pad'
+import { applyKeys, INITIAL_PAD, MAX_TAPS, onPadInput, readKeys } from './pad'
 
 test('a coalesced burst yields every key', () => {
   expect(readKeys('', 'wwww')).toEqual({ keys: ['w', 'w', 'w', 'w'], handled: 'wwww' })
@@ -37,4 +37,10 @@ test('an input event flips the clear marker, and the marker alone changes nothin
   const marker = onPadInput({ ...after, clear: ' ' }, ' ', 30)
   expect(marker.clear).toBe(' ')
   expect(marker.intent).toEqual(after.intent)
+})
+
+test('taps stop queuing at the cap', () => {
+  const state = applyKeys(INITIAL_PAD, Array.from({ length: 20 }, () => 'd'), 0)
+
+  expect(state.intent?.taps).toBe(MAX_TAPS)
 })

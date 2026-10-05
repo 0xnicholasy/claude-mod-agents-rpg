@@ -4,7 +4,7 @@
 
 export type Dir = 'w' | 'a' | 's' | 'd'
 
-// The newest movement key, when it was pressed and how many presses are waiting (T09 consumes taps).
+// The newest movement key, when it was pressed and how many presses are waiting; stepPlayer consumes one per tick.
 export type Intent = { key: Dir; at: number; taps: number }
 
 export type PadState = {
@@ -14,6 +14,9 @@ export type PadState = {
   clear: string
   intent?: Intent
 }
+
+// Taps that can wait for a tick (one is consumed per tick), so a held key cannot queue a long walk.
+export const MAX_TAPS = 8
 
 export const INITIAL_PAD: PadState = { handled: '', clear: '' }
 
@@ -48,7 +51,7 @@ export const applyKeys = (state: PadState, keys: readonly string[], now: number)
   for (const raw of keys) {
     const key = raw.toLowerCase()
     if (!isDir(key)) continue
-    intent = { key, at: now, taps: intent !== undefined && intent.key === key ? intent.taps + 1 : 1 }
+    intent = { key, at: now, taps: intent !== undefined && intent.key === key ? Math.min(intent.taps + 1, MAX_TAPS) : 1 }
   }
 
   return { ...state, intent }
