@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Tier } from './agents'
 import { isValidGlyph, packCells, type Cell } from './raster'
 import {
-  FACINGS, figure, FIGURE_PALETTE, frameCount, HAIR_TONES, midFigure, midFrameCount, nameplate, POSES, ROLE_COLORS,
+  FACINGS, figure, FIGURE_PALETTE, frameCount, HAIR_TONES, midFigure, midFrameCount, mouthOf, MID_SHOE, nameplate, POSES, ROLE_COLORS,
   SKIN_TONES, SPRITE_PALETTE, TIER_COLORS, type Facing, type Pose, type Role,
 } from './sprites'
 
@@ -19,7 +19,7 @@ test('nameplate trims to its width and stays inside the sprite palette', () => {
   expect(nameplate('abc', 2).map((c) => c.ch)).toEqual([0x61, 0x62])
   expect(nameplate('short').length).toBe(5)
   expect(nameplate('x', 0).length).toBe(0)
-  expect(SPRITE_PALETTE.length).toBeLessThan(40)
+  expect(SPRITE_PALETTE.length).toBeLessThan(48)
   expect(new Set(SPRITE_PALETTE).size).toBe(SPRITE_PALETTE.length)
   for (const c of nameplate('abc')) {
     expect(SPRITE_PALETTE).toContain(c.fg)
@@ -176,7 +176,7 @@ test('figure frames wrap and unknown shirt or role fall back', () => {
 
 test('the figure palette is unique and small', () => {
   expect(new Set(FIGURE_PALETTE).size).toBe(FIGURE_PALETTE.length)
-  expect(FIGURE_PALETTE.length).toBeLessThan(40)
+  expect(FIGURE_PALETTE.length).toBeLessThan(48)
 })
 
 test('every role color stays visibly away from the floor color', () => {
@@ -250,13 +250,26 @@ test('mid figures map every slot: shade, dark slots, props, desk and unknown inp
     expect(grid[3]![1]!.fg).not.toBe(shade)
   }
   const front = midFig('idle', 'down')
-  // Eyes (pixel row 3) and shoes (pixel row 9) are the near-black.
+  // Eyes (pixel row 3) are the near-black; shoes (pixel row 9) are MID_SHOE.
   expect(front[1]![1]!.bg).toBe(MID_DARK)
   expect(front[1]![3]!.bg).toBe(MID_DARK)
-  expect(front[4]![1]!.bg).toBe(MID_DARK)
-  expect(front[4]![3]!.bg).toBe(MID_DARK)
+  // The shoes are a lighter grey so they show on the dark floors (D68).
+  expect(front[4]![1]!.bg).toBe(MID_SHOE)
+  expect(front[4]![3]!.bg).toBe(MID_SHOE)
   const mouth = front[2]![2]!
-  expect(mouth.fg).toBe(front[0]![2]!.fg)
+  // The mouth is the skin about 25% darker (D68), never the hair colour.
+  const skin = front[1]![2]!.fg
+  expect(mouth.fg).toBe(mouthOf(skin))
+  expect(mouth.fg).not.toBe(skin)
+  expect(mouth.fg).not.toBe(front[0]![2]!.fg)
+  for (const tone of SKIN_TONES) {
+    const dim = mouthOf(tone)
+    for (const shift of [16, 8, 0]) {
+      const ratio = ((dim >> shift) & 0xff) / ((tone >> shift) & 0xff)
+      expect(ratio).toBeGreaterThan(0.72)
+      expect(ratio).toBeLessThan(0.78)
+    }
+  }
   // Props: each pose has its own colour in the top-right cell.
   const prop = (pose: Pose): number => midFig(pose, 'down', 1)[0]![4]!.fg
   expect(new Set([prop('run'), prop('call'), prop('talk')]).size).toBe(3)

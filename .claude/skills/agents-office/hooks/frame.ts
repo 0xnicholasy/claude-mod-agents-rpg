@@ -2,13 +2,13 @@
 // speech bubbles into one grid of cells. No `$`; register.tsx reads the atoms
 // and passes plain data in.
 import type { Roster } from './agents'
-import { canStand, roomAt, tileAt } from './map'
+import { canStand, MID_FOOT, roomAt, tileAt } from './map'
 import type { OfficeMap, Point, RoomKind, TileKind } from './map'
 import { isValidGlyph } from './raster'
 import type { Cell } from './raster'
 import { drawnFacing, drawnFrame, drawnPose, targetOf } from './motion'
-import { figure, nameplate } from './sprites'
-import type { Facing, Pose } from './sprites'
+import { figure, midFigure, nameplate } from './sprites'
+import type { Facing, FigureOpts, Pose } from './sprites'
 import type { Player } from './player'
 import { catArt } from './cat'
 import type { Cat } from './cat'
@@ -96,6 +96,15 @@ const textCells = (text: string, fg: number, bg: number): Cell[] =>
   })
 
 // Writes a cell when (x, y) is inside the grid; everything else is clipped.
+// A mid map draws the 5x5 (standing) or 8x5 (seated) figure, any other map the 3x2 one (D54, D57).
+const isMidMap = (map: OfficeMap): boolean => map.foot.w === MID_FOOT.w && map.foot.h === MID_FOOT.h
+
+const MID_PLATE_WIDTH = 7
+
+const artFor = (map: OfficeMap, opts: FigureOpts): Cell[][] => (isMidMap(map) ? midFigure(opts) : figure(opts))
+
+const plateFor = (map: OfficeMap, text: string): Cell[] => (isMidMap(map) ? nameplate(text, MID_PLATE_WIDTH) : nameplate(text))
+
 const put = (grid: Cell[][], x: number, y: number, cell: Cell): void => {
   const row = grid[y]
   if (row === undefined || x < 0 || x >= row.length) return
@@ -225,7 +234,7 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
     const pose = drawnPose(agent, at)
     // `.` pixels take the floor under the figure's top-left cell (D5).
     const floor = base[at.y]?.[at.x]?.bg ?? FLOOR_BG
-    figure({
+    artFor(map, {
       pose,
       facing: drawnFacing(at),
       frame: drawnFrame(pose, at, now),
@@ -242,12 +251,12 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
       }),
     )
     const center = at.x + Math.floor(map.foot.w / 2)
-    const fit = fitPlate(map, center, at.y - 1, nameplate(agent.label))
+    const fit = fitPlate(map, center, at.y - 1, plateFor(map, agent.label))
     if (fit !== undefined) plates.push({ id: agent.id, left: fit.left, y: at.y - 1, cells: fit.cells, center })
   }
 
   for (const other of [...(others ?? [])].sort((a, b) => a.y - b.y || a.x - b.x)) {
-    figure({
+    artFor(map, {
       pose: 'idle',
       facing: other.facing,
       frame: 0,
@@ -261,14 +270,14 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
       }),
     )
     const center = other.x + Math.floor(map.foot.w / 2)
-    const fit = fitPlate(map, center, other.y - 1, nameplate(other.label))
+    const fit = fitPlate(map, center, other.y - 1, plateFor(map, other.label))
     if (fit !== undefined) plates.push({ id: `player:${other.id}`, left: fit.left, y: other.y - 1, cells: fit.cells, center })
   }
 
   if (player !== undefined && player !== null) {
     const walking = player.movedAt !== undefined && now - player.movedAt < PLAYER_WALK_MS
     const pose: Pose = walking ? 'walk' : 'idle'
-    figure({
+    artFor(map, {
       pose,
       facing: player.facing,
       frame: walking ? player.frame % 4 : 0,
@@ -282,7 +291,7 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
       }),
     )
     const center = player.x + Math.floor(map.foot.w / 2)
-    const fit = fitPlate(map, center, player.y - 1, nameplate('you'))
+    const fit = fitPlate(map, center, player.y - 1, plateFor(map, 'you'))
     // First in the list, so a tie with a neighbouring agent's plate goes to the player's.
     if (fit !== undefined) plates.unshift({ id: 'player', left: fit.left, y: player.y - 1, cells: fit.cells, center })
   }

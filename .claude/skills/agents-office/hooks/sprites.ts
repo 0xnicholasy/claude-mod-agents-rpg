@@ -51,6 +51,8 @@ const SCREEN_ALT = 0x4fa3c7
 const EYE = 0x1a1a1a
 // Mid figures (v2 D54): eyes and shoes share one near-black; the shirt shade is a fixed darker tone per tier.
 const MID_DARK = 0x141414
+// Shoes are a mid grey, not the near-black: 0x141414 had about 1.1 to 1.6 contrast on the room floors (F06, D68).
+export const MID_SHOE = 0x7a7f8a
 const DESK_BODY = 0x5d4037
 const MONITOR_FRAME = 0x37474f
 const PLAYER_SHADE = 0xb0b0b0
@@ -73,15 +75,25 @@ export const ROLE_COLORS: Readonly<Record<Role, number>> = Object.freeze({
 export const HAIR_TONES: readonly number[] = Object.freeze([0x2b1b12, 0x6d4c41, 0xc9a24d, 0xb5522e, 0xbdbdbd])
 export const SKIN_TONES: readonly number[] = Object.freeze([0xffe0bd, 0xffcc9c, 0xc68642, 0x8d5524])
 
+// The mouth is the skin about 25% darker (D68 amends D54: a hair-coloured mouth read as a goatee).
+const MOUTH_KEEP = 0.75
+export const mouthOf = (skin: number): number => {
+  const dim = (shift: number): number => Math.round(((skin >> shift) & 0xff) * MOUTH_KEEP) << shift
+
+  return dim(16) | dim(8) | dim(0)
+}
+export const MOUTH_TONES: readonly number[] = Object.freeze(SKIN_TONES.map(mouthOf))
+
 export const FIGURE_PALETTE: readonly number[] = Object.freeze([
   ...Object.values(TIER_COLORS),
   PLAYER_SHIRT,
   ...Object.values(ROLE_COLORS),
   ...HAIR_TONES,
   ...SKIN_TONES,
+  ...MOUTH_TONES,
   DESK, SCREEN, SCREEN_ALT, EYE,
   PROP_TERM, PROP_PHONE, PROP_TALK,
-  MID_DARK, DESK_BODY, MONITOR_FRAME, PLAYER_SHADE,
+  MID_DARK, MID_SHOE, DESK_BODY, MONITOR_FRAME, PLAYER_SHADE,
   ...Object.values(SHIRT_SHADES),
 ])
 
@@ -187,7 +199,7 @@ export const midFigure = (o: FigureOpts): Cell[][] => {
   const n = midFrameCount(o.pose)
   const f = Number.isInteger(o.frame) ? ((o.frame % n) + n) % n : 0
   const colors: Readonly<Record<string, Px>> = {
-    H: hair, S: skin, T: shirt, U: shade, K: pants, P: pants, F: MID_DARK, E: MID_DARK, M: hair,
+    H: hair, S: skin, T: shirt, U: shade, K: pants, P: pants, F: MID_SHOE, E: MID_DARK, M: mouthOf(skin),
     D: DESK, B: DESK_BODY, N: MONITOR_FRAME, C: SCREEN, '.': '.',
   }
   // Seated figures ignore facing: one grid, with the monitor on the right (D54).
