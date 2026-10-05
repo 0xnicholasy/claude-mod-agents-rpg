@@ -14,3 +14,5 @@ export const PAD_FOCUS_MS = 1500
 // A movement key stays fresh this long (D13).
 export const INTENT_MS = 250
 export const EMOTE_MS = 3000
+// The inspect line stays up this long (D16).
+export const INSPECT_MS = 6000

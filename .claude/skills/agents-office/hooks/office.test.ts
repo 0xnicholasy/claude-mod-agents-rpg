@@ -1169,3 +1169,33 @@ test('a docked pane sizes from bodyRows and ignores the viewport', async ($, on)
   expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({ props: { columns: 60, rows: 35 } })
   await ui.unmount()
 })
+
+test('inspect shows for 6 s and a messages deny keeps the base text', async ($, on) => {
+  const clock = mock.clock(on)
+  const lines: Array<string | null> = []
+  on('state.set', ($, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the inspect atom is read.
+    if (e.key === 'inspect') lines.push((e.value as { text: string } | null)?.text ?? null)
+    return next(e)
+  })
+  on('ui.blit', () => ({ value: {} }))
+  on('agent.list', () => ({ value: [] }))
+  on('session.messages', () => ({ value: { deny: 'no transcript' } }))
+  stubSession(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(11))
+  await clock.advance(100)
+  // `]` then `[` walks the player out of its room and back onto the first desk, beside main.
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: ']', kind: 'change' })
+  await clock.advance(6000)
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: '[', kind: 'change' })
+  await clock.advance(6000)
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'e', kind: 'change' })
+  await clock.advance(100)
+  expect(lines.at(-1)).toMatch(/^main \| working \| \w+ \| .+ \| 0s$/)
+  await clock.advance(5800)
+  expect(lines.at(-1)).not.toBeNull()
+  await clock.advance(300)
+  expect(lines.at(-1)).toBeNull()
+  await ui.unmount()
+})

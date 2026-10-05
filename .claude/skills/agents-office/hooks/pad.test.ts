@@ -73,3 +73,8 @@ test('[ and ] set a pending jump, clear the intent, and a later WASD key cancels
   expect(cancelled.jump).toBeUndefined()
   expect(cancelled.intent).toEqual({ key: 'w', at: 40, taps: 1 })
 })
+
+test('lower-case e asks to inspect and E does not', () => {
+  expect(applyKeys(INITIAL_PAD, ['e'], 70).inspect).toEqual({ at: 70 })
+  expect(applyKeys(INITIAL_PAD, ['E'], 70).inspect).toBeUndefined()
+})

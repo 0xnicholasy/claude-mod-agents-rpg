@@ -19,6 +19,8 @@ export type PadState = {
   jump?: PendingJump
   // Counts jump presses: a jump resets the intent, so a tick that read an older epoch must not write taps back.
   epoch?: number
+  // An `e` press waiting for the tick to inspect the nearest agent (D39).
+  inspect?: { at: number }
 }
 
 // A room jump waiting for the tick to set the player's path (D38). `at` tells two presses apart.
@@ -74,16 +76,22 @@ export const emoteOf = (key: string): string | undefined => {
   return String.fromCodePoint(codes.find(isValidGlyph) ?? 0x2a)
 }
 
-// Dispatches every key (D13). W/A/S/D (either case) walk, 1-4 emote and [ ] jump rooms; later keys are added here, so
+// Dispatches every key (D13). W/A/S/D (either case) walk, 1-4 emote, [ ] jump rooms and e inspects; later keys are added here, so
 // register.tsx never changes for them.
 export const applyKeys = (state: PadState, keys: readonly string[], now: number): PadState => {
   let intent = state.intent
   let emote = state.emote
   let jump = state.jump
   let epoch = state.epoch
+  let inspect = state.inspect
   for (const raw of keys) {
     const glyph = emoteOf(raw)
     if (glyph !== undefined) emote = { glyph, at: now }
+    // Only a lower-case `e`: `E` is reserved for peek (D13).
+    if (raw === 'e') {
+      inspect = { at: now }
+      continue
+    }
     if (raw === ']' || raw === '[') {
       // A jump replaces any walking intent; keys that follow it in the same burst win over it.
       jump = { dir: raw === ']' ? 'next' : 'prev', at: now }
@@ -97,7 +105,7 @@ export const applyKeys = (state: PadState, keys: readonly string[], now: number)
     intent = { key, at: now, taps: intent !== undefined && intent.key === key ? Math.min(intent.taps + 1, MAX_TAPS) : 1 }
   }
 
-  return { ...state, intent, emote, jump, epoch }
+  return { ...state, intent, emote, jump, epoch, inspect }
 }
 
 // One `ui.input` change: diffs the value, applies the keys and flips the clear marker so the Input is
