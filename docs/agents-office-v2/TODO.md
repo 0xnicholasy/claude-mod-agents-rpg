@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 12/26 done
+Progress: 13/26 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -101,6 +101,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - D37 T11 fixes the T09 burst bug and amends D35. Root cause: staleness was measured from the newest press, but a burst of N taps drains at one tap per 100 ms tick, so the 4th tap of `dddd` is consumed 300 ms after the press and failed the 250 ms check (LIVE: 3 of 4; a stepPlayer test with a 4-tap burst failed on the old code). Now every consumed tap refreshes `intent.at`, so staleness means "250 ms with no press and no consumed tap": a draining burst applies in full, a backlog nobody consumes (late ticks, a stalled loop) is still dropped. The tick writes the refreshed `at` back to the `pad` atom (the later of the stored and refreshed values). LIVE: `dddd` moved the player 4 columns. (T11, 2026-10-05) | amends D35
 - D38 T11 details. `[` and `]` set `pad.jump { dir, at }` (a pending press, cleared by the tick like the emote) and clear `pad.intent`; a WASD key later in the same burst cancels the jump. The tick calls `startJump(player, map, dir)`, which sets `player.path` to a BFS path to the next or previous room's first free spot (first anchor the player can stand on outside the pad cells, else the doorStand). Canonical order is `jumpOrder`: team rooms, then shared rooms, each in map order, wrapping at both ends. The current room is the one holding the player's origin, else the room with the nearest doorStand. `stepPlayer` advances the path one tile per tick; a fresh WASD tap clears the path and walks instead; a path step that cannot be stood on cancels the path. A jump pressed before the player exists stays pending until it spawns. `pad.epoch` counts jump presses so a tick that read an older epoch does not write consumed taps back over a recreated intent; a path step that is not adjacent to the player (stale after a resize) is dropped. (T11, 2026-10-05) | confirms D13
 - D39 T12 details. `e` (lower case only; `E` stays reserved for peek) sets `pad.inspect { at }`; the tick (`inspectTick` in register.tsx) clears it, finds `nearest` (Manhattan distance between the player's and each agent's footprint origin, at most 2, ties to the lower id) and writes the `inspect` atom `{ agentId, text, until: now + 6000 }`; with nobody in range the text is `Nobody within 2 tiles.`. Text is `label | status | tool | room | elapsed` (`inspect.ts`); a tool-less agent shows its pose, a remote agent will show its pose (inspectText shows tool and text only with `own: true`, so T16 remote agents are safe by default); `lastTextOf` skips user rows (prompts). The room name is cut to 14 characters so a long team label leaves room for the elapsed time at 80 columns. `OfficeAgent` gains optional `tool` and `seenAt` (set by `markTool` in tool.call; `seenAt` restarts only when the tool changes, and an agent with none counts from now). Own agents (every roster agent until T16) append the last 60 characters of their last text, read with `$.session.messages()` (main) or `({ agentId })`; a deny or throw keeps the base text and logs to debug. 80x24 choice: the strip has 0 rows there, so the line is drawn by frame.ts (`FrameInput.overlay`) over the first corridor row, on top of everything and cut to the corridor width; with strip rows the line replaces the newest strip row. The render writes the strip count into the `viewport` atom (`strip?`) so the tick, which blits, knows which path applies. The line clears from both after 6000 ms. (T12, 2026-10-05) | confirms D16
+- D40 T13 details. `presence.ts` exports `presenceDir`, `envValue(stdout, ok)`, `asShare`, `DEFAULT_SHARE`, `SHARE_USAGE` and `parseOfficeArgs`. The `identity` atom is `{ sessionId, startedAt, dir? }` (null until session.start; `dir` is absent when both variables are empty) and the `share` atom mirrors `$.store` key `share`; each is filled in its own session.start guard (`session.start presence`, `session.start share`). `printenv` runs with the 3 s timeout the git call uses; a failed run gives ''. `/office` arguments are trimmed and lower-cased: none opens the pane, exactly `share <all|anon|off>` stores the mode and replies `Office sharing: <mode>`, anything else (including a bare `share`) replies `Usage: /office share all|anon|off` and opens nothing. The test engine has no `$.store`, so office tests stub `store.get`/`store.set` with a map. (T13, 2026-10-05) | confirms D17, D19
 
 ## Todos
 
@@ -290,7 +291,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; inspect.test.ts: 'nearest within 2 tiles', 'inspect text format'; office.test.ts: 'inspect shows for 6 s'. LIVE as above.
 
 ### T13 Resolve the presence directory and share preference
-- status: todo
+- status: done (#36, 2026-10-05)
 - needs: T12
 - size: M
 - scope:
@@ -482,6 +483,8 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - Inspect (T12 review): `seenAt` restarts only when the tool name changes and `tool` survives a finished turn, so repeated Bash calls show a growing elapsed time; the tick re-reads the viewport for the strip count (use `size.strip`); `markTool` and `onActivity` are two roster writes; T16 must pass `own: false` for remote agents (the default already hides their tool and text).
 - Emote (T10): at the top team row the bubble row is the sign wall row, so the glyph overwrites a sign letter for 3 s (the same holds for agent bubbles).
 - Emote (T10 review): `player.until` is shared by `emote` and `chat`; give the emote its own expiry or take the later of the two before T20 sets `chat`.
+- T12 found: the player can stand on an agent's desk tile, so the plates overlap (`youn`). Consider blocking agent-occupied tiles.
+- Presence (T13 review): T14 must read the `share` atom after session.start has loaded it and treat a failed `store.get` as a reason to log, not to publish silently; `identity.dir` is an absolute path in a readable atom (never publish it); `/office share` racing the first `loadShare` can be overwritten by the stale stored value; `envValue` trims real path spaces and accepts a relative CLAUDE_CONFIG_DIR; `printenv` reuses `GIT_TIMEOUT_MS`.
 - Minimap: rejected, because 80x24 has no spare rows.
 - Arrival log lines read `arrived in the <project>` for the own team room (T06); consider `at their desk` wording (T06).
 - Make `roomAt` generic over the room id so it accepts an `Office` (T06). At 60 columns the bottom signs read `Conferenc` and `Test La`; consider shorter sign text (T05 review).
@@ -500,3 +503,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 T10 done: keys 1-4 show an emote above the player for 3000 ms (`!`, `?`, and stand-ins for the heart and note the raster refuses). See D36.
 - 2026-10-05 T11 done: `[` and `]` auto-walk the player to the next or previous room; a burst of taps now applies in full (consumed taps refresh staleness). See D37, D38.
 - 2026-10-05 T12 done: `e` shows `label | status | tool | room | elapsed` (plus the tail of an own agent's last text) for 6 s, over the corridor at 80x24 or in the newest strip row. See D39.
+- 2026-10-05 T13 done: `presence.ts` resolves the presence dir (CLAUDE_CONFIG_DIR, else HOME/.claude) into the `identity` atom, and `/office share all|anon|off` is stored in `$.store` and mirrored in the `share` atom. See D40.

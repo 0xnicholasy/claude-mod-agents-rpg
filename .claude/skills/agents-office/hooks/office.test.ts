@@ -687,6 +687,8 @@ const startOffice = async ($: Engine, on: On, v1Roster?: Record<string, unknown>
     return next(e)
   })
   stubSession(on, logs)
+  // The share preference read in session.start: nothing stored.
+  on('store.get', () => ({ value: undefined }))
   // The branch lookup in session.start: a repo with no branch (detached HEAD).
   on('process.run', () => ({
     value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
@@ -1198,4 +1200,79 @@ test('inspect shows for 6 s and a messages deny keeps the base text', async ($, 
   await clock.advance(300)
   expect(lines.at(-1)).toBeNull()
   await ui.unmount()
+})
+
+// A store kept in a map, so a test can read what the plugin persisted ($ has no store member).
+const stubStore = (on: On, entries: Record<string, unknown> = {}): Map<string, unknown> => {
+  const kept = new Map<string, unknown>(Object.entries(entries))
+  on('store.get', (_$, e) => ({ value: kept.get(e.key) }))
+  on('store.set', (_$, e) => {
+    kept.set(e.key, e.value)
+    return { value: undefined }
+  })
+
+  return kept
+}
+
+const runOffice = (args: string) =>
+  ({ command: 'office', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as const
+
+test('/office share anon is stored', async ($, on) => {
+  const kept = stubStore(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const result = await $.command.run(runOffice('share anon'))
+
+  expect(result).toMatchObject({ text: 'Office sharing: anon' })
+  expect(kept.get('share')).toBe('anon')
+})
+
+test('/office share bogus shows usage', async ($, on) => {
+  const kept = stubStore(on, { share: 'all' })
+  const opened: string[] = []
+  on('ui.open', (_$, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
+  const result = await $.command.run(runOffice('share bogus'))
+
+  expect(result).toMatchObject({ text: 'Usage: /office share all|anon|off' })
+  expect(kept.get('share')).toBe('all')
+  expect(opened).toEqual([])
+})
+
+test('/office with no arguments still opens the pane', async ($, on) => {
+  stubStore(on)
+  const opened: string[] = []
+  on('ui.open', (_$, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
+  await $.command.run(runOffice(''))
+
+  expect(opened).toEqual(['office'])
+})
+
+test('session.start resolves the presence dir from printenv and loads the stored share mode', async ($, on) => {
+  mock.clock(on)
+  stubStore(on, { share: 'off' })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  const asked: string[][] = []
+  on('process.run', (_$, e) => {
+    asked.push([...e.argv])
+    const value = e.argv[1] === 'CLAUDE_CONFIG_DIR' ? '' : '/home/u\n'
+
+    return { value: { exitCode: 0, stdout: value, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const writes: Array<{ key: string; value: unknown }> = []
+  on('state.set', ($, e, next) => {
+    writes.push({ key: e.key, value: e.value })
+    return next(e)
+  })
+  await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
+
+  expect(asked).toContainEqual(['printenv', 'CLAUDE_CONFIG_DIR'])
+  expect(asked).toContainEqual(['printenv', 'HOME'])
+  expect(writes.find(w => w.key === 'identity')?.value).toMatchObject({ sessionId: 't1', dir: '/home/u/.claude/agents-office/presence' })
+  expect(writes.find(w => w.key === 'share')?.value).toBe('off')
 })
