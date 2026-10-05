@@ -23,9 +23,9 @@ declare module 'claude-code' {
           role?: 'lead' | 'dev' | 'research' | 'review'
           parentId?: string
           status: 'working' | 'idle' | 'done' | 'leaving'
-          room: 'lobby' | 'devbay' | 'library' | 'server' | 'phone' | 'meeting' | 'break'
+          room: 'reception' | 'conference' | 'kitchen' | 'lab' | 'booths' | `team:${string}`
           pose: 'idle' | 'walk' | 'read' | 'type' | 'run' | 'call' | 'talk'
-          home: 'lobby' | 'devbay' | 'library' | 'server' | 'phone' | 'meeting' | 'break'
+          home: 'reception' | 'conference' | 'kitchen' | 'lab' | 'booths' | `team:${string}`
           teammate: boolean
           completedAt?: number
           script?:
@@ -33,7 +33,7 @@ declare module 'claude-code' {
                 kind: 'meet'
                 peer: string
                 phase: 'going' | 'talking' | 'returning'
-                returnRoom: 'lobby' | 'devbay' | 'library' | 'server' | 'phone' | 'meeting' | 'break'
+                returnRoom: 'reception' | 'conference' | 'kitchen' | 'lab' | 'booths' | `team:${string}`
                 returnPose: 'idle' | 'walk' | 'read' | 'type' | 'run' | 'call' | 'talk'
                 returnAt: { x: number; y: number }
                 until?: number
@@ -41,7 +41,7 @@ declare module 'claude-code' {
               }
             | {
                 kind: 'report'
-                phase: 'toLobby' | 'reporting' | 'toBreak'
+                phase: 'toReception' | 'reporting' | 'toKitchen'
                 stopped: boolean
                 until?: number
               }
@@ -53,6 +53,7 @@ declare module 'claude-code' {
       >
       bubbles: Array<{ agentId: string; text: string; until: number }>
       log: string[]
+      team: { id: `team:${string}`; label: string; branch: string; startedAt: number } | null
     }
   }
 }

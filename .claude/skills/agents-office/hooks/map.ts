@@ -4,20 +4,24 @@
 // on that row's floor). Full layout from 18 rows (x right, y down); heights 11-17 use the
 // compact bands below, and a 3-row room puts its sign on the wall row above:
 //
-//   top row      4 rooms  Dev Bay | Library | Server Room | Phone Booth
-//   corridor     3 rows
-//   bottom row   3 rooms  Lobby | Meeting Room | Break Room
+//   top row      one team room per session, equal widths (D10)
+//   corridor     2-3 rows
+//   bottom row   5 rooms  Reception | Conference | Kitchen | Test Lab | Booths
 //
 // At 11 rows the map has no outer bottom wall; the pane edge closes the bottom rooms.
 // Larger sizes stretch room widths, then heights; walls stay one cell.
 
-export type RoomId = 'lobby' | 'devbay' | 'library' | 'server' | 'phone' | 'meeting' | 'break'
+// A team room is `team:<session id>` (D12).
+export type RoomId = 'reception' | 'conference' | 'kitchen' | 'lab' | 'booths' | `team:${string}`
+// Floor-color kind of a room: one color per kind (D10).
+export type RoomKind = 'team' | 'reception' | 'conference' | 'kitchen' | 'lab' | 'booths'
 export type TileKind = 'floor' | 'wall' | 'door' | 'sign'
 export type Point = { x: number; y: number }
 export type Rect = { x: number; y: number; w: number; h: number }
-export type Room<Id extends string = RoomId> = {
-  id: Id
+export type Room = {
+  id: RoomId
   name: string
+  kind: RoomKind
   // Interior rectangle (walls excluded), so rooms never overlap.
   bounds: Rect
   // Room label drawn on the top interior row (the wall row above in a 3-row
@@ -30,13 +34,16 @@ export type Room<Id extends string = RoomId> = {
   // Footprint top-left positions, left to right, one row of desks.
   anchors: Point[]
 }
-export type OfficeMap<Id extends string = RoomId> = {
+export type OfficeMap = {
   columns: number
   rows: number
   tiles: TileKind[][]
-  rooms: Room<Id>[]
+  rooms: Room[]
   corridor: Rect
+  // Teams left out because they do not fit at the minimum room width (D21).
+  hidden: number
 }
+export type TeamSpec = { id: `team:${string}`; label: string }
 
 export const MIN_COLUMNS = 60
 export const MIN_ROWS = 11
@@ -52,20 +59,8 @@ export class OfficeTooSmall extends Error {
   }
 }
 
-type Spec<Id extends string = RoomId> = { id: Id; name: string; sign: string; width: number }
+type Spec = { id: RoomId; name: string; sign: string; width: number; kind: RoomKind }
 
-// Interior widths at the 60-column minimum.
-const TOP: Spec[] = [
-  { id: 'devbay', name: 'Dev Bay', sign: 'Dev Bay', width: 24 },
-  { id: 'library', name: 'Library', sign: 'Library', width: 11 },
-  { id: 'server', name: 'Server Room', sign: 'Server Room', width: 11 },
-  { id: 'phone', name: 'Phone Booth', sign: 'Phone', width: 9 },
-]
-const BOTTOM: Spec[] = [
-  { id: 'lobby', name: 'Lobby', sign: 'Lobby', width: 18 },
-  { id: 'meeting', name: 'Meeting Room', sign: 'Meeting Room', width: 20 },
-  { id: 'break', name: 'Break Room', sign: 'Break Room', width: 18 },
-]
 // Interior rows [top, corridor, bottom] for map heights 11..17; each step adds
 // one row, so 18 equals the full layout (5, 3, 6); 11 is 12 without the outer bottom wall.
 const COMPACT_BANDS: ReadonlyArray<readonly [number, number, number]> = [
@@ -91,9 +86,9 @@ const stretch = (specs: Array<{ width: number }>, total: number): number[] => {
 
 type RowBand = { interiorTop: number; interiorRows: number; doorRow: number }
 
-// `pitch` is the distance between desk anchors: the footprint plus the gap (4 in v1 rooms, 5 in team rooms).
-// `doorInset` is how far a bottom-row door starts from the room's right edge (v1: 4).
-const makeRoom = <Id extends string>(spec: Spec<Id>, x: number, width: number, band: RowBand, doorBelow: boolean, pitch = 4, doorInset = 4): Room<Id> => {
+// `pitch` is the distance between desk anchors: the footprint plus the gap. `doorInset` is how far a
+// bottom-row door starts from the room's right edge.
+const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow: boolean, pitch: number, doorInset: number): Room => {
   const { interiorTop, interiorRows, doorRow } = band
   const gap = pitch - FOOTPRINT_W
   const count = Math.max(1, Math.floor((width + gap) / pitch))
@@ -112,16 +107,17 @@ const makeRoom = <Id extends string>(spec: Spec<Id>, x: number, width: number, b
   const doorStandY = doorBelow ? interiorTop + interiorRows - FOOTPRINT_H : interiorTop
   // In a bottom room the doorStand is on the top interior rows, where short rooms also
   // seat their desks, so a desk overlapping it is dropped. Top rooms keep every desk: their
-  // centred stand sits among the desks by design and dropping them would empty the Phone Booth.
+  // centred stand sits among the desks by design and dropping them would empty the Phone Booths.
   const anchors = doorBelow
     ? allAnchors
     : allAnchors.filter(a => Math.abs(a.x - doorX) >= FOOTPRINT_W || Math.abs(a.y - doorStandY) >= FOOTPRINT_H)
   // A bottom room's sign shares its row with the door (wall row) or the doorStand (interior row), so it is
-  // cut before them. v1 widths are wide enough that this never cuts a v1 sign.
+  // cut before them.
   const sign = doorBelow ? spec.sign.slice(0, width) : spec.sign.slice(0, doorX - x)
   return {
     id: spec.id,
     name: spec.name,
+    kind: spec.kind,
     bounds: { x, y: interiorTop, w: width, h: interiorRows },
     sign: { text: sign, cells: Array.from(sign, (_, i) => ({ x: x + i, y: signY })) },
     door: [0, 1, 2].map(i => ({ x: doorX + i, y: doorRow })),
@@ -146,7 +142,7 @@ const rowBands = (rows: number): { topRows: number; corridorRows: number; bottom
   }
 }
 
-const paintTiles = (columns: number, rows: number, corridor: Rect, rooms: Array<Room<string>>): TileKind[][] => {
+const paintTiles = (columns: number, rows: number, corridor: Rect, rooms: Room[]): TileKind[][] => {
   const tiles: TileKind[][] = Array.from({ length: rows }, () => Array<TileKind>(columns).fill('wall'))
   const set = (p: Point, kind: TileKind): void => {
     const row = tiles[p.y]
@@ -165,37 +161,10 @@ const paintTiles = (columns: number, rows: number, corridor: Rect, rooms: Array<
   return tiles
 }
 
-export const buildMap = (columns: number, rows: number): OfficeMap => {
-  if (columns < MIN_COLUMNS || rows < MIN_ROWS) throw new OfficeTooSmall(columns, rows)
-
-  const { topRows, corridorRows, bottomRows } = rowBands(rows)
-
-  const topBand: RowBand = { interiorTop: 1, interiorRows: topRows, doorRow: topRows + 1 }
-  const corridor: Rect = { x: 1, y: topRows + 2, w: columns - 2, h: corridorRows }
-  const bottomWall = corridor.y + corridor.h
-  const bottomBand: RowBand = { interiorTop: bottomWall + 1, interiorRows: bottomRows, doorRow: bottomWall }
-
-  const placed: Room[] = []
-  const lay = (specs: Spec[], total: number, band: RowBand, doorBelow: boolean): void => {
-    let x = 1
-    const widths = stretch(specs, total)
-    specs.forEach((spec, i) => {
-      const width = widths[i] ?? spec.width
-      placed.push(makeRoom(spec, x, width, band, doorBelow))
-      x += width + 1
-    })
-  }
-  lay(TOP, columns - 5, topBand, true)
-  lay(BOTTOM, columns - 4, bottomBand, false)
-
-  const tiles = paintTiles(columns, rows, corridor, placed)
-  return { columns, rows, tiles, rooms: placed, corridor }
-}
-
-export const tileAt = (map: OfficeMap<string>, x: number, y: number): TileKind | undefined => map.tiles[y]?.[x]
+export const tileAt = (map: OfficeMap, x: number, y: number): TileKind | undefined => map.tiles[y]?.[x]
 
 // True when all six footprint cells (x..x+2, y..y+1) are floor or door.
-export const canStand = (map: OfficeMap<string>, x: number, y: number): boolean => {
+export const canStand = (map: OfficeMap, x: number, y: number): boolean => {
   for (let dy = 0; dy < FOOTPRINT_H; dy++) {
     for (let dx = 0; dx < FOOTPRINT_W; dx++) {
       const kind = tileAt(map, x + dx, y + dy)
@@ -209,24 +178,13 @@ export const canStand = (map: OfficeMap<string>, x: number, y: number): boolean 
 export const roomAt = (map: OfficeMap, x: number, y: number): RoomId | undefined =>
   map.rooms.find(r => x >= r.bounds.x && x < r.bounds.x + r.bounds.w && y >= r.bounds.y && y < r.bounds.y + r.bounds.h)?.id
 
-export type V2RoomId = 'reception' | 'conference' | 'kitchen' | 'lab' | 'booths' | `team:${string}`
-// Floor-color kind of a room: one color per kind (D10).
-export type RoomKind = 'team' | 'reception' | 'conference' | 'kitchen' | 'lab' | 'booths'
-export type OfficeRoom = Room<V2RoomId> & { kind: RoomKind }
-export type TeamSpec = { id: `team:${string}`; label: string }
-export type Office = Omit<OfficeMap<V2RoomId>, 'rooms'> & {
-  rooms: OfficeRoom[]
-  // Teams left out because they do not fit at the minimum room width (D21).
-  hidden: number
-}
-
 // Smallest team-room interior width (D10).
 export const TEAM_MIN_WIDTH = 11
 // Distance between team-room desk anchors (D10).
 const TEAM_PITCH = 5
 
 // Interior widths at the 60-column minimum (54 interior columns).
-const SHARED: Array<Spec<V2RoomId> & { kind: RoomKind }> = [
+const SHARED: Spec[] = [
   { id: 'reception', name: 'Reception', sign: 'Reception', width: 12, kind: 'reception' },
   { id: 'conference', name: 'Conference Room', sign: 'Conference', width: 12, kind: 'conference' },
   { id: 'kitchen', name: 'Kitchen', sign: 'Kitchen', width: 10, kind: 'kitchen' },
@@ -250,7 +208,7 @@ const visibleTeams = (teams: TeamSpec[], ownId: string, columns: number): TeamSp
  * Layout of the v2 office: one team room per team in the top band, the five shared rooms in the bottom band
  * (D10). Each team room's first anchor is its lead's desk; look a team's room up by id, since the own team can take the last slot when others are hidden. `teams` must already be in room order.
  */
-export const buildOffice = (columns: number, rows: number, teams: TeamSpec[], ownId: string): Office => {
+export const buildOffice = (columns: number, rows: number, teams: TeamSpec[], ownId: string): OfficeMap => {
   if (columns < MIN_COLUMNS || rows < MIN_ROWS) throw new OfficeTooSmall(columns, rows)
   const { topRows, corridorRows, bottomRows } = rowBands(rows)
   const shown = visibleTeams(teams, ownId, columns)
@@ -260,7 +218,7 @@ export const buildOffice = (columns: number, rows: number, teams: TeamSpec[], ow
   const bottomWall = corridor.y + corridor.h
   const bottomBand: RowBand = { interiorTop: bottomWall + 1, interiorRows: bottomRows, doorRow: bottomWall }
 
-  const placed: OfficeRoom[] = []
+  const placed: Room[] = []
   // Team rooms have equal widths; the remainder goes to the first room.
   if (shown.length > 0) {
     const total = columns - shown.length - 1
@@ -269,8 +227,8 @@ export const buildOffice = (columns: number, rows: number, teams: TeamSpec[], ow
     shown.forEach((team, i) => {
       const width = i === 0 ? base + total - base * shown.length : base
       const sign = team.label.slice(0, width)
-      const spec: Spec<V2RoomId> = { id: team.id, name: team.label, sign, width }
-      placed.push({ ...makeRoom(spec, x, width, topBand, true, TEAM_PITCH), kind: 'team' })
+      const spec: Spec = { id: team.id, name: team.label, sign, width, kind: 'team' }
+      placed.push(makeRoom(spec, x, width, topBand, true, TEAM_PITCH, 4))
       x += width + 1
     })
   }
@@ -278,7 +236,7 @@ export const buildOffice = (columns: number, rows: number, teams: TeamSpec[], ow
   let x = 1
   SHARED.forEach((spec, i) => {
     const width = widths[i] ?? spec.width
-    placed.push({ ...makeRoom(spec, x, width, bottomBand, false, 4, 3), kind: spec.kind })
+    placed.push(makeRoom(spec, x, width, bottomBand, false, 4, 3))
     x += width + 1
   })
 

@@ -2,14 +2,14 @@
 import type { RoomId } from './map'
 import type { Pose } from './sprites'
 
-// 'desk' means the agent's own home room (OfficeAgent.home, D37).
+// 'desk' means the agent's own desk in its home room, the own team room (OfficeAgent.home, D11).
 export type Activity = { room: RoomId | 'desk'; pose: Pose }
 
-const READ: Activity = { room: 'library', pose: 'read' }
+const READ: Activity = { room: 'desk', pose: 'read' }
 const DESK: Activity = { room: 'desk', pose: 'type' }
-const RUN: Activity = { room: 'server', pose: 'run' }
-const CALL: Activity = { room: 'phone', pose: 'call' }
-const TALK: Activity = { room: 'lobby', pose: 'talk' }
+const RUN: Activity = { room: 'lab', pose: 'run' }
+const CALL: Activity = { room: 'booths', pose: 'call' }
+const TALK: Activity = { room: 'reception', pose: 'talk' }
 
 const BUILT_IN = new Map<string, Activity>([
   ['Read', READ],

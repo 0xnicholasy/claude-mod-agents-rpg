@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import { activityFor } from './activity'
-import { expire, onActivity, onSpawn, seedMain, syncList } from './agents'
+import { expire, migrateRoster, onActivity, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
 import { advanceScripts, expireBubbles, startMeet, startReport } from './choreo'
 import type { ChoreoState } from './choreo'
@@ -10,7 +10,7 @@ import type { Bubble, Motion } from './frame'
 import { arrived, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
 import { MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
-import type { OfficeMap } from './map'
+import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { packCells } from './raster'
 import { LIST_MS, TICK_MS } from './timing'
@@ -29,6 +29,10 @@ const EMPTY_BUBBLES: Bubble[] = []
 const bubbles = atom({ plugin: 'agents-office', key: 'bubbles' } as const, EMPTY_BUBBLES)
 const EMPTY_LOG: string[] = []
 const log = atom({ plugin: 'agents-office', key: 'log' } as const, EMPTY_LOG)
+// The own team (D12): its room is `id`. Null until session.start (or the first tick after a hot reload) writes it.
+type Team = { id: `team:${string}`; label: string; branch: string; startedAt: number }
+const NO_TEAM = null as Team | null
+const team = atom({ plugin: 'agents-office', key: 'team' } as const, NO_TEAM)
 
 // Log de-dup cache for guard failures, not drawn state (D49): a hook that fails the same
 // way every tick logs once per distinct name + message.
@@ -68,17 +72,48 @@ const loggedBlitDenies = new Set<string>()
 // costs one extra blit.
 let lastFrameCells: string | null = null
 
+// The own team's room: where every agent works. Before a team exists nothing can be seated at a desk,
+// so Reception stands in until the first tick writes the team.
+const homeRoom = async ($: EngineInterface): Promise<RoomId> => (await read($, team))?.id ?? 'reception'
+
+// The teams `mapFor` lays out (only the own team until presence arrives) and the own team id.
+const teamsOf = async ($: EngineInterface): Promise<{ teams: TeamSpec[]; ownId: string }> => {
+  const own = await read($, team)
+
+  return own === null ? { teams: [], ownId: '' } : { teams: [{ id: own.id, label: own.label }], ownId: own.id }
+}
+
+const mapAt = async ($: EngineInterface, columns: number, rows: number): Promise<OfficeMap | undefined> => {
+  const { teams, ownId } = await teamsOf($)
+
+  return mapFor(columns, rows, teams, ownId)
+}
+
+// Writes the own team from the session id and cwd (D12). Without `force` an existing team is kept, so
+// the tick only fills it after a hot reload; session.start forces it because the session id is new.
+const ensureTeam = async ($: EngineInterface, cwd: string | undefined, force: boolean): Promise<void> => {
+  if (!force && (await read($, team)) !== null) return
+  const sessionId = await $.session.id()
+  const dir = cwd ?? (await $.session.cwd())
+  const label = dir.split('/').filter(part => part !== '').pop() ?? 'office'
+  const startedAt = await $.clock.now()
+  const next: Team = { id: `team:${sessionId}`, label, branch: '', startedAt }
+  // Without `force` a team written meanwhile (session.start racing the tick) wins.
+  await update($, team, cur => (force ? next : (cur ?? next)))
+}
+
 // Drops expired agents; writes only when the roster changed.
 const refreshRoster = async ($: EngineInterface): Promise<void> => {
   const infos = await $.agent.list()
+  const home = await homeRoom($)
   const current = await read($, agents)
-  if (syncList(current, infos) === current) return
-  await update($, agents, roster => syncList(roster, infos))
+  if (syncList(current, infos, home) === current) return
+  await update($, agents, roster => syncList(roster, infos, home))
 }
 
 // Seats the given roster on the current map. The caller passes the roster it
 // computed locally, so no atom just written is read back (same-dispatch
-// snapshot). `entering` is a just-spawned agent that appears at the Lobby door
+// snapshot). `entering` is a just-spawned agent that appears at the Reception door
 // and walks to its room (D34); `advance` moves every walker one tile (the tick).
 // One write at most. Returns the motion it computed, or undefined with no map.
 // Applies a roster reducer to the current atom value inside the updater (so concurrent
@@ -137,7 +172,7 @@ const arrivedIds = (cur: Motion, next: Motion): string[] =>
     return was.path.length === 1 && now.path.length === 0 && now.x === last.x && now.y === last.y
   })
 
-// Work walks only (D46): an agent under a script (meeting, report, Break Room) logs nothing.
+// Work walks only (D46): an agent under a script (meeting, report, Kitchen) logs nothing.
 const arrivalLines = (map: OfficeMap, roster: Roster, motions: Motion, ids: string[]): string[] =>
   ids.flatMap(id => {
     const agent = roster[id]
@@ -148,13 +183,13 @@ const arrivalLines = (map: OfficeMap, roster: Roster, motions: Motion, ids: stri
     return [arrived(agent.label, name ?? 'office')]
   })
 
-// SendMessage: both agents walk to the Meeting Room (D38). `to` is `unknown` because
+// SendMessage: both agents walk to the Conference Room (D38). `to` is `unknown` because
 // the SendMessage input types it `unknown & unknown`; startMeet narrows it.
 const meet = async ($: EngineInterface, from: string, to: unknown, text: string): Promise<void> => {
   const now = await $.clock.now()
   const size = await read($, viewport)
   const base: ChoreoState = {
-    map: mapFor(size.columns, size.rows),
+    map: await mapAt($, size.columns, size.rows),
     agents: await read($, agents),
     motion: await read($, motion),
     bubbles: await read($, bubbles),
@@ -177,7 +212,7 @@ const seat = async (
   { entering, advance = false }: SeatOptions = {},
 ): Promise<SeatResult | undefined> => {
   const size = await read($, viewport)
-  const map = mapFor(size.columns, size.rows)
+  const map = await mapAt($, size.columns, size.rows)
   if (map === undefined) return undefined
   const arriving = entering === undefined ? undefined : roster[entering]
   const compute = (cur: Motion): Motion => {
@@ -206,17 +241,29 @@ const seat = async (
 
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
+  await guard($, 'team', undefined, async () => ensureTeam($, undefined, false))
+  await guard($, 'migrate', undefined, async () => {
+    const own = await read($, team)
+    if (own === null) return
+    const before = await read($, agents)
+    const after = migrateRoster(before, own.id)
+    if (after === before) return
+    // A v1 agent stands where the v1 map had it; dropping its motion reseats it at its new desk.
+    const moved = Object.keys(after).filter(id => after[id] !== before[id])
+    await update($, agents, cur => migrateRoster(cur, own.id))
+    await update($, motion, cur => Object.fromEntries(Object.entries(cur).filter(([id]) => !moved.includes(id))))
+  })
   const viewSize = await read($, viewport)
-  const viewMap = mapFor(viewSize.columns, viewSize.rows)
+  const viewMap = await mapAt($, viewSize.columns, viewSize.rows)
   const roster = await guard($, 'expire', await read($, agents), async () => {
-    // A finished agent leaves only from the Break Room (D15); motion is read once for it.
+    // A finished agent leaves only from the Kitchen (D15); motion is read once for it.
     const where = await read($, motion)
     return applyRoster($, cur => expire(cur, now, where, viewMap))
   })
   const seated = await guard($, 'place', undefined, async () => seat($, roster, { advance: true }))
   const placed = seated?.motion
   const size = await read($, viewport)
-  const map = mapFor(size.columns, size.rows)
+  const map = await mapAt($, size.columns, size.rows)
   if (map === undefined) {
     // No pane drawn: scripts cannot advance, but a shown bubble still expires.
     await guard($, 'bubbles', undefined, async () => {
@@ -315,11 +362,13 @@ export const register: Register = on => {
     })
     // Own guards: neither a failing first agent.list nor a failing seed may stop
     // the frame loop above or the 10 s refresh.
+    await guard($, 'session.start team', undefined, async () => ensureTeam($, e.cwd, true))
     await guard($, 'session.start refresh timer', undefined, async () => {
       startRefresh($)
     })
     await guard($, 'session.start roster', undefined, async () => {
-      await update($, agents, seedMain)
+      const home = await homeRoom($)
+      await update($, agents, cur => seedMain(cur, home))
       await refreshRoster($)
     })
 
@@ -330,7 +379,8 @@ export const register: Register = on => {
     const result = await next(e)
     await guard($, 'agent.spawn', undefined, async () => {
       if (result.agentId === undefined) return
-      const roster = await applyRoster($, cur => onSpawn(cur, e, result))
+      const home = await homeRoom($)
+      const roster = await applyRoster($, cur => onSpawn(cur, e, result, home))
       await seat($, roster, { entering: result.agentId })
     })
 
@@ -342,7 +392,7 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     await guard($, 'tool.call', undefined, async () => {
       const id = e.agentId ?? 'main'
-      // SendMessage starts a meeting instead of the lobby talk activity (D38).
+      // SendMessage starts a meeting instead of the Reception talk activity (D38).
       if (e.tool === 'SendMessage') {
         await meet($, id, e.to, typeof e.message === 'string' ? e.message : '')
         return
@@ -351,7 +401,7 @@ export const register: Register = on => {
       const roster = await applyRoster($, cur => onActivity(cur, id, activity))
       const room = roster[id]?.room
       const size = await read($, viewport)
-      const map = mapFor(size.columns, size.rows)
+      const map = await mapAt($, size.columns, size.rows)
       if (room === undefined || map === undefined) return
       const current = await read($, motion)
       if (assignTarget(current, map, id, room) === current) return
@@ -366,12 +416,12 @@ export const register: Register = on => {
     const agentId = e.agentId
     if (agentId !== undefined) {
       await guard($, 'turn.complete', undefined, async () => {
-        // A subagent reports in the Lobby and leaves via the Break Room (T09); a teammate
+        // A subagent reports in Reception and leaves via the Kitchen (T09); a teammate
         // only turns idle (D26). All computed locally and committed like meet() (D40).
         const now = await $.clock.now()
         const size = await read($, viewport)
         const base: ChoreoState = {
-          map: mapFor(size.columns, size.rows),
+          map: await mapAt($, size.columns, size.rows),
           agents: await read($, agents),
           motion: await read($, motion),
           bubbles: await read($, bubbles),
@@ -455,7 +505,7 @@ export const register: Register = on => {
             )
         })
         // Below the minimum size draw only the size line (D48).
-        const map = mapFor(columns, rows)
+        const map = await mapAt($, columns, rows)
         if (map === undefined) {
           return (
             <Box flexDirection="column">

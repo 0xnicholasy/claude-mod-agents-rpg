@@ -39,14 +39,14 @@ export const assignTarget = (motion: Motion, map: OfficeMap, agentId: string, ro
 }
 
 /**
- * A new agent appears at the Lobby doorStand and gets a path to an anchor of
+ * A new agent appears at the Reception doorStand and gets a path to an anchor of
  * `room`. An agent that already has an entry is left alone.
  */
 export const enterAtDoor = (motion: Motion, map: OfficeMap, agentId: string, room: string): Motion => {
   if (motion[agentId] !== undefined) return motion
-  const lobby = map.rooms.find(r => r.id === 'lobby')
-  if (lobby === undefined) return motion
-  const placed: Motion = { ...motion, [agentId]: { x: lobby.doorStand.x, y: lobby.doorStand.y, path: [], frame: 0 } }
+  const reception = map.rooms.find(r => r.id === 'reception')
+  if (reception === undefined) return motion
+  const placed: Motion = { ...motion, [agentId]: { x: reception.doorStand.x, y: reception.doorStand.y, path: [], frame: 0 } }
 
   const assigned = assignTarget(placed, map, agentId, room)
 

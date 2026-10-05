@@ -3,7 +3,7 @@
 // and passes plain data in.
 import type { Roster } from './agents'
 import { canStand, FOOTPRINT_W, tileAt } from './map'
-import type { OfficeMap, Point, TileKind } from './map'
+import type { OfficeMap, Point, RoomKind, TileKind } from './map'
 import { isValidGlyph } from './raster'
 import type { Cell } from './raster'
 import { drawnFacing, drawnFrame, drawnPose, targetOf } from './motion'
@@ -22,13 +22,32 @@ export const SIGN_BG = 0x3b4252
 export const BUBBLE_FG = 0x202028
 export const BUBBLE_BG = 0xfff8e1
 
+// One floor color per room kind (D10); the corridor keeps FLOOR_BG, which is also the team floor.
+export const ROOM_FLOORS: Readonly<Record<RoomKind, number>> = Object.freeze({
+  team: FLOOR_BG,
+  reception: 0x3a3430,
+  conference: 0x2b3a3a,
+  kitchen: 0x3a3a2b,
+  lab: 0x2b2f45,
+  booths: 0x3a2b3a,
+})
+
 export const OFFICE_PALETTE: readonly number[] = Object.freeze([
-  FLOOR_BG, WALL_COLOR, DOOR_BG, SIGN_FG, SIGN_BG, BUBBLE_FG, BUBBLE_BG,
+  ...new Set([FLOOR_BG, WALL_COLOR, DOOR_BG, SIGN_FG, SIGN_BG, BUBBLE_FG, BUBBLE_BG, ...Object.values(ROOM_FLOORS)]),
 ])
 
-const FLOOR_CELL: Readonly<Cell> = Object.freeze({ ch: 0x20, fg: FLOOR_BG, bg: FLOOR_BG })
+// Floor color of every tile: a room's interior takes its kind's color, anything else FLOOR_BG.
+const floorColors = (map: OfficeMap): number[][] => {
+  const colors = map.tiles.map(row => row.map(() => FLOOR_BG))
+  for (const room of map.rooms) {
+    const { x, y, w, h } = room.bounds
+    for (let dy = 0; dy < h; dy++) colors[y + dy]?.fill(ROOM_FLOORS[room.kind], x, x + w)
+  }
 
-const baseCell = (kind: TileKind | undefined): Cell => {
+  return colors
+}
+
+const baseCell = (kind: TileKind | undefined, floor: number): Cell => {
   switch (kind) {
     case 'wall':
     case undefined:
@@ -38,7 +57,7 @@ const baseCell = (kind: TileKind | undefined): Cell => {
     case 'sign':
       return { ch: 0x20, fg: SIGN_FG, bg: SIGN_BG }
     case 'floor':
-      return { ...FLOOR_CELL }
+      return { ch: 0x20, fg: floor, bg: floor }
   }
 }
 
@@ -104,7 +123,8 @@ export type FrameInput = {
 }
 
 export const buildFrame = ({ map, agents, motion, bubbles, now }: FrameInput): Cell[][] => {
-  const grid = map.tiles.map(row => row.map(kind => baseCell(kind)))
+  const floors = floorColors(map)
+  const grid = map.tiles.map((row, y) => row.map((kind, x) => baseCell(kind, floors[y]?.[x] ?? FLOOR_BG)))
   for (const room of map.rooms) {
     room.sign.cells.forEach((p, i) => {
       const ch = room.sign.text.codePointAt(i)
