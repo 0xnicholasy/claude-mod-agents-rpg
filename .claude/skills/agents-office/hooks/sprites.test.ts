@@ -227,7 +227,8 @@ test('mid figures recolour by tier and role', () => {
 
 test('mid walk frames differ and mid props sit in the top-right cell', () => {
   for (const facing of FACINGS) {
-    expect(new Set([0, 1, 2, 3].map(f => key(midFig('walk', facing, f)))).size).toBe(4)
+    // Frames 2 and 4 are the idle legs, so they match each other.
+    expect(new Set([0, 1, 2, 3].map(f => key(midFig('walk', facing, f)))).size).toBe(3)
   }
   const plain = midFig('idle', 'down')
   const run = midFig('run', 'down', 0)
@@ -236,7 +237,7 @@ test('mid walk frames differ and mid props sit in the top-right cell', () => {
   expect(key(midFig('run', 'down', 1))).not.toBe(key(run))
   expect(midFig('read', 'down')[3]![0]!.bg).toBe(0x8d6e63)
   expect(key(midFig('type', 'down', 0))).not.toBe(key(midFig('type', 'down', 1)))
-  expect(midFig('walk', 'down', 5)).toEqual(midFig('walk', 'down', 1))
+  expect(midFig('walk', 'down', 4)).toEqual(midFig('walk', 'down', 0))
 })
 
 test('mid figures map every slot: shade, dark slots, props, desk and unknown input', () => {
