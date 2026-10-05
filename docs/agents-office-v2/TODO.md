@@ -426,7 +426,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; cat.test.ts: 'the cat walks tile by tile'; frame.test.ts: 'night tints the map, not the figures'. LIVE as above.
 
 ### T22 Peek at an agent's last messages with Shift+E
-- status: done (#PR, 2026-10-05)
+- status: done (#45, 2026-10-05)
 - needs: T21
 - size: M
 - scope: Per D25:
