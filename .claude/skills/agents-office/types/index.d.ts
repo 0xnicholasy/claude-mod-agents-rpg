@@ -26,6 +26,7 @@ declare module 'claude-code' {
           room: 'reception' | 'conference' | 'kitchen' | 'lab' | 'booths' | `team:${string}`
           pose: 'idle' | 'walk' | 'read' | 'type' | 'run' | 'call' | 'talk'
           home: 'reception' | 'conference' | 'kitchen' | 'lab' | 'booths' | `team:${string}`
+          described?: boolean
           teammate: boolean
           completedAt?: number
           script?:
@@ -68,6 +69,7 @@ declare module 'claude-code' {
       inspect: { agentId: string; text: string; until: number } | null
       identity: { sessionId: string; startedAt: number; dir?: string } | null
       share: 'all' | 'anon' | 'off'
+      presence: { lastText?: string; lastWriteAt: number; ended: boolean }
       pad: {
         handled: string
         clear: string
