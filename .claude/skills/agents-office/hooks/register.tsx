@@ -14,6 +14,8 @@ import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest } from './inspect'
 import { INITIAL_PAD, onPadInput } from './pad'
+import { asShare, DEFAULT_SHARE, envValue, parseOfficeArgs, presenceDir, SHARE_USAGE } from './presence'
+import type { ShareMode } from './presence'
 import type { PadState } from './pad'
 import { settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
@@ -50,6 +52,14 @@ const player = atom({ plugin: 'agents-office', key: 'player' } as const, null as
 // The inspect line (D39): which agent, the text and when it stops showing; null when nothing is inspected.
 type Inspect = { agentId: string; text: string; until: number }
 const inspect = atom({ plugin: 'agents-office', key: 'inspect' } as const, null as Inspect | null)
+
+// This session's presence identity (D17): the session id, its start time and the resolved presence dir.
+// `dir` stays undefined until `printenv` resolves, or when both variables are empty; then nothing reads or writes.
+type Identity = { sessionId: string; startedAt: number; dir?: string }
+const identity = atom({ plugin: 'agents-office', key: 'identity' } as const, null as Identity | null)
+
+// The share preference (D19), mirrored from `$.store` key `share`.
+const share = atom({ plugin: 'agents-office', key: 'share' } as const, DEFAULT_SHARE as ShareMode)
 
 // Log de-dup cache for guard failures, not drawn state (D49): a hook that fails the same
 // way every tick logs once per distinct name + message.
@@ -140,6 +150,29 @@ const labelTeam = async ($: EngineInterface, cwd: string): Promise<void> => {
   const label = teamLabel(cwd, stdout, ok)
   const branch = branchOf(stdout, ok)
   await update($, team, cur => (cur === null ? cur : { ...cur, label, branch }))
+}
+
+// Runs `printenv <name>`; a failed run or an unset variable gives ''.
+const envOf = async ($: EngineInterface, name: string): Promise<string> => {
+  const { exitCode, stdout } = await $.process.run(['printenv', name], { timeoutMs: GIT_TIMEOUT_MS })
+
+  return envValue(stdout, exitCode === 0)
+}
+
+// Fills the identity atom (D17): session id, start time and the presence dir from CLAUDE_CONFIG_DIR / HOME.
+const resolveIdentity = async ($: EngineInterface): Promise<void> => {
+  const sessionId = await $.session.id()
+  const startedAt = await $.clock.now()
+  const config = await envOf($, 'CLAUDE_CONFIG_DIR')
+  const home = await envOf($, 'HOME')
+  const dir = presenceDir(config, home)
+  await update($, identity, () => ({ sessionId, startedAt, ...(dir === undefined ? {} : { dir }) }))
+}
+
+// Loads the stored share preference into the atom (D19).
+const loadShare = async ($: EngineInterface): Promise<void> => {
+  const stored = await $.store.get('share')
+  await update($, share, () => asShare(stored))
 }
 
 // Drops expired agents; writes only when the roster changed.
@@ -505,6 +538,9 @@ export const register: Register = on => {
     // the frame loop above or the 10 s refresh.
     await guard($, 'session.start team', undefined, async () => ensureTeam($, e.cwd, true))
     await guard($, 'session.start branch', undefined, async () => labelTeam($, e.cwd))
+    // The share mode loads before the dir resolves, so a publisher that waits for `dir` never sees the default.
+    await guard($, 'session.start share', undefined, async () => loadShare($))
+    await guard($, 'session.start presence', undefined, async () => resolveIdentity($))
     await guard($, 'session.start refresh timer', undefined, async () => {
       startRefresh($)
     })
@@ -593,8 +629,16 @@ export const register: Register = on => {
     return result
   })
 
-  on('command.run', { command: 'office' }, async $ =>
+  on('command.run', { command: 'office' }, async ($, e) =>
     guard($, 'command.run', { text: 'Office pane failed to open.' }, async () => {
+      const parsed = parseOfficeArgs(e.args)
+      if (parsed.kind === 'usage') return { text: SHARE_USAGE }
+      if (parsed.kind === 'share') {
+        await $.store.set('share', parsed.mode)
+        await update($, share, () => parsed.mode)
+
+        return { text: `Office sharing: ${parsed.mode}` }
+      }
       const wasOpened = await read($, opened)
       await openOffice($)
 

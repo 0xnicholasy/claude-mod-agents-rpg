@@ -66,6 +66,8 @@ declare module 'claude-code' {
         until?: number
       } | null
       inspect: { agentId: string; text: string; until: number } | null
+      identity: { sessionId: string; startedAt: number; dir?: string } | null
+      share: 'all' | 'anon' | 'off'
       pad: {
         handled: string
         clear: string
