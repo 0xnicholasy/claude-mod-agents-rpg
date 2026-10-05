@@ -389,7 +389,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; camera.test.ts: 'the window follows the player', 'edge marks show hidden rooms'. FAKES + LIVE as above.
 
 ### T19 Draw other sessions' players
-- status: done (#PR, 2026-10-05)
+- status: done (#42, 2026-10-05)
 - needs: T18
 - size: S
 - scope: Publish the own `player` as `{ room, rx, ry, facing, emote?, until? }` (D29). The reader maps it into its own room bounds and walks the remote player there. It is drawn with a white shirt, the team plate and emotes.
