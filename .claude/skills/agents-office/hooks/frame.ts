@@ -2,7 +2,7 @@
 // speech bubbles into one grid of cells. No `$`; register.tsx reads the atoms
 // and passes plain data in.
 import type { Roster } from './agents'
-import { canStand, FOOTPRINT_W, roomAt, tileAt } from './map'
+import { canStand, roomAt, tileAt } from './map'
 import type { OfficeMap, Point, RoomKind, TileKind } from './map'
 import { isValidGlyph } from './raster'
 import type { Cell } from './raster'
@@ -239,7 +239,7 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
         if (grid[y]?.[x] !== undefined) put(grid, x, y, cell)
       }),
     )
-    const center = at.x + Math.floor(FOOTPRINT_W / 2)
+    const center = at.x + Math.floor(map.foot.w / 2)
     const fit = fitPlate(map, center, at.y - 1, nameplate(agent.label))
     if (fit !== undefined) plates.push({ id: agent.id, left: fit.left, y: at.y - 1, cells: fit.cells, center })
   }
@@ -258,7 +258,7 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
         if (grid[other.y + dy]?.[other.x + dx] !== undefined) put(grid, other.x + dx, other.y + dy, cell)
       }),
     )
-    const center = other.x + Math.floor(FOOTPRINT_W / 2)
+    const center = other.x + Math.floor(map.foot.w / 2)
     const fit = fitPlate(map, center, other.y - 1, nameplate(other.label))
     if (fit !== undefined) plates.push({ id: `player:${other.id}`, left: fit.left, y: other.y - 1, cells: fit.cells, center })
   }
@@ -279,7 +279,7 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
         if (grid[player.y + dy]?.[player.x + dx] !== undefined) put(grid, player.x + dx, player.y + dy, cell)
       }),
     )
-    const center = player.x + Math.floor(FOOTPRINT_W / 2)
+    const center = player.x + Math.floor(map.foot.w / 2)
     const fit = fitPlate(map, center, player.y - 1, nameplate('you'))
     // First in the list, so a tie with a neighbouring agent's plate goes to the player's.
     if (fit !== undefined) plates.unshift({ id: 'player', left: fit.left, y: player.y - 1, cells: fit.cells, center })
@@ -300,21 +300,21 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
       .sort((a, b) => b.until - a.until)[0]
     if (active === undefined) continue
     const cells = textCells(active.text, BUBBLE_FG, BUBBLE_BG)
-    const left = at.x + Math.floor(FOOTPRINT_W / 2) - Math.floor(cells.length / 2)
-    putBubble(grid, map, at.x + Math.floor(FOOTPRINT_W / 2), at.y, left, cells)
+    const left = at.x + Math.floor(map.foot.w / 2) - Math.floor(cells.length / 2)
+    putBubble(grid, map, at.x + Math.floor(map.foot.w / 2), at.y, left, cells)
   }
 
   // An emote shows on the bubble row above the player's plate until `until` (D15).
   if (player !== undefined && player !== null && player.emote !== undefined && (player.emoteUntil ?? 0) > now) {
     const code = player.emote.codePointAt(0) ?? 0x2a
-    const cx = player.x + Math.floor(FOOTPRINT_W / 2)
+    const cx = player.x + Math.floor(map.foot.w / 2)
     putBubble(grid, map, cx, player.y, cx, [{ ch: isValidGlyph(code) ? code : 0x2a, fg: BUBBLE_FG, bg: BUBBLE_BG }])
   }
 
   for (const other of others ?? []) {
     if (other.emote === undefined || (other.emoteUntil ?? 0) <= now) continue
     const code = other.emote.codePointAt(0) ?? 0x2a
-    const cx = other.x + Math.floor(FOOTPRINT_W / 2)
+    const cx = other.x + Math.floor(map.foot.w / 2)
     putBubble(grid, map, cx, other.y, cx, [{ ch: isValidGlyph(code) ? code : 0x2a, fg: BUBBLE_FG, bg: BUBBLE_BG }])
   }
 
@@ -324,8 +324,8 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, others, 
   for (const speaker of speakers) {
     if (speaker.chat === undefined || (speaker.chatUntil ?? 0) <= now) continue
     const cells = textCells(speaker.chat, BUBBLE_FG, BUBBLE_BG)
-    const left = Math.max(0, Math.min(map.columns - cells.length, speaker.x + Math.floor(FOOTPRINT_W / 2) - Math.floor(cells.length / 2)))
-    putBubble(grid, map, speaker.x + Math.floor(FOOTPRINT_W / 2), speaker.y, left, cells)
+    const left = Math.max(0, Math.min(map.columns - cells.length, speaker.x + Math.floor(map.foot.w / 2) - Math.floor(cells.length / 2)))
+    putBubble(grid, map, speaker.x + Math.floor(map.foot.w / 2), speaker.y, left, cells)
   }
 
   // Inspect text (D39): one row over the corridor, cut to the corridor's width, on top of everything.

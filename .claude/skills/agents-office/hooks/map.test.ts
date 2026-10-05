@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { buildOffice, canStand, fitSign, FOOTPRINT_H, FOOTPRINT_W, OfficeTooSmall, roomAt, tileAt } from './map'
+import { buildOffice, canStand, fitSign, MID_FOOT, OfficeTooSmall, roomAt, SMALL_FOOT, tileAt } from './map'
 import type { OfficeMap, Point, Rect, TeamSpec } from './map'
 import { findPath } from './path'
 
@@ -51,11 +51,11 @@ test('every room has a sign inside its bounds and at least one floor anchor', ()
       expect(room.anchors.length).toBeGreaterThanOrEqual(1)
       for (const a of room.anchors) {
         expect(inside(room.bounds, a)).toBe(true)
-        expect(inside(room.bounds, { x: a.x + FOOTPRINT_W - 1, y: a.y + FOOTPRINT_H - 1 })).toBe(true)
+        expect(inside(room.bounds, { x: a.x + SMALL_FOOT.w - 1, y: a.y + SMALL_FOOT.h - 1 })).toBe(true)
         expect(a.y - 1).toBeGreaterThan(at(room.sign.cells, 0).y)
         // No bottom-room desk footprint overlaps the room's doorStand footprint (top rooms
         // centre their stand among the desks by design).
-        const apart = Math.abs(a.x - room.doorStand.x) >= FOOTPRINT_W || Math.abs(a.y - room.doorStand.y) >= FOOTPRINT_H
+        const apart = Math.abs(a.x - room.doorStand.x) >= SMALL_FOOT.w || Math.abs(a.y - room.doorStand.y) >= SMALL_FOOT.h
         if (room.kind !== 'team') expect(apart).toBe(true)
       }
     }
@@ -161,6 +161,20 @@ test('every anchor and doorStand is a standable footprint and a footprint fits t
   expect(canStand(layout(60, 18), 0, 0)).toBe(false)
 })
 
+test('canStand checks every cell of the map footprint', () => {
+  const small = layout(100, 30)
+  const spot = small.rooms[0]!.anchors[0]!
+  const mid: OfficeMap = { ...small, foot: MID_FOOT }
+  // The 5x5 footprint at a spot whose last cell (x+4, y+4) is turned into wall.
+  const tiles = small.tiles.map(row => [...row])
+  for (let dy = 0; dy < MID_FOOT.h; dy++) for (let dx = 0; dx < MID_FOOT.w; dx++) tiles[spot.y + dy]![spot.x + dx] = 'floor'
+  tiles[spot.y + MID_FOOT.h - 1]![spot.x + MID_FOOT.w - 1] = 'wall'
+  expect(canStand({ ...mid, tiles }, spot.x, spot.y)).toBe(false)
+  tiles[spot.y + MID_FOOT.h - 1]![spot.x + MID_FOOT.w - 1] = 'floor'
+  expect(canStand({ ...mid, tiles }, spot.x, spot.y)).toBe(true)
+  expect(canStand(small, spot.x, spot.y)).toBe(true)
+})
+
 const OFFICE_SIZES: Array<[number, number]> = [[60, 11], [60, 18], [100, 30]]
 const TEAM_COUNTS = [1, 2, 4, 6]
 
@@ -187,7 +201,7 @@ test('team desks are 5 apart', () => {
       for (const room of office.rooms.filter(r => r.kind === 'team')) {
         expect(room.anchors.length).toBeGreaterThanOrEqual(2)
         for (let i = 1; i < room.anchors.length; i++) expect(at(room.anchors, i).x - at(room.anchors, i - 1).x).toBe(5)
-        for (const a of room.anchors) expect(inside(room.bounds, { x: a.x + FOOTPRINT_W - 1, y: a.y + FOOTPRINT_H - 1 })).toBe(true)
+        for (const a of room.anchors) expect(inside(room.bounds, { x: a.x + SMALL_FOOT.w - 1, y: a.y + SMALL_FOOT.h - 1 })).toBe(true)
       }
     }
   }
