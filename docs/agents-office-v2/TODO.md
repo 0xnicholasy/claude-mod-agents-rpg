@@ -1,8 +1,8 @@
 # Agents Office v2: people, real rooms, WASD and one shared office
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
-Status: ACTIVE
-Progress: 34/35 done
+Status: COMPLETE 2026-10-05, kept as backlog
+Progress: 35/35 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -581,7 +581,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; `grep -nE 'Library|Dev Bay|Lobby|Break Room' README.md` prints nothing
 
 ### TZZ Cleanup and land
-- status: todo
+- status: done (2026-10-05)
 - needs: every other todo
 - scope: Run `/implement cleanup`. The landing PR from `feat/agents-office-v2` goes into `feat/agents-office`, or into `main` if PR #18 has merged by then (D3). The owner merges it.
 - done when: the skill is removed from the branch, TODO.md is archived, and the landing PR into feat/agents-office (or main, per D3) is open and approved by the owner
@@ -654,3 +654,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 F08 done (#57): mid is wired in at 72 columns and 11 rows (D69); `viewport.foot`, `seatFoot` reseat, 0 strip rows for a 23-row mid body, and a retrying viewport write (the 120x40 pane was empty without it). Backlog: the pad Input covers the first cell of the bottom-left room sign ('Reception' reads 'eception' when the view is at the map bottom); the F04 sign cut ('Conferenc') stays.
 - 2026-10-05 F09 done (#58): mixed-size LIVE2 shows both panes drawing each other's team room and moving figure in both directions (D70); no presence.ts change. Fixed the F08 Backlog sign cut under the pad (`Reception` was `eception`). LIVE120 for `ao` shows the whole 116x23 office, no ▲/▼.
 - 2026-10-05 T25 done (#59): README rewritten for v2 (install and uninstall, rooms, tiers and roles, controls, shared office, figure sizes and camera marks, known limits); two LIVE captures under `docs/images/`. No banner: `figures/readme-banner.png` did not exist at commit time, so the README ships without one (see Backlog).
+- 2026-10-05 TZZ done: /implement skill removed, TODO.md kept as the backlog record, landing PR opened from feat/agents-office-v2 into feat/agents-office (retarget to main once #18 merges; owner merges).
