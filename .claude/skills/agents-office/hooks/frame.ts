@@ -2,7 +2,7 @@
 // speech bubbles into one grid of cells. No `$`; register.tsx reads the atoms
 // and passes plain data in.
 import type { Roster } from './agents'
-import { canStand, FOOTPRINT_W, tileAt } from './map'
+import { canStand, FOOTPRINT_W, roomAt, tileAt } from './map'
 import type { OfficeMap, Point, RoomKind, TileKind } from './map'
 import { isValidGlyph } from './raster'
 import type { Cell } from './raster'
@@ -139,6 +139,8 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, overlay 
     const glyphs = Array.from(room.sign.text, g => g.codePointAt(0))
     room.sign.cells.forEach((p, i) => {
       const code = glyphs[i]
+      // The `+N` mark owns the right end of the top wall row, so a sign on that row stops before it.
+      if (p.y === 0 && map.hidden > 0 && p.x >= map.columns - 2 - `+${map.hidden}`.length) return
       if (code !== undefined) put(grid, p.x, p.y, { ch: isValidGlyph(code) ? code : 0x3f, fg: SIGN_FG, bg: SIGN_BG })
     })
   }
@@ -231,6 +233,12 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player, overlay 
     })
   }
 
+  // Teams hidden for lack of width (D21): a `+N` mark at the right end of the top band, over the sign row.
+  if (map.hidden > 0) {
+    const mark = textCells(`+${map.hidden}`, SIGN_FG, SIGN_BG)
+    mark.forEach((cell, i) => put(grid, map.columns - 1 - mark.length + i, 0, cell))
+  }
+
   // Inspect text (D39): one row over the corridor, cut to the corridor's width, on top of everything.
   if (overlay !== undefined && overlay !== '') {
     const { x, y, w } = map.corridor
@@ -256,7 +264,18 @@ export const placeMotion = (map: OfficeMap, agents: Roster, motion: Motion): Mot
     const stale =
       entry !== undefined &&
       (!canStand(map, entry.x, entry.y) || entry.path.some(p => !canStand(map, p.x, p.y)))
-    if (agents[id] !== undefined && !stale) continue
+    // A resting agent of a team room that stands outside that room, because the layout reflowed when a session
+    // joined or left, is reseated too (D31).
+    const home = agents[id]
+    // An agent resting in a shared room is not displaced: it is routed home and walks.
+    const where = entry === undefined ? undefined : roomAt(map, entry.x, entry.y)
+    const displaced =
+      entry !== undefined &&
+      home !== undefined &&
+      entry.path.length === 0 &&
+      home.room.startsWith('team:') &&
+      (where === undefined || (where.startsWith('team:') && where !== home.room))
+    if (home !== undefined && !stale && !displaced) continue
     if (next === motion) next = { ...motion }
     delete next[id]
   }

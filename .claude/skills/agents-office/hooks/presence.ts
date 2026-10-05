@@ -2,7 +2,9 @@
 import type { OfficeAgent, AgentStatus, Roster, Tier } from './agents'
 import { clean } from './log'
 import { cut } from './map'
-import type { RoomId } from './map'
+import type { OfficeMap, RoomId, TeamSpec } from './map'
+import { assignTarget } from './motion'
+import type { Motion } from './frame'
 import type { Facing, Pose, Role } from './sprites'
 import { HEARTBEAT_MS, STALE_MS } from './timing'
 
@@ -319,4 +321,63 @@ export const mergeRemote = (prev: Remote, parsed: Readonly<Record<string, Parsed
   const same = Object.keys(next).length === Object.keys(prev).length && Object.keys(next).every(id => next[id] === prev[id])
 
   return same ? prev : next
+}
+
+// ---- Drawing other sessions (T16, D4, D12, D20).
+
+export const remoteKey = (sessionId: string, agentId: string): string => `${sessionId}:${agentId}`
+
+// Every remote agent as a roster entry keyed `sessionId:agentId`; its published room and pose are drawn as they are.
+export const remoteRoster = (remote: Remote): Roster => {
+  const roster: Roster = {}
+  for (const record of Object.values(remote)) {
+    for (const agent of record.agents) {
+      const id = remoteKey(record.sessionId, agent.id)
+      const entry: OfficeAgent = {
+        id,
+        label: agent.label,
+        tier: agent.tier,
+        role: agent.role,
+        status: agent.status,
+        room: agent.room,
+        pose: agent.pose,
+        home: agent.room,
+        teammate: false,
+      }
+      roster[id] = agent.parentId === undefined ? entry : { ...entry, parentId: remoteKey(record.sessionId, agent.parentId) }
+    }
+  }
+
+  return roster
+}
+
+export type OwnTeam = { id: `team:${string}`; label: string; startedAt: number }
+
+// Teams in room order, so every pane agrees: `startedAt`, then id (D4). A label already taken by an earlier
+// room gets " 2", " 3" (D12). A record with no label (anonymous) is `Session` until T17 numbers it.
+export const orderedTeams = (own: OwnTeam | null, remote: Remote): TeamSpec[] => {
+  const all = [
+    ...(own === null ? [] : [{ id: own.id, label: own.label, startedAt: own.startedAt }]),
+    ...Object.values(remote).map(record => ({ id: `team:${record.sessionId}` as const, label: record.team.label || 'Session', startedAt: record.startedAt })),
+  ].sort((a, b) => a.startedAt - b.startedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  const seen = new Map<string, number>()
+
+  return all.map(team => {
+    const count = (seen.get(team.label) ?? 0) + 1
+    seen.set(team.label, count)
+
+    return { id: team.id, label: count === 1 ? team.label : `${team.label} ${count}` }
+  })
+}
+
+// Sends each remote agent that already has a motion entry toward its published room, one tile per step.
+// Returns the same reference when nobody needs a new route.
+export const routeRemote = (motion: Motion, map: OfficeMap, remoteAgents: Roster): Motion => {
+  let next = motion
+  for (const agent of Object.values(remoteAgents)) {
+    if (next[agent.id] === undefined) continue
+    next = assignTarget(next, map, agent.id, agent.room)
+  }
+
+  return next
 }

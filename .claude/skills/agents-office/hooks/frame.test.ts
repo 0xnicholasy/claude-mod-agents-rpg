@@ -5,11 +5,14 @@ import type { OfficeAgent, Roster, Tier } from './agents'
 import { buildOffice } from './map'
 import { DEFAULT_COLOR } from './raster'
 import type { Cell } from './raster'
-import { enterAtDoor } from './motion'
+import { enterAtDoor, step } from './motion'
+import { orderedTeams, remoteRoster, routeRemote } from './presence'
+import type { PresenceAgent, PresenceRecord, Remote } from './presence'
 import type { Player } from './player'
 import { countPairs, PAIR_BUDGET } from './pixels'
 import { FACINGS, figure, nameplate, POSES, ROLE_COLORS, SPRITE_PALETTE } from './sprites'
 import type { Facing, Pose, Role } from './sprites'
+import { canStand } from './map'
 import type { OfficeMap } from './map'
 const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], 'team:t1')
 
@@ -374,4 +377,152 @@ test('an emote shows above the player for 3 s', () => {
   expect(glyphAt(2999)).toBe(0x25c6)
   expect(glyphAt(3000)).not.toBe(0x25c6)
   expect(glyphAt(0, base)).not.toBe(0x25c6)
+})
+
+const remoteAgent = (id: string, over: Partial<PresenceAgent> = {}): PresenceAgent => ({
+  id,
+  label: id,
+  tier: 'sonnet',
+  role: 'dev',
+  room: 'team:r1',
+  pose: 'type',
+  status: 'working',
+  ...over,
+})
+
+const session = (sessionId: string, startedAt: number, label: string, agents: PresenceAgent[]): PresenceRecord => ({
+  v: 1,
+  sessionId,
+  startedAt,
+  heartbeatAt: 1000,
+  share: 'all',
+  team: { label, branch: 'main' },
+  agents,
+  player: null,
+})
+
+const own = { id: 'team:own' as const, label: 'mine (main)', startedAt: 50 }
+const signRow = (grid: Cell[][]): string => String.fromCodePoint(...(grid[0] ?? []).map(c => c.ch))
+
+test('team rooms follow startedAt order', () => {
+  const remote: Remote = {
+    r2: session('r2', 90, 'late (main)', []),
+    r1: session('r1', 10, 'early (main)', []),
+  }
+  const teams = orderedTeams(own, remote)
+  const office = buildOffice(100, 18, teams, own.id)
+  const grid = buildFrame({ map: office, agents: {}, motion: {}, bubbles: [], now: 0 })
+  // The sign drawn in each team room, left to right.
+  const drawn = office.rooms
+    .filter(r => r.kind === 'team')
+    .sort((a, b) => a.bounds.x - b.bounds.x)
+    .map(r => String.fromCodePoint(...r.sign.cells.map(p => grid[p.y]?.[p.x]?.ch ?? 0x3f)))
+
+  expect(teams.map(t => t.id)).toEqual(['team:r1', 'team:own', 'team:r2'])
+  expect(drawn).toEqual(['early (main)', 'mine (main)', 'late (main)'])
+  // Ties on startedAt go to the id, and a repeated label is numbered in room order.
+  const tied = orderedTeams({ ...own, startedAt: 10, label: 'same' }, { r1: session('r1', 10, 'same', []), r0: session('r0', 10, 'same', []) })
+  expect(tied.map(t => `${t.id}=${t.label}`)).toEqual(['team:own=same', 'team:r0=same 2', 'team:r1=same 3'])
+})
+
+test('a remote agent walks to its published room', () => {
+  const room = (r: string): Remote => ({ r1: session('r1', 10, 'early', [remoteAgent('main', { room: r as PresenceAgent['room'] })]) })
+  const office = buildOffice(60, 18, orderedTeams(own, room('team:r1')), own.id)
+  const key = 'r1:main'
+  let motion = placeMotion(office, remoteRoster(room('team:r1')), {})
+  const start = motion[key]
+  expect(start).toBeDefined()
+
+  // The published room changes to the Conference Room: the agent walks there, never more than one tile per step.
+  const roster = remoteRoster(room('conference'))
+  motion = routeRemote(motion, office, roster)
+  const path = motion[key]?.path ?? []
+  expect(path.length).toBeGreaterThan(1)
+  let at = { x: start?.x ?? 0, y: start?.y ?? 0 }
+  for (let i = 0; i < path.length; i++) {
+    motion = step(motion)
+    const now = motion[key]
+    expect(Math.abs((now?.x ?? 0) - at.x) + Math.abs((now?.y ?? 0) - at.y)).toBeLessThanOrEqual(1)
+    at = { x: now?.x ?? 0, y: now?.y ?? 0 }
+  }
+  const conference = office.rooms.find(r => r.id === 'conference')
+  expect(conference?.anchors.some(a => a.x === at.x && a.y === at.y)).toBe(true)
+  // Nothing left to route once it has arrived.
+  expect(routeRemote(motion, office, roster)).toBe(motion)
+})
+
+test('dropping a session reflows without errors', () => {
+  const remote: Remote = { r1: session('r1', 10, 'early', [remoteAgent('main'), remoteAgent('a1')]) }
+  const two = buildOffice(60, 18, orderedTeams(own, remote), own.id)
+  const mine: Roster = { main: agent('main', { room: 'team:own', home: 'team:own' }) }
+  const crowd = { ...mine, ...remoteRoster(remote) }
+  const seated = placeMotion(two, crowd, {})
+  expect(Object.keys(seated).sort()).toEqual(['main', 'r1:a1', 'r1:main'])
+
+  const one = buildOffice(60, 18, orderedTeams(own, {}), own.id)
+  const after = placeMotion(one, mine, seated)
+  expect(Object.keys(after)).toEqual(['main'])
+  const spot = after.main
+  expect(canStand(one, spot?.x ?? -1, spot?.y ?? -1)).toBe(true)
+  expect(one.rooms.find(r => r.id === 'team:own')?.anchors.some(a => a.x === spot?.x && a.y === spot?.y)).toBe(true)
+  expect(() => buildFrame({ map: one, agents: mine, motion: after, bubbles: [], now: 0 })).not.toThrow()
+})
+
+test('hidden teams get a +N mark at the right end of the top band', () => {
+  const remote: Remote = {}
+  for (let i = 0; i < 5; i++) remote[`r${i}`] = session(`r${i}`, i, `team ${i}`, [])
+  const office = buildOffice(60, 18, orderedTeams(own, remote), own.id)
+  const row = signRow(buildFrame({ map: office, agents: {}, motion: {}, bubbles: [], now: 0 }))
+
+  expect(office.hidden).toBeGreaterThan(0)
+  expect(row.slice(-1 - `+${office.hidden}`.length, -1)).toBe(`+${office.hidden}`)
+  expect(signRow(buildFrame({ map, agents: {}, motion: {}, bubbles: [], now: 0 })).includes('+')).toBe(false)
+})
+
+test('four teams of eight agents stay under 256 color pairs', () => {
+  const tiers: Tier[] = ['haiku', 'sonnet', 'opus', 'fable', 'grey']
+  const roles = Object.keys(ROLE_COLORS) as Role[]
+  const remote: Remote = {}
+  for (let t = 0; t < 3; t++) {
+    const agents = Array.from({ length: 8 }, (_, i) =>
+      remoteAgent(`a${i}`, { tier: tiers[(t + i) % 5] ?? 'grey', role: roles[(t + i) % 4] ?? 'dev', pose: POSES[(t + i) % POSES.length] ?? 'idle', room: `team:r${t}` }),
+    )
+    remote[`r${t}`] = session(`r${t}`, t, `team ${t}`, agents)
+  }
+  const mine: Roster = {}
+  for (let i = 0; i < 8; i++) {
+    mine[`m${i}`] = agent(`m${i}`, { room: 'team:own', home: 'team:own', tier: tiers[i % 5] ?? 'grey', role: roles[i % 4] ?? 'dev', pose: POSES[i % POSES.length] ?? 'idle' })
+  }
+  const office = buildOffice(100, 18, orderedTeams(own, remote), own.id)
+  const everyone = { ...mine, ...remoteRoster(remote) }
+  const motion = placeMotion(office, everyone, {})
+  const frame = buildFrame({ map: office, agents: everyone, motion, bubbles: [], now: 0 })
+
+  expect(office.hidden).toBe(0)
+  expect(Object.keys(motion)).toHaveLength(32)
+  expect(countPairs(frame)).toBeLessThan(PAIR_BUDGET)
+})
+
+test('a remote agent resting in a shared room walks home, and a reflowed one is reseated', () => {
+  const home: Remote = { r1: session('r1', 10, 'early', [remoteAgent('main', { room: 'team:r1' })]) }
+  const office = buildOffice(60, 18, orderedTeams(own, home), own.id)
+  const roster = remoteRoster(home)
+  const lab = office.rooms.find(r => r.id === 'lab')?.anchors[0] ?? { x: 0, y: 0 }
+  const resting: Motion = { 'r1:main': at(lab.x, lab.y) }
+  const kept = placeMotion(office, roster, resting)
+  expect(kept).toBe(resting)
+  expect((routeRemote(kept, office, roster)['r1:main']?.path.length ?? 0)).toBeGreaterThan(0)
+
+  const corridor = office.corridor
+  const lost = placeMotion(office, roster, { 'r1:main': at(corridor.x + 1, corridor.y) })
+  expect(lost['r1:main']).not.toEqual(at(corridor.x + 1, corridor.y))
+})
+
+test('the +N mark never overwrites a sign in the compact layout', () => {
+  const remote: Remote = {}
+  for (let i = 0; i < 5; i++) remote[`r${i}`] = session(`r${i}`, i, `team ${i}`, [])
+  const office = buildOffice(60, 11, orderedTeams(own, remote), own.id)
+  const row = signRow(buildFrame({ map: office, agents: {}, motion: {}, bubbles: [], now: 0 }))
+
+  expect(row.slice(-1 - `+${office.hidden}`.length, -1)).toBe(`+${office.hidden}`)
 })
