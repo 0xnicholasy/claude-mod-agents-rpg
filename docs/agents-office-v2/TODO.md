@@ -306,7 +306,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; presence.test.ts: 'presence dir prefers CLAUDE_CONFIG_DIR'; office.test.ts: '/office share anon is stored', '/office share bogus shows usage'
 
 ### T14 Publish this session's presence
-- status: done (#PR, 2026-10-05)
+- status: done (#37, 2026-10-05)
 - needs: T13
 - size: M
 - scope:
