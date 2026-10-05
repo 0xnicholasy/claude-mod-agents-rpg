@@ -54,7 +54,12 @@ test('a 50x12 pane shows the widen line and ticks do not blit', async ($, on) =>
   })
   await clock.advance(300)
 
-  expect(await ui.find({ type: 'Text', text: 'Widen the pane for the office' })).toBeDefined()
+  expect(
+    await ui.find({
+      type: 'Text',
+      text: 'Office needs a 60x23 pane, this one is 50x12. Widen or heighten the terminal.',
+    }),
+  ).toBeDefined()
   expect(await ui.find({ type: 'Raster' })).toBeUndefined()
   expect(await ui.findAll({ type: 'Text' })).toHaveLength(1)
   expect(blits).toHaveLength(0)
@@ -84,10 +89,15 @@ test('the widen line and Raster switch at the 60x23 body-size boundary', async (
       expect(await ui.find({ type: 'Raster', key: 'office' })).toMatchObject({
         props: { columns: 60, rows: 18 },
       })
-      expect(await ui.find({ type: 'Text', text: 'Widen the pane for the office' })).toBeUndefined()
+      expect(await ui.find({ type: 'Text', text: /Office needs a/ })).toBeUndefined()
     } else {
       expect(await ui.findAll({ type: 'Text' })).toHaveLength(1)
-      expect(await ui.find({ type: 'Text', text: 'Widen the pane for the office' })).toBeDefined()
+      expect(
+        await ui.find({
+          type: 'Text',
+          text: `Office needs a 60x23 pane, this one is ${c.columns}x${c.rows}. Widen or heighten the terminal.`,
+        }),
+      ).toBeDefined()
       expect(await ui.find({ type: 'Raster' })).toBeUndefined()
     }
     await ui.unmount()
@@ -261,7 +271,7 @@ test('agent.spawn result delivers agentId to the roster', async ($, on) => {
 })
 
 test('/office opens the office pane', async ($, on) => {
-  const opened: Array<{ id: string; title?: string }> = []
+  const opened: Array<{ id: string; title?: string; rows?: number; columns?: number }> = []
   on('ui.open', ($, e) => {
     opened.push(e)
     return { value: { isPlaced: true } }
@@ -273,7 +283,7 @@ test('/office opens the office pane', async ($, on) => {
     presentation: { isFullscreen: false, columns: 120 },
   })
 
-  expect(opened).toMatchObject([{ id: 'office', title: 'Office' }])
+  expect(opened).toMatchObject([{ id: 'office', title: 'Office', rows: 23, columns: 60 }])
 })
 
 const spawnArgs = {

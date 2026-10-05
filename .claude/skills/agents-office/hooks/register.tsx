@@ -9,7 +9,7 @@ import { buildFrame, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
 import { arrived, pushLog, reported, told } from './log'
 import { mapFor, rasterSize } from './loop'
-import { roomAt } from './map'
+import { MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { OfficeMap } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { packCells } from './raster'
@@ -295,7 +295,8 @@ const startRefresh = ($: EngineInterface): void => {
 }
 
 const openOffice = async ($: EngineInterface): Promise<void> => {
-  await $.ui.open({ id: PANE, title: 'Office' })
+  // Without rows an inline pane opens a third of the terminal tall, too short for the office.
+  await $.ui.open({ id: PANE, title: 'Office', rows: MIN_ROWS + STRIP_ROWS, columns: MIN_COLUMNS })
   await update($, opened, () => true)
 }
 
@@ -451,12 +452,14 @@ export const register: Register = on => {
               $.ui.log(`agents-office: viewport write threw ${String(error)}`, { to: 'debug' }),
             )
         })
-        // Below the minimum size draw only the widen line (D48).
+        // Below the minimum size draw only the size line (D48).
         const map = mapFor(columns, rows)
         if (map === undefined) {
           return (
             <Box flexDirection="column">
-              <Text>Widen the pane for the office</Text>
+              <Text>
+                {`Office needs a ${MIN_COLUMNS}x${MIN_ROWS + STRIP_ROWS} pane, this one is ${e.props.bodyColumns}x${e.props.scroll.bodyRows}. Widen or heighten the terminal.`}
+              </Text>
             </Box>
           )
         }

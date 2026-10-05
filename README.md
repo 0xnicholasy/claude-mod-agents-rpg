@@ -51,7 +51,7 @@ Grey means the model is unknown. It is used for the main session and for teammat
 
 - Claude Code 2.1.289, the version the API types were taken from (see `CLAUDE.md`).
 - The terminal surface only. Other surfaces show "Office needs the terminal surface."
-- A pane body of at least 60 columns by 23 rows (an 18-row map plus the 5-row log). A smaller pane shows "Widen the pane for the office" and draws nothing else. Resizing to a valid size redraws at once.
+- A pane body of at least 60 columns by 23 rows (an 18-row map plus the 5-row log). `/office` requests a pane of that size. A smaller pane shows a line naming the needed and actual size ("Office needs a 60x23 pane, this one is ...") and draws nothing else. Resizing to a valid size redraws at once.
 
 ## Develop
 
