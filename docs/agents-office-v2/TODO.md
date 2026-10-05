@@ -207,7 +207,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; team.test.ts: 'label is basename and branch', 'no branch gives the basename'. LIVE: the sign reads `claude-mod-agents-rpg (feat/agents-office-v2)`, cut to the room width.
 
 ### T08 Focus a pad input and decode key bursts
-- status: done (#PR, 2026-10-05)
+- status: done (#31, 2026-10-05)
 - needs: T07
 - size: M
 - scope:
