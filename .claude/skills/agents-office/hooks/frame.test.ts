@@ -548,7 +548,7 @@ test('two sessions of one worktree get distinct signs even with a long label', (
 
 test('the inspect line lands inside a scrolled view', () => {
   const wide = buildOffice(60, 18, Array.from({ length: 6 }, (_, i) => ({ id: `team:s${i}` as const, label: `t${i}` })))
-  const span = overlaySpan(wide, 60, wide.columns - 2)
+  const span = overlaySpan(wide, 60, wide.rows, { x: wide.columns - 2, y: 2 })
   const grid = buildFrame({ map: wide, agents: {}, motion: {}, bubbles: [], now: 0, overlay: 'hello', overlayFrom: span.from, overlayWidth: span.width })
   const row = String.fromCodePoint(...(grid[wide.corridor.y] ?? []).map(c => c.ch))
 
