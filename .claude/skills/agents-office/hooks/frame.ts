@@ -219,6 +219,16 @@ export const buildFrame = ({ map, agents, motion, bubbles, now, player }: FrameI
     cells.forEach((cell, i) => put(grid, left + i, at.y - 2, cell))
   }
 
+  // An emote shows on the bubble row above the player's plate until `until` (D15).
+  if (player !== undefined && player !== null && player.emote !== undefined && (player.until ?? 0) > now) {
+    const code = player.emote.codePointAt(0) ?? 0x2a
+    put(grid, player.x + Math.floor(FOOTPRINT_W / 2), player.y - 2, {
+      ch: isValidGlyph(code) ? code : 0x2a,
+      fg: BUBBLE_FG,
+      bg: BUBBLE_BG,
+    })
+  }
+
   return grid
 }
 

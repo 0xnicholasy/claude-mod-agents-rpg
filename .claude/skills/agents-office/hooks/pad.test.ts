@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { applyKeys, INITIAL_PAD, MAX_TAPS, onPadInput, readKeys } from './pad'
+import { applyKeys, emoteOf, INITIAL_PAD, MAX_TAPS, onPadInput, readKeys } from './pad'
+import { isValidGlyph } from './raster'
 
 test('a coalesced burst yields every key', () => {
   expect(readKeys('', 'wwww')).toEqual({ keys: ['w', 'w', 'w', 'w'], handled: 'wwww' })
@@ -43,4 +44,21 @@ test('taps stop queuing at the cap', () => {
   const state = applyKeys(INITIAL_PAD, Array.from({ length: 20 }, () => 'd'), 0)
 
   expect(state.intent?.taps).toBe(MAX_TAPS)
+})
+
+test('keys 1-4 set the emote glyph and every glyph is valid', () => {
+  // The raster refuses U+2665 and U+266A, so keys 3 and 4 draw their stand-ins.
+  expect(applyKeys(INITIAL_PAD, ['3'], 500).emote).toEqual({ glyph: '\u25c6', at: 500 })
+  expect(['1', '2', '3', '4'].map(emoteOf)).toEqual(['!', '?', '\u25c6', '~'])
+  for (const key of ['1', '2', '3', '4']) expect(isValidGlyph(emoteOf(key)?.codePointAt(0) ?? 0)).toBe(true)
+  // An emote is not a move, and other keys are not emotes.
+  expect(applyKeys(INITIAL_PAD, ['3'], 0).intent).toBeUndefined()
+  expect(emoteOf('5')).toBeUndefined()
+})
+
+test('an emote does not clear the pending walk and the newest emote wins', () => {
+  const state = applyKeys(INITIAL_PAD, ['d', '1', '4'], 10)
+
+  expect(state.intent).toMatchObject({ key: 'd', taps: 1 })
+  expect(state.emote?.glyph).toBe('~')
 })

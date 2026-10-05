@@ -13,3 +13,4 @@ export const WORK_FRAME_TICKS = 3
 export const PAD_FOCUS_MS = 1500
 // A movement key stays fresh this long (D13).
 export const INTENT_MS = 250
+export const EMOTE_MS = 3000

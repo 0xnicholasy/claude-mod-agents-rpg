@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v2 | branch: feat/agents-office-v2 | base: feat/agents-office | tag: pre-agents-office-v2-feat-agents-office | created: 2026-10-05
 Status: ACTIVE
-Progress: 9/26 done
+Progress: 10/26 done
 
 ## Goal
 Every agent reads as a person. Each is a 3x2-cell half-block figure with hair, skin, a tier-colored shirt and role-colored pants. It faces the way it walks and sits at its desk while reading or editing.
@@ -97,6 +97,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 
 - D34 T08 details. `pad.ts` exports `readKeys(handled, value, clear)`, `applyKeys`, `onPadInput`, `INITIAL_PAD`; the `pad` atom is `{ handled, clear, intent? }` with `intent = { key, at, taps }` (`taps` counts presses of the same key since it last changed; T09 consumes it). A value equal to the drawn `clear` marker is never a key; a value that does not extend `handled` is a reset field and its text after the marker is all new. Every input event that carried keys flips `clear` between '' and ' '. A value that is a prefix of `handled` is a deletion and yields no keys (review). The hook returns `next(e)` and ignores `submit`; the Input sits in a wrapper Box with the Raster so `bottom={0}` is the map's last row, not a strip line. The Input needs `submitLabel=""`: with the default label it wrapped vertically inside the 2-column Box and covered 6 rows. At 80x24 it still draws `…` and `⏎` over the bottom-left wall cell and the cell above it (the Reception interior, first column); no figure is hidden there. The test engine does not dispatch `$.ui.focus` to an `on('ui.focus')` hook (it answers `no implementation`), so the office test asserts the plugin made the call at 1500 ms by the one `pad focus` debug-log line it writes on that failure. A deny is logged once with `pad focus denied: <reason>`. (T08, 2026-10-05) | confirms D13 so far
 - D35 T09 details. `player.ts` exports `Player`, `padRect`, `spawnPlayer(map, ownId)` and `stepPlayer(player, map, intent, now, ownId)`, which returns `{ player, intent }`. Each tick consumes at most one pending tap (`intent.taps`, capped at `MAX_TAPS` = 8 in pad.ts), so a held key never outruns the tick; a tap moves exactly one tile even when the tick is late. Taps older than `INTENT_MS` (250 ms, measured from the newest press) are stale and dropped, so a burst such as `dddd` can walk fewer tiles than keys when ticks fall behind the window (LIVE: 3 of 4). There is no hold smoothing: a consumed tap never moves again. A blocked move still turns the player. The `player` atom gains `movedAt?` (walk pose for 300 ms after a move). The spawn tries the own doorStand, then own anchors, then other rooms' doorStands, skipping any footprint over the pad's two bottom-left columns of the last two rows. The tick (register.tsx `stepPlayerTick`) spawns the player once the team exists and writes the `player` and `pad` atoms; render only reads them. (T09, 2026-10-05) | confirms D13, D14
+- D36 T10 details. The raster refuses U+2665 and U+266A (its allowed ranges skip U+2600-26FF), so D15's fallback applies. Rather than draw `*` for both, `emoteOf` in pad.ts lists stand-ins per key and draws the first glyph the raster accepts: key 3 draws U+25C6 and key 4 draws `~`, with `*` as the last resort. Keys 1 and 2 draw `!` and `?`. A raster that later accepts the heart or the note draws them with no other change. `applyKeys` stores the press as `pad.emote { glyph, at }`; the tick moves it onto `player.emote` with `until = at + EMOTE_MS` (3000) through `settleEmote` in player.ts, clears the pad entry, and clears the player's emote once `until` passes. frame.ts draws the glyph centred on the figure, two rows above its top row (the bubble row), only while `until > now`. (T10, 2026-10-05) | amends D15
 
 ## Todos
 
@@ -245,7 +246,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; player.test.ts: 'a tap moves one tile', 'walls block', 'a held key moves one tile per tick'. LIVE as above.
 
 ### T10 Emote on keys 1-4
-- status: todo
+- status: done (#33, 2026-10-05)
 - needs: T09
 - size: S
 - scope: `applyKeys` maps 1-4 to the D15 glyphs on `player.emote`, with `until = now + EMOTE_MS`. frame.ts draws the glyph on the bubble row above the player's plate, and the tick clears it after `until`.
@@ -474,6 +475,8 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - Try focusing the pad without the 1500 ms delay (untested in S1b).
 - Pad (T08 review): a typed space can be lost when it equals the pending clear marker (matters when Space becomes a key, T20 chat); cancel or de-dup the focus timer when `/office` runs twice; the pad draws `…` and `⏎` over two cells of the bottom-left corner.
 - Pad (T09): a burst such as `dddd` walks fewer tiles than keys once ticks fall behind INTENT_MS; consider staleness measured from the last consumed tap. The player can still be walked under the pad's `…` and `⏎` cells.
+- Emote (T10): at the top team row the bubble row is the sign wall row, so the glyph overwrites a sign letter for 3 s (the same holds for agent bubbles).
+- Emote (T10 review): `player.until` is shared by `emote` and `chat`; give the emote its own expiry or take the later of the two before T20 sets `chat`.
 - Minimap: rejected, because 80x24 has no spare rows.
 - Arrival log lines read `arrived in the <project>` for the own team room (T06); consider `at their desk` wording (T06).
 - Make `roomAt` generic over the room id so it accepts an `Office` (T06). At 60 columns the bottom signs read `Conferenc` and `Test La`; consider shorter sign text (T05 review).
@@ -489,3 +492,4 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - 2026-10-05 T07 done: team label is `basename (branch)` from `git branch --show-current` (team.ts); signs cut by code point (`cut` in map.ts). See D33.
 - 2026-10-05 T08 done: pad Input focused 1500 ms after `/office`, `ui.input` decodes key bursts into the `pad` atom (WASD intents only so far). See D34.
 - 2026-10-05 T09 done: player avatar (white shirt, plate `you`) spawns at the own team doorStand and walks one tile per tick on WASD taps; `player` atom, `player.ts`. See D35.
+- 2026-10-05 T10 done: keys 1-4 show an emote above the player for 3000 ms (`!`, `?`, and stand-ins for the heart and note the raster refuses). See D36.

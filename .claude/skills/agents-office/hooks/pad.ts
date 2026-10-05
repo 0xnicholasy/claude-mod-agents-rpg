@@ -2,6 +2,8 @@
 // passes plain data in. The Input only ever holds the clear marker plus what was typed since the last
 // redraw, so keys are found by diffing its value against what was already handled.
 
+import { isValidGlyph } from './raster'
+
 export type Dir = 'w' | 'a' | 's' | 'd'
 
 // The newest movement key, when it was pressed and how many presses are waiting; stepPlayer consumes one per tick.
@@ -13,7 +15,11 @@ export type PadState = {
   // The value drawn into the Input: '' or ' ', alternated after every event so the field never grows.
   clear: string
   intent?: Intent
+  emote?: PendingEmote
 }
+
+// An emote waiting for the tick to put it on the player (D15).
+export type PendingEmote = { glyph: string; at: number }
 
 // Taps that can wait for a tick (one is consumed per tick), so a held key cannot queue a long walk.
 export const MAX_TAPS = 8
@@ -44,17 +50,38 @@ const isDir = (key: string): key is Dir => {
   return k === 'w' || k === 'a' || k === 's' || k === 'd'
 }
 
-// Dispatches every key (D13). Only W/A/S/D (either case) matter so far; later keys are added here, so
+// D15: keys 1-4 draw `!`, `?`, U+2665 and U+266A. The raster refuses U+2665 and U+266A (its allowed ranges
+// skip U+2600-26FF), so each key lists stand-ins in order: the first glyph the raster accepts is drawn and
+// `*` is the last resort. A raster that later accepts the heart or the note draws them with no change here.
+const EMOTE_GLYPHS: Readonly<Record<string, readonly number[]>> = {
+  '1': [0x21],
+  '2': [0x3f],
+  '3': [0x2665, 0x25c6],
+  '4': [0x266a, 0x7e],
+}
+
+// The emote glyph of a key, or undefined when the key is not an emote.
+export const emoteOf = (key: string): string | undefined => {
+  const codes = EMOTE_GLYPHS[key]
+  if (codes === undefined) return undefined
+
+  return String.fromCodePoint(codes.find(isValidGlyph) ?? 0x2a)
+}
+
+// Dispatches every key (D13). W/A/S/D (either case) walk and 1-4 emote; later keys are added here, so
 // register.tsx never changes for them.
 export const applyKeys = (state: PadState, keys: readonly string[], now: number): PadState => {
   let intent = state.intent
+  let emote = state.emote
   for (const raw of keys) {
+    const glyph = emoteOf(raw)
+    if (glyph !== undefined) emote = { glyph, at: now }
     const key = raw.toLowerCase()
     if (!isDir(key)) continue
     intent = { key, at: now, taps: intent !== undefined && intent.key === key ? Math.min(intent.taps + 1, MAX_TAPS) : 1 }
   }
 
-  return { ...state, intent }
+  return { ...state, intent, emote }
 }
 
 // One `ui.input` change: diffs the value, applies the keys and flips the clear marker so the Input is

@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { buildOffice, canStand } from './map'
 import type { OfficeMap } from './map'
 import type { Intent } from './pad'
-import { padRect, spawnPlayer, stepPlayer } from './player'
+import { padRect, settleEmote, spawnPlayer, stepPlayer } from './player'
 import type { Player } from './player'
 import { INTENT_MS } from './timing'
 
@@ -77,4 +77,15 @@ test('a resize reseats a player that cannot stand', () => {
   const out = stepPlayer(lost, map, undefined, 0, 'team:t1')
 
   expect(out.player).toMatchObject({ x: start.x, y: start.y })
+})
+
+test('an emote lasts 3000 ms from the press and then clears', () => {
+  const shown = settleEmote(start, { glyph: '\u2665', at: 1000 }, 1100)
+
+  expect(shown).toMatchObject({ emote: '\u2665', until: 4000 })
+  // Still shown just before the end, and the same object when nothing changes.
+  expect(settleEmote(shown, undefined, 3999)).toBe(shown)
+  const gone = settleEmote(shown, undefined, 4000)
+  expect(gone.emote).toBeUndefined()
+  expect(gone.until).toBeUndefined()
 })

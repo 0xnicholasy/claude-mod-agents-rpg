@@ -65,7 +65,12 @@ declare module 'claude-code' {
         chat?: string
         until?: number
       } | null
-      pad: { handled: string; clear: string; intent?: { key: 'w' | 'a' | 's' | 'd'; at: number; taps: number } }
+      pad: {
+        handled: string
+        clear: string
+        intent?: { key: 'w' | 'a' | 's' | 'd'; at: number; taps: number }
+        emote?: { glyph: string; at: number }
+      }
     }
   }
 }
