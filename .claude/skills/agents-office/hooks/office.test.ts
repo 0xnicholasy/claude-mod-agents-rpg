@@ -1276,3 +1276,89 @@ test('session.start resolves the presence dir from printenv and loads the stored
   expect(writes.find(w => w.key === 'identity')?.value).toMatchObject({ sessionId: 't1', dir: '/home/u/.claude/agents-office/presence' })
   expect(writes.find(w => w.key === 'share')?.value).toBe('off')
 })
+
+// Starts a session that resolves a presence dir and records every fs.write and process.run.
+const startPresence = async ($: Engine, on: On, share = 'all') => {
+  const clock = mock.clock(on)
+  stubStore(on, { share })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', () => ({ value: {} }))
+  on('tool.call', () => ({ result: 'stub' }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('session.end', () => ({ sessionId: 't1' }))
+  const runs: string[][] = []
+  on('process.run', (_$, e) => {
+    runs.push([...e.argv])
+    const stdout = e.argv[0] === 'printenv' ? (e.argv[1] === 'HOME' ? '/home/u\n' : '') : ''
+
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const writes: Array<{ path: string; text: string }> = []
+  on('fs.write', (_$, e) => {
+    writes.push({ path: e.path, text: e.text })
+    return { value: undefined }
+  })
+  await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
+
+  return { clock, runs, writes }
+}
+
+test('presence writes on change and every 3 s', async ($, on) => {
+  const { clock, writes } = await startPresence($, on)
+  const path = '/home/u/.claude/agents-office/presence/t1.json'
+  await clock.advance(999)
+  expect(writes).toHaveLength(0)
+  await clock.advance(1)
+  expect(writes).toHaveLength(1)
+  expect(writes[0]?.path).toBe(path)
+  const first = JSON.parse(writes[0]?.text ?? '{}') as { sessionId: string; share: string; team: { label: string }; player: unknown }
+  expect(first).toMatchObject({ sessionId: 't1', share: 'all', team: { label: 'proj' }, player: null })
+  await clock.advance(1000)
+  expect(writes).toHaveLength(1)
+  await clock.advance(1000)
+  expect(writes).toHaveLength(1)
+  await clock.advance(1000)
+  expect(writes).toHaveLength(2)
+  expect(JSON.parse(writes[1]?.text ?? '{}').heartbeatAt).toBe(4000)
+})
+
+test('a tool call with a path and a SendMessage never reach the presence file', async ($, on) => {
+  const { clock, writes } = await startPresence($, on)
+  await $.agent.spawn({ ...spawnArgs, prompt: 'hunter2 prompt', description: '/Users/x/secret.ts task' })
+  await $.tool.call({ tool: 'Read', file_path: '/Users/x/secret.ts' })
+  await $.tool.call({ tool: 'SendMessage', to: 'a1', message: 'hunter2' })
+  await clock.advance(1000)
+
+  // The agent is in the file, so the roster really held the message and the description when it was written.
+  expect(writes.at(-1)?.text).toContain('"id":"a1"')
+  for (const w of writes) {
+    expect(w.text).not.toContain('secret.ts')
+    expect(w.text).not.toContain('hunter2')
+  }
+})
+
+test('session.end writes a tombstone', async ($, on) => {
+  const { clock, writes } = await startPresence($, on)
+  await clock.advance(1000)
+  await $.session.end({ reason: 'other', sessionId: 't1', resume: { id: 't1' } })
+  await clock.advance(5000)
+
+  expect(writes).toHaveLength(2)
+  expect(JSON.parse(writes[1]?.text ?? '{}')).toMatchObject({ v: 1, sessionId: 't1', gone: true })
+})
+
+test('share off writes one tombstone and then nothing, and skips the cleanup', async ($, on) => {
+  const { clock, runs, writes } = await startPresence($, on, 'off')
+  await clock.advance(5000)
+
+  expect(writes).toHaveLength(1)
+  expect(JSON.parse(writes[0]?.text ?? '{}')).toMatchObject({ gone: true })
+  expect(runs.some(argv => argv[0] === 'find')).toBe(false)
+})
+
+test('session.start deletes presence files older than a day', async ($, on) => {
+  const { runs } = await startPresence($, on)
+
+  expect(runs).toContainEqual(['find', '/home/u/.claude/agents-office/presence', '-maxdepth', '1', '-type', 'f', '-name', '*.json', '-mmin', '+1440', '-delete'])
+})

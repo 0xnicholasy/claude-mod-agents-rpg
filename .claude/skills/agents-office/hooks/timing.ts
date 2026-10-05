@@ -16,3 +16,5 @@ export const INTENT_MS = 250
 export const EMOTE_MS = 3000
 // The inspect line stays up this long (D16).
 export const INSPECT_MS = 6000
+export const PRESENCE_MS = 1000
+export const HEARTBEAT_MS = 3000

@@ -45,6 +45,8 @@ export type OfficeAgent = {
   pose: Pose
   // The room holding the agent's own desk; activity 'desk' resolves to it (D37).
   home: RoomId
+  // True when the label came from the task description, which is prompt text and never leaves the machine (T14).
+  described?: boolean
   // A teammate has several turns: turn.complete makes it idle, never done (D26).
   teammate: boolean
   completedAt?: number
@@ -84,6 +86,8 @@ export const roleOf = (type: string): Role => {
 const labelOf = (name: string | undefined, type: string, description: string): string =>
   name || type || description.slice(0, 12)
 
+const describedOf = (name: string | undefined, type: string): { described?: true } => (name || type ? {} : { described: true })
+
 // A live status carries no completedAt, so expire never drops the agent.
 const withStatus = (agent: OfficeAgent, status: 'working' | 'idle'): OfficeAgent => {
   const next: OfficeAgent = { ...agent, status }
@@ -115,6 +119,7 @@ export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult, 
   const agent: OfficeAgent = {
     id,
     label: labelOf(input.name, input.subagentType, input.description),
+    ...describedOf(input.name, input.subagentType),
     tier: tierOf(input.model) ?? tierOf(result.model) ?? 'grey',
     role: roleOf(input.subagentType),
     status: 'working',
@@ -231,6 +236,7 @@ export const syncList = (roster: Roster, infos: readonly AgentInfo[], home: Room
     const agent: OfficeAgent = {
       id: info.id,
       label: labelOf(info.name, info.type, info.description),
+      ...describedOf(info.name, info.type),
       tier: 'grey',
       role: roleOf(info.type),
       status: info.status === 'idle' ? 'idle' : 'working',

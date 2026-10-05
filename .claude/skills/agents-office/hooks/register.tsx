@@ -14,14 +14,27 @@ import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest } from './inspect'
 import { INITIAL_PAD, onPadInput } from './pad'
-import { asShare, DEFAULT_SHARE, envValue, parseOfficeArgs, presenceDir, SHARE_USAGE } from './presence'
+import {
+  asShare,
+  DEFAULT_SHARE,
+  envValue,
+  parseOfficeArgs,
+  presenceDir,
+  presencePath,
+  PRESENCE_DIR_SUFFIX,
+  SHARE_USAGE,
+  signature,
+  toRecord,
+  toTombstone,
+  writeDue,
+} from './presence'
 import type { ShareMode } from './presence'
 import type { PadState } from './pad'
 import { settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
 import { baseName, branchOf, teamLabel } from './team'
-import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, TICK_MS } from './timing'
+import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timing'
 
 const PANE = 'office'
 const PAD_KEY = 'pad-input'
@@ -60,6 +73,11 @@ const identity = atom({ plugin: 'agents-office', key: 'identity' } as const, nul
 
 // The share preference (D19), mirrored from `$.store` key `share`.
 const share = atom({ plugin: 'agents-office', key: 'share' } as const, DEFAULT_SHARE as ShareMode)
+
+// The publisher's bookkeeping (D18): the record text last written (without its heartbeat), when, and whether
+// the tombstone is out. No file paths or other text live here.
+type PresenceState = { lastText?: string; lastWriteAt: number; ended: boolean }
+const presence = atom({ plugin: 'agents-office', key: 'presence' } as const, { lastWriteAt: 0, ended: false } as PresenceState)
 
 // Log de-dup cache for guard failures, not drawn state (D49): a hook that fails the same
 // way every tick logs once per distinct name + message.
@@ -173,6 +191,54 @@ const resolveIdentity = async ($: EngineInterface): Promise<void> => {
 const loadShare = async ($: EngineInterface): Promise<void> => {
   const stored = await $.store.get('share')
   await update($, share, () => asShare(stored))
+}
+
+// Writes the tombstone once (D18); a no-op without a presence file path or when it is already out.
+const writeTombstone = async ($: EngineInterface): Promise<void> => {
+  const id = await read($, identity)
+  const path = id?.dir === undefined ? undefined : presencePath(id.dir, id.sessionId)
+  if (id === null || path === undefined) return
+  if ((await read($, presence)).ended) return
+  const now = await $.clock.now()
+  await $.fs.write(path, JSON.stringify(toTombstone(id.sessionId, now)))
+  await update($, presence, () => ({ lastWriteAt: now, ended: true }))
+}
+
+// The 1 s presence step (D18): writes the record when it changed or 3000 ms after the last write; `off`
+// writes one tombstone and then nothing. Nothing is written before the dir resolves.
+const presenceTick = async ($: EngineInterface): Promise<void> => {
+  const id = await read($, identity)
+  const path = id?.dir === undefined ? undefined : presencePath(id.dir, id.sessionId)
+  if (id === null || path === undefined) return
+  const mode = await read($, share)
+  if (mode === 'off') return writeTombstone($)
+  const own = await read($, team)
+  if (own === null) return
+  const now = await $.clock.now()
+  const record = toRecord({
+    sessionId: id.sessionId,
+    startedAt: id.startedAt,
+    now,
+    share: mode,
+    team: { label: own.label, branch: own.branch },
+    roster: await read($, agents),
+  })
+  const text = signature(record)
+  const state = await read($, presence)
+  if (!writeDue(state.lastText, state.lastWriteAt, text, now)) return
+  // A tick that was running when session.end cancelled the timer must not write after the tombstone.
+  if (presenceTimer === undefined) return
+  await $.fs.write(path, JSON.stringify(record))
+  await update($, presence, () => ({ lastText: text, lastWriteAt: now, ended: false }))
+}
+
+// Removes presence files untouched for a day (D18). Only inside a dir named `.../agents-office/presence`,
+// and never while sharing is off (an off session neither reads nor writes). A missing dir just exits non-zero.
+const cleanPresence = async ($: EngineInterface): Promise<void> => {
+  const id = await read($, identity)
+  if (id?.dir === undefined || !id.dir.endsWith(PRESENCE_DIR_SUFFIX)) return
+  if ((await read($, share)) === 'off') return
+  await $.process.run(['find', id.dir, '-maxdepth', '1', '-type', 'f', '-name', '*.json', '-mmin', '+1440', '-delete'], { timeoutMs: GIT_TIMEOUT_MS })
 }
 
 // Drops expired agents; writes only when the roster changed.
@@ -485,6 +551,7 @@ type Timer = ReturnType<EngineInterface['clock']['every']>
 // old environment's timers on its own.
 let loopTimer: Timer | undefined
 let refreshTimer: Timer | undefined
+let presenceTimer: Timer | undefined
 
 const startLoop = ($: EngineInterface): void => {
   loopTimer?.cancel()
@@ -502,6 +569,13 @@ const startRefresh = ($: EngineInterface): void => {
     refreshRoster($).catch(error =>
       $.ui.log(`agents-office: agent.list refresh threw ${String(error)}`, { to: 'debug' }),
     )
+  })
+}
+
+const startPresence = ($: EngineInterface): void => {
+  presenceTimer?.cancel()
+  presenceTimer = $.clock.every(PRESENCE_MS, () => {
+    presenceTick($).catch(error => logOnce($, 'presence', String(error)))
   })
 }
 
@@ -541,6 +615,10 @@ export const register: Register = on => {
     // The share mode loads before the dir resolves, so a publisher that waits for `dir` never sees the default.
     await guard($, 'session.start share', undefined, async () => loadShare($))
     await guard($, 'session.start presence', undefined, async () => resolveIdentity($))
+    await guard($, 'session.start presence cleanup', undefined, async () => cleanPresence($))
+    await guard($, 'session.start presence timer', undefined, async () => {
+      startPresence($)
+    })
     await guard($, 'session.start refresh timer', undefined, async () => {
       startRefresh($)
     })
@@ -549,6 +627,14 @@ export const register: Register = on => {
       await update($, agents, cur => seedMain(cur, home))
       await refreshRoster($)
     })
+
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    presenceTimer?.cancel()
+    presenceTimer = undefined
+    await guard($, 'session.end', undefined, async () => writeTombstone($))
 
     return next(e)
   })
