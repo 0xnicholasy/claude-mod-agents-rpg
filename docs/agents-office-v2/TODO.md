@@ -454,7 +454,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; office.test.ts: 'a nudge needs a Yes', 'x aborts main only after Yes'. LIVE as above.
 
 ### T24 Install the mod user-wide
-- status: done (#PR, 2026-10-05)
+- status: done (#47, 2026-10-05)
 - needs: T23
 - size: S
 - scope: Per D26:
