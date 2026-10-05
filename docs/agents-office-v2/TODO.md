@@ -117,7 +117,7 @@ When the pane has focus, WASD walks a player avatar. The player can emote, jump 
 - verify: `rtk proxy npm run check`; pixels.test.ts: 'a 3x4 figure composes to 3x2 upper-half cells', 'a dot pixel takes the floor color', 'countPairs counts distinct fg/bg pairs'
 
 ### T03 Draw people figures
-- status: done (#PR, 2026-10-05)
+- status: done (#26, 2026-10-05)
 - needs: T02
 - size: M
 - scope: Add `figure({ pose, facing, frame, shirt, role, key, floor }): Cell[][]` to `sprites.ts`, next to the v1 `sprite()` (which stays until T04).
