@@ -66,6 +66,18 @@ type Spec = { id: RoomId; name: string; sign: string; width: number; kind: RoomK
 // Cuts text to `n` code points, so an astral character is never split into a lone surrogate.
 export const cut = (text: string, n: number): string => Array.from(text).slice(0, Math.max(0, n)).join('')
 
+// Fits a team sign to `n` cells. When the label is too long, the body is cut but a trailing " 2", " 3" (the
+// number that tells same-label sessions apart, D12) is kept, so two such rooms never read the same (D44).
+export const fitSign = (label: string, n: number): string => {
+  if (Array.from(label).length <= n) return label
+  const match = /^(.*)( \d+)$/.exec(label)
+  if (match === null) return cut(label, n)
+  const suffix = match[2] ?? ''
+  if (Array.from(suffix).length >= n) return cut(label, n)
+
+  return cut(match[1] ?? '', n - Array.from(suffix).length) + suffix
+}
+
 const COMPACT_BANDS: ReadonlyArray<readonly [number, number, number]> = [
   [3, 2, 3], // 11: no outer bottom wall
   [3, 2, 3], // 12
@@ -229,7 +241,7 @@ export const buildOffice = (columns: number, rows: number, teams: TeamSpec[], ow
     let x = 1
     shown.forEach((team, i) => {
       const width = i === 0 ? base + total - base * shown.length : base
-      const sign = cut(team.label, width)
+      const sign = fitSign(team.label, width)
       const spec: Spec = { id: team.id, name: team.label, sign, width, kind: 'team' }
       placed.push(makeRoom(spec, x, width, topBand, true, TEAM_PITCH, 4))
       x += width + 1

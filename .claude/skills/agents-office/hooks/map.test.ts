@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { buildOffice, canStand, FOOTPRINT_H, FOOTPRINT_W, OfficeTooSmall, roomAt, tileAt } from './map'
+import { buildOffice, canStand, fitSign, FOOTPRINT_H, FOOTPRINT_W, OfficeTooSmall, roomAt, tileAt } from './map'
 import type { OfficeMap, Point, Rect, TeamSpec } from './map'
 import { findPath } from './path'
 
@@ -242,4 +242,23 @@ test('office signs are cut to the interior width and rooms tile the bands', () =
   expect(compact.rooms.filter(r => r.kind !== 'team').map(r => r.sign.text)).toEqual(['Reception', 'Conferenc', 'Kitchen', 'Test La', 'Booths'])
   for (const room of compact.rooms) for (const d of room.door) expect(tileAt(compact, d.x, d.y)).toBe('door')
   expect(() => buildOffice(59, 11, teamsOf(1), 'team:s0')).toThrow(OfficeTooSmall)
+})
+
+test('same-label teams in a narrow room keep distinguishable signs', () => {
+  const label = 'agents-office-v2-t16 (feat/agents-office-v2)'
+  const teams: TeamSpec[] = [
+    { id: 'team:a', label },
+    { id: 'team:b', label: `${label} 2` },
+  ]
+  const map = buildOffice(60, 18, teams, 'team:a')
+  const signs = map.rooms.filter(r => r.kind === 'team').map(r => r.sign.text)
+
+  expect(signs).toHaveLength(2)
+  expect(signs[0]).not.toBe(signs[1])
+  expect(at(signs, 1).endsWith(' 2')).toBe(true)
+  for (const room of map.rooms.filter(r => r.kind === 'team')) expect(Array.from(room.sign.text).length).toBeLessThanOrEqual(room.bounds.w)
+  // A label that fits is left alone, and a number is never the only thing left of a tiny room.
+  expect(fitSign('proj 2', 10)).toBe('proj 2')
+  expect(fitSign('project-long 12', 6)).toBe('pro 12')
+  expect(fitSign('project-long 12', 3)).toBe('pro')
 })
