@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Tier } from './agents'
 import { isValidGlyph, packCells, type Cell } from './raster'
 import {
-  FACINGS, figure, FIGURE_PALETTE, frameCount, HAIR_TONES, nameplate, POSES, ROLE_COLORS,
+  FACINGS, figure, FIGURE_PALETTE, frameCount, HAIR_TONES, midFigure, midFrameCount, nameplate, POSES, ROLE_COLORS,
   SKIN_TONES, SPRITE_PALETTE, TIER_COLORS, type Facing, type Pose, type Role,
 } from './sprites'
 
@@ -19,7 +19,7 @@ test('nameplate trims to its width and stays inside the sprite palette', () => {
   expect(nameplate('abc', 2).map((c) => c.ch)).toEqual([0x61, 0x62])
   expect(nameplate('short').length).toBe(5)
   expect(nameplate('x', 0).length).toBe(0)
-  expect(SPRITE_PALETTE.length).toBeLessThan(32)
+  expect(SPRITE_PALETTE.length).toBeLessThan(40)
   expect(new Set(SPRITE_PALETTE).size).toBe(SPRITE_PALETTE.length)
   for (const c of nameplate('abc')) {
     expect(SPRITE_PALETTE).toContain(c.fg)
@@ -176,7 +176,7 @@ test('figure frames wrap and unknown shirt or role fall back', () => {
 
 test('the figure palette is unique and small', () => {
   expect(new Set(FIGURE_PALETTE).size).toBe(FIGURE_PALETTE.length)
-  expect(FIGURE_PALETTE.length).toBeLessThan(32)
+  expect(FIGURE_PALETTE.length).toBeLessThan(40)
 })
 
 test('every role color stays visibly away from the floor color', () => {
@@ -185,4 +185,84 @@ test('every role color stays visibly away from the floor color', () => {
   for (const color of Object.values(ROLE_COLORS)) {
     expect(far(color, 0x2b303b)).toBe(true)
   }
+})
+
+const midFig = (pose: Pose, facing: Facing, frame = 0, key = 'k1', shirt: Tier | 'player' = 'opus', role: Role = 'dev'): Cell[][] =>
+  midFigure({ pose, facing, frame, shirt, role, key, floor: FLOOR })
+const colorsOf = (grid: Cell[][]): Set<number> => new Set(grid.flatMap(row => row.flatMap(c => [c.fg, c.bg])))
+
+test('mid figures are 5x5 standing and 8x5 seated, in palette colors', () => {
+  for (const pose of POSES) {
+    for (const facing of FACINGS) {
+      for (let frame = 0; frame < midFrameCount(pose); frame++) {
+        const grid = midFig(pose, facing, frame)
+        expect(grid.length).toBe(5)
+        for (const row of grid) expect(row.length).toBe(pose === 'read' || pose === 'type' ? 8 : 5)
+        for (const c of colorsOf(grid)) expect(c === FLOOR || FIGURE_PALETTE.includes(c)).toBe(true)
+      }
+    }
+  }
+})
+
+test('mid figures recolour by tier and role', () => {
+  for (const tier of TIERS) {
+    expect(colorsOf(midFig('idle', 'down', 0, 'k1', tier))).toContain(TIER_COLORS[tier])
+  }
+  expect(colorsOf(midFig('idle', 'down', 0, 'k1', 'player'))).toContain(0xf5f5f5)
+  // Shade differs from the shirt and is fixed per tier.
+  expect(key(midFig('idle', 'down', 0, 'a', 'sonnet'))).not.toBe(key(midFig('idle', 'down', 0, 'a', 'opus')))
+  for (const role of Object.keys(ROLE_COLORS) as Role[]) {
+    const grid = midFig('idle', 'down', 0, 'k1', 'opus', role)
+    expect(colorsOf(grid)).toContain(ROLE_COLORS[role])
+    // The tie is the pants color: the cell under the chest centre is pants over shirt.
+    expect(grid[3]![2]!.fg).toBe(ROLE_COLORS[role])
+  }
+  // Hair and skin are stable per key and come from the tone lists.
+  expect(key(midFig('idle', 'down', 0, 'same'))).toBe(key(midFig('idle', 'down', 0, 'same')))
+  const hairs = new Set<number>()
+  for (let i = 0; i < 40; i++) hairs.add(midFig('idle', 'down', 0, `key${i}`)[0]![2]!.fg)
+  expect(hairs.size).toBeGreaterThan(1)
+  for (const h of hairs) expect(HAIR_TONES).toContain(h)
+})
+
+test('mid walk frames differ and mid props sit in the top-right cell', () => {
+  for (const facing of FACINGS) {
+    expect(new Set([0, 1, 2, 3].map(f => key(midFig('walk', facing, f)))).size).toBe(4)
+  }
+  const plain = midFig('idle', 'down')
+  const run = midFig('run', 'down', 0)
+  expect(run[0]![4]).not.toEqual(plain[0]![4])
+  expect(run[0]![0]).toEqual(plain[0]![0])
+  expect(key(midFig('run', 'down', 1))).not.toBe(key(run))
+  expect(midFig('read', 'down')[3]![0]!.bg).toBe(0x8d6e63)
+  expect(key(midFig('type', 'down', 0))).not.toBe(key(midFig('type', 'down', 1)))
+  expect(midFig('walk', 'down', 5)).toEqual(midFig('walk', 'down', 1))
+})
+
+test('mid figures map every slot: shade, dark slots, props, desk and unknown input', () => {
+  const MID_DARK = 0x141414
+  const shirts: Array<[Tier | 'player', number]> = [['haiku', 0x2e8fbd], ['sonnet', 0x3e8e41], ['opus', 0xc7862f], ['fable', 0x8e3fa0], ['grey', 0x6e6e6e], ['player', 0xb0b0b0]]
+  for (const [shirt, shade] of shirts) {
+    const grid = midFig('idle', 'down', 0, 'k1', shirt)
+    // Pixel row 6 is UTKTU: the shade sits at both ends and the shirt between them.
+    expect(grid[3]![0]!.fg).toBe(shade)
+    expect(grid[3]![1]!.fg).not.toBe(shade)
+  }
+  const front = midFig('idle', 'down')
+  // Eyes (pixel row 3) and shoes (pixel row 9) are the near-black.
+  expect(front[1]![1]!.bg).toBe(MID_DARK)
+  expect(front[1]![3]!.bg).toBe(MID_DARK)
+  expect(front[4]![1]!.bg).toBe(MID_DARK)
+  expect(front[4]![3]!.bg).toBe(MID_DARK)
+  const mouth = front[2]![2]!
+  expect(mouth.fg).toBe(front[0]![2]!.fg)
+  // Props: each pose has its own colour in the top-right cell.
+  const prop = (pose: Pose): number => midFig(pose, 'down', 1)[0]![4]!.fg
+  expect(new Set([prop('run'), prop('call'), prop('talk')]).size).toBe(3)
+  // Seated: desk top, desk body and monitor frame colours differ.
+  const seat = midFig('read', 'down')
+  expect(new Set([seat[3]![0]!.fg, seat[4]![0]!.fg, seat[1]![5]!.fg, seat[2]![6]!.fg]).size).toBe(4)
+  // Unknown facing, shirt, role and frame fall back instead of throwing.
+  const bad = midFigure({ pose: 'walk', facing: 'north' as Facing, frame: Number.NaN, shirt: 'nope' as Tier, role: 'nope' as Role, key: 'k', floor: FLOOR })
+  expect(bad).toEqual(midFig('walk', 'down', 0, 'k', 'grey', 'dev'))
 })
