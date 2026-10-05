@@ -12,11 +12,14 @@ import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
 import { MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
+import { INITIAL_PAD, onPadInput } from './pad'
+import type { PadState } from './pad'
 import { packCells } from './raster'
 import { baseName, branchOf, teamLabel } from './team'
-import { LIST_MS, TICK_MS } from './timing'
+import { LIST_MS, PAD_FOCUS_MS, TICK_MS } from './timing'
 
 const PANE = 'office'
+const PAD_KEY = 'pad-input'
 const opened = atom({ plugin: 'agents-office', key: 'opened' } as const, false)
 const viewport = atom(
   { plugin: 'agents-office', key: 'viewport' } as const,
@@ -34,6 +37,8 @@ const log = atom({ plugin: 'agents-office', key: 'log' } as const, EMPTY_LOG)
 type Team = { id: `team:${string}`; label: string; branch: string; startedAt: number }
 const NO_TEAM = null as Team | null
 const team = atom({ plugin: 'agents-office', key: 'team' } as const, NO_TEAM)
+// The pad Input's bookkeeping (D13): the value last handled, the value drawn, the newest movement intent.
+const pad = atom({ plugin: 'agents-office', key: 'pad' } as const, INITIAL_PAD as PadState)
 
 // Log de-dup cache for guard failures, not drawn state (D49): a hook that fails the same
 // way every tick logs once per distinct name + message.
@@ -62,6 +67,18 @@ const guard = async <T,>(
       }
     }
     return typeof fallback === 'function' ? (fallback as () => T)() : fallback
+  }
+}
+
+// Logs `<name> <message>` to the debug log once per distinct pair; never throws.
+const logOnce = ($: EngineInterface, name: string, message: string): void => {
+  const key = `${name}\u0000${message}`
+  if (loggedFailures.has(key)) return
+  loggedFailures.add(key)
+  try {
+    $.ui.log(`agents-office: ${name} ${message}`, { to: 'debug' })
+  } catch {
+    // Logging must never throw out of a hook.
   }
 }
 
@@ -356,8 +373,18 @@ const startRefresh = ($: EngineInterface): void => {
 const openOffice = async ($: EngineInterface): Promise<void> => {
   // Without rows an inline pane opens a third of the terminal tall. The inline height
   // follows the tree, so this caps it; the render sizes itself from the viewport (D50).
-  await $.ui.open({ id: PANE, title: 'Office', rows: INLINE_MAX_ROWS, columns: MIN_COLUMNS })
+  await $.ui.open({ id: PANE, title: 'Office', rows: INLINE_MAX_ROWS, columns: MIN_COLUMNS, focus: true })
   await update($, opened, () => true)
+  // The Input is drawn only after the pane mounts, and a focus request before then is waited for only
+  // briefly, so the pad takes focus after PAD_FOCUS_MS (spike S1b). A deny is logged once.
+  $.clock.after(PAD_FOCUS_MS, () => {
+    $.ui
+      .focus({ requestId: PANE, key: PAD_KEY })
+      .then(result => {
+        if (result.deny !== undefined) logOnce($, 'pad focus', `denied: ${result.deny}`)
+      })
+      .catch(error => logOnce($, 'pad focus', String(error)))
+  })
 }
 
 export const register: Register = on => {
@@ -471,6 +498,17 @@ export const register: Register = on => {
     }),
   )
 
+  // Not a render, so it may write state (D20). Bursts are coalesced: onPadInput diffs the value.
+  on('ui.input', { element: PAD_KEY }, async ($, e, next) => {
+    await guard($, 'ui.input', undefined, async () => {
+      if (e.kind !== 'change') return
+      const now = await $.clock.now()
+      await update($, pad, cur => onPadInput(cur, e.value, now))
+    })
+
+    return next(e)
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
     guard(
       $,
@@ -501,7 +539,7 @@ export const register: Register = on => {
           )
         }
 
-        const { Raster } = $.ui.resolve(e)
+        const { Raster, Input } = $.ui.resolve(e)
         const bodyRows = bodyRowsFor(e.props.placement, e.props.scroll.bodyRows, e.viewport?.rows)
         const { columns, rows, strip: stripCount } = rasterSize(e.props.bodyColumns, bodyRows)
         // Drawing is pure: a state write inside the hook is denied. A timer closure
@@ -542,9 +580,19 @@ export const register: Register = on => {
         const newest = stripCount > 0 ? lines.slice(-stripCount) : []
         const strip = Array.from({ length: stripCount }, (_, i) => newest[i] ?? ' ')
 
+        const padState = await read($, pad)
+
         return (
           <Box flexDirection="column">
-            <Raster key="office" columns={columns} rows={rows} cells={cells} />
+            {/* The pad (D13): a one-row Input over the bottom-left cell of the map. Its value alternates
+                between '' and ' ' so the field is cleared after every event. The wrapper makes the map
+                the Input's parent, so `bottom={0}` is the map's last row and never a strip line. */}
+            <Box>
+              <Raster key="office" columns={columns} rows={rows} cells={cells} />
+              <Box position="absolute" bottom={0} left={0} width={2}>
+                <Input key={PAD_KEY} value={padState.clear} submitLabel="" onSubmit={() => undefined} />
+              </Box>
+            </Box>
             {strip.map((line, i) => (
               <Text key={`log-${i}`} dimColor wrap="truncate-end">
                 {line}

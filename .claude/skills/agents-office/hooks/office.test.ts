@@ -225,6 +225,32 @@ test('mounted pane draws a Raster of bodyColumns by bodyRows minus the strip', a
   await ui.unmount()
 })
 
+test('the pane draws the pad input', async ($, on) => {
+  mock.clock(on)
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+
+  expect(await ui.find({ type: 'Input', key: 'pad-input' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('typing into the pad records a coalesced burst and flips the drawn value', async ($, on) => {
+  mock.clock(on)
+  let pad: { handled: string; clear: string; intent?: { key: string; taps: number } } | undefined
+  on('state.set', ($, e, next) => {
+    // StateWrite types `value` as the union of every atom; only the pad atom is read.
+    if (e.key === 'pad') pad = e.value as typeof pad
+    return next(e)
+  })
+  const ui = await $.ui.mount(paneAt(18 + STRIP_ROWS))
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'wwww', kind: 'change' })
+
+  expect(pad).toMatchObject({ handled: 'wwww', clear: ' ', intent: { key: 'w', taps: 4 } })
+  // A repeated value is not typed again.
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'wwww', kind: 'change' })
+  expect(pad?.intent?.taps).toBe(4)
+  await ui.unmount()
+})
+
 test('an unchanged office does not blit on the next tick', async ($, on) => {
   const clock = mock.clock(on)
   const blits: string[] = []
@@ -286,6 +312,36 @@ test('/office opens the office pane', async ($, on) => {
   })
 
   expect(opened).toMatchObject([{ id: 'office', title: 'Office', rows: 23, columns: 60 }])
+})
+
+test('/office opens the pane with focus and the pad asks for focus after 1500 ms', async ($, on) => {
+  const clock = mock.clock(on)
+  let focusRequested: boolean | undefined
+  on('ui.open', ($, e) => {
+    focusRequested = e.focus
+    return { value: { isPlaced: true } }
+  })
+  const logs: string[] = []
+  on('ui.log', (_$, e) => {
+    logs.push(e.text)
+    return { value: undefined }
+  })
+  await $.command.run({
+    command: 'office',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 120 },
+  })
+  expect(focusRequested).toBe(true)
+  await clock.advance(1499)
+  expect(logs).toEqual([])
+  await clock.advance(1)
+
+  // The test engine does not dispatch `$.ui.focus` to an `on('ui.focus')` hook, so it answers "no
+  // implementation"; the plugin logs that once, which proves the call was made at 1500 ms.
+  expect(logs.filter(text => text.startsWith('agents-office: pad focus'))).toHaveLength(1)
+  await clock.advance(1500)
+  expect(logs).toHaveLength(1)
 })
 
 const spawnArgs = {
