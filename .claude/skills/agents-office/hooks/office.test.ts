@@ -1855,6 +1855,40 @@ test('/office scene image spawns one renderer on the state file in a private tem
   await ui.unmount()
 })
 
+test('a second start request while the renderer runs spawns nothing', async ($, on) => {
+  const { ui, clock, spawned } = await imageSession($, on, 'dir /tmp/frames\nready\n')
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+
+  await $.command.run(runOffice('scene image'))
+  await $.command.run(runOffice('scene image'))
+  for (let i = 0; i < 6; i++) {
+    await clock.advance(TICK_MS)
+    await settle()
+  }
+
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+  expect(spawned.filter(argv => argv[0] === 'mktemp')).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('session.end ends the renderer and no later tick starts another', async ($, on) => {
+  on('session.end', () => ({ sessionId: 't1' }))
+  const { ui, clock, spawned, state } = await imageSession($, on, 'ready\n')
+  expect(state.returned).toBe(false)
+
+  await $.session.end({ reason: 'other', sessionId: 't1', resume: { id: 't1' } })
+  await settle(200)
+  for (let i = 0; i < 4; i++) {
+    await clock.advance(TICK_MS)
+    await settle()
+  }
+
+  expect(state.returned).toBe(true)
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([['rm', '-rf', '--', STATE_DIR]])
+  await ui.unmount()
+})
+
 test('a frame line from the renderer becomes one Image blit with that generation', async ($, on) => {
   const { ui, blits } = await imageSession($, on, 'dir /tmp/frames\nready\nframe 3 /x/frame-1.png\n')
 
