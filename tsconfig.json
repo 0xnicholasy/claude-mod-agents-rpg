@@ -16,6 +16,7 @@
   },
   "include": [
     "vendor/claude-code/claude-code.d.ts",
+    "vendor/todo-list/index.d.ts",
     ".claude/skills/agents-office/hooks/**/*",
     ".claude/skills/agents-office/types/**/*",
     ".claude/skills/agents-office/**/*.test.ts"
