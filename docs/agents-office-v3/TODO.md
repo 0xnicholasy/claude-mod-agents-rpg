@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 8/22 done
+Progress: 9/22 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -173,7 +173,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `rtk proxy npm run check`; `npm run smoke:renderer`
 
 ### T09 Write the renderer lifecycle as a pure state machine
-- status: todo
+- status: done (#PR, 2026-10-07)
 - needs: T08
 - size: S
 - scope: Create `hooks/rendererLife.ts`:
@@ -397,3 +397,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 2026-10-07 T20 #70 install-user.sh runs `npm ci` when node_modules/playwright is missing, then `npx --no-install playwright install chromium` unless `--no-chromium`, after linking (a Chromium failure exits 1 but keeps the link); uninstall-user.sh leaves the browser cache and prints its path. Scratch run against temp CLAUDE_CONFIG_DIRs after `rm -rf node_modules`: fresh install linked, ran npm ci, `playwright install --dry-run chromium` lists chromium-1243 under ~/Library/Caches/ms-playwright; re-run printed 'nothing changed'; `--no-chromium` skipped npm ci and the download; foreign link refused; uninstall removed only this link; ~/.claude untouched; shellcheck clean; npm run check 326 pass
 2026-10-07 T07 #69 scene.ts maps figures (agents, remote agents, players, cat) with sprite, pose, plate, bubble/emote/chat (until > now), highlight, plus caption and sceneKey; SceneInput.player is now a Player (was Point)
 2026-10-07 T08 #71 bridge.ts holds splitLines, parseLine, newestFrame, stateText, shouldWrite, clampCells and pixelsFor; render.mjs prints dir, ready, frame, fps and `error <code>` lines and reads the D5 state shape (keeps the last scene on torn JSON or a wrong `v`); smoke prints `dir -> ready -> frame`; D6 confirmed unchanged
+2026-10-07 T09 #PR rendererLife.ts holds `next`, `classify` and `initialLife`; `renderer` and `scene` atoms declared inline; 3 exits in 60 s -> failed, no-node/no-playwright/no-chromium fail at once, `closed` -> off (a `failed` state stays failed), `classify` also reads render.mjs `error <code>` lines; backoff 1 s then 2 s (the 4 s step is unreachable while the 3rd exit within 60 s fails); the `renderer` atom gains `retryAt`

@@ -115,6 +115,18 @@ declare module 'claude-code' {
           } | null
         }
       >
+      renderer: {
+        status: 'off' | 'starting' | 'running' | 'backoff' | 'failed'
+        dir?: string
+        exits: number[]
+        reason?: string
+        retryAt?: number
+      }
+      scene: {
+        want: 'auto' | 'image' | 'text'
+        effective: 'probe' | 'image' | 'text'
+        reason?: string
+      }
       pad: {
         handled: string
         clear: string
