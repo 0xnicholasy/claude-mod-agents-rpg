@@ -3,153 +3,293 @@
 <head>
 <meta charset="utf-8">
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #2B2D3A; overflow: hidden; image-rendering: pixelated; }
-  #stage { position: absolute; left: 0; top: 0; width: 608px; height: 368px; transform-origin: 0 0; }
-  #office { position: relative; width: 608px; height: 368px; overflow: hidden; background: #1c1e26; image-rendering: pixelated; }
-  .zone { position: absolute; }
-  #team { left: 0; top: 56px; width: 380px; height: 312px;
-    background:
-      repeating-linear-gradient(0deg, #8a5a30 0 2px, transparent 2px 16px),
-      repeating-linear-gradient(90deg, rgba(60,30,10,.28) 0 2px, transparent 2px 64px),
-      #b8824c; }
-  #meet { left: 388px; top: 184px; width: 220px; height: 184px;
-    background:
-      repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 2px, transparent 2px 24px),
-      repeating-linear-gradient(90deg, rgba(0,0,0,.22) 0 2px, transparent 2px 24px),
-      #3f5a8a; }
-  #kitchen { left: 388px; top: 56px; width: 220px; height: 120px;
-    background: repeating-conic-gradient(#d9d3c5 0 25%, #bdb6a5 0 50%) 0 0 / 32px 32px; }
-  .wall { position: absolute; background: #4a5068; box-shadow: inset 0 -6px 0 #353a4e; z-index: 1; }
-  #wall-top { left: 0; top: 0; width: 608px; height: 56px; }
-  #wall-v { left: 380px; top: 56px; width: 8px; height: 194px; box-shadow: inset -2px 0 0 #353a4e; }
-  #wall-v2 { left: 380px; top: 300px; width: 8px; height: 68px; box-shadow: inset -2px 0 0 #353a4e; }
-  #wall-h { left: 388px; top: 176px; width: 220px; height: 8px; box-shadow: inset 0 -2px 0 #353a4e; }
-  #door { position: absolute; left: 276px; top: 8px; width: 56px; height: 48px; background: #20222e; border: 4px solid #6b5436; border-bottom: 0; box-sizing: border-box; z-index: 2; }
-  #door::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: #b8824c; }
-  #label { position: absolute; left: 8px; top: 8px; z-index: 900; padding: 2px 6px; background: #1c1e26; color: #f0aa28;
-    border: 2px solid #8a6a2a; font: bold 10px "Courier New", monospace; letter-spacing: 1px; image-rendering: auto; }
-  .s { position: absolute; transform-origin: 0 100%; image-rendering: pixelated; }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #14161d; overflow: hidden; image-rendering: pixelated; }
+  /* #view is the camera window in screen px; #world is the whole office in world px, moved and scaled inside it. */
+  #view { position: absolute; overflow: hidden; background: #2b303b; }
+  #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; image-rendering: pixelated; }
+  #world > * { position: absolute; }
+  .floor { box-sizing: border-box; background-image:
+    repeating-linear-gradient(0deg, rgba(0,0,0,.10) 0 1px, transparent 1px 17px),
+    repeating-linear-gradient(90deg, rgba(0,0,0,.06) 0 1px, transparent 1px 16px); }
+  .wall { background: #5c6370; box-shadow: inset 0 -4px 0 #454b57; z-index: 1; }
+  .door { background: #8a6d46; box-shadow: inset 0 0 0 2px #6b5436; z-index: 2; }
+  .sign { z-index: 3000; padding: 1px 5px; background: #1c1e26; color: #f0aa28; border: 1px solid #8a6a2a;
+    font: bold 9px "Courier New", monospace; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; image-rendering: auto; }
+  .spr { image-rendering: pixelated; }
+  .fig.dim { opacity: .6; }
+  .fig.hl { filter: drop-shadow(2px 0 0 #ffd54f) drop-shadow(-2px 0 0 #ffd54f) drop-shadow(0 2px 0 #ffd54f) drop-shadow(0 -2px 0 #ffd54f); }
+  /* Tags (plates, bubbles, emotes) sit above every figure, so a near figure never hides a name. */
+  .tag { z-index: 4000; display: flex; flex-direction: column; align-items: center; gap: 2px; pointer-events: none;
+    font: bold 9px "Courier New", monospace; image-rendering: auto; }
+  .plate { padding: 0 3px; border: 1px solid rgba(0,0,0,.65); white-space: nowrap; line-height: 11px; }
+  .bub { position: relative; max-width: 132px; padding: 2px 5px; background: #f4f1e6; color: #1c1e26; border: 2px solid #1c1e26;
+    font-weight: normal; line-height: 11px; text-align: center; overflow-wrap: anywhere; }
+  .bub::after { content: ""; position: absolute; left: 50%; bottom: -7px; margin-left: -4px; width: 0; height: 0;
+    border: 4px solid transparent; border-top: 5px solid #1c1e26; border-bottom: 0; }
+  .bub.chat { background: #dff3ff; }
+  .emote { font-size: 16px; line-height: 16px; color: #ff5a7a; text-shadow: 0 1px 0 #1c1e26, 0 -1px 0 #1c1e26, 1px 0 0 #1c1e26, -1px 0 0 #1c1e26; }
+  .fresh { animation: pop 150ms ease-out; }
+  @keyframes pop { from { transform: scale(.5); } to { transform: scale(1); } }
+  #night { position: absolute; inset: 0; background: #98a6e6; mix-blend-mode: multiply; display: none; z-index: 5; pointer-events: none; }
+  #caption { position: absolute; left: 0; right: 0; bottom: 0; display: none; z-index: 6; box-sizing: border-box; padding: 3px 8px;
+    background: rgba(10,12,20,.88); color: #f5e6b0; border-top: 2px solid #8a6a2a;
+    font: bold 12px "Courier New", monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; image-rendering: auto; }
 </style>
 </head>
 <body>
-<div id="stage">
-<div id="office">
-  <div class="zone" id="team"></div>
-  <div class="zone" id="kitchen"></div>
-  <div class="zone" id="meet"></div>
-  <div class="wall" id="wall-top"></div>
-  <div class="wall" id="wall-v"></div>
-  <div class="wall" id="wall-v2"></div>
-  <div class="wall" id="wall-h"></div>
-  <div id="door"></div>
-  <div id="label">AGENTS OFFICE</div>
-</div>
+<div id="view">
+  <div id="world"></div>
+  <div id="night"></div>
+  <div id="caption"></div>
 </div>
 <script>
-  // The scene is designed at 608x368; the stage is scaled to fit the viewport (contain, centred).
-  // Integer scale when the fit is 1 or more, so pixels stay crisp; fractional below 1.
-  const stage = document.getElementById('stage')
-  const fitStage = () => {
-    const raw = Math.min(innerWidth / 608, innerHeight / 368)
-    const k = raw >= 1 ? Math.floor(raw) : raw
-    stage.style.transform = 'translate(' + Math.round((innerWidth - 608 * k) / 2) + 'px,' + Math.round((innerHeight - 368 * k) / 2) + 'px) scale(' + k + ')'
-  }
-  addEventListener('resize', fitStage)
-  fitStage()
-  const office = document.getElementById('office')
-  // x = left, foot = bottom y, scale = display multiple of the sprite pixels
-  const spr = (name, x, foot, scale, z) => {
-    const e = document.createElement('img')
-    e.className = 's'
-    e.src = 'sprites/' + name + '.png'
-    e.style.left = x + 'px'
-    e.style.bottom = (368 - foot) + 'px'
-    e.style.transform = 'scale(' + scale + ')'
-    e.style.zIndex = z === undefined ? foot : z
-    office.appendChild(e)
+  // The page is a thin drawer of the SceneModel (hooks/scene.ts): window.setScene(model) draws it, window.sceneBusy()
+  // says whether something is still moving. SPRITE_TABLE is injected by render.mjs from renderer/sprite-table.json.
+  const SPRITES = (window.SPRITE_TABLE && window.SPRITE_TABLE.sprites) || {}
+  const TWEEN_MS = 100
+  const EASE = 0.25
+  const BOB_MS = 220
+  const WORLD_Z = { floor: 3, wall: 4, base: 100 }
+  const SEAT_LIFT = 4
+  const view = document.getElementById('view')
+  const world = document.getElementById('world')
+  const night = document.getElementById('night')
+  const caption = document.getElementById('caption')
+
+  const hex = n => '#' + n.toString(16).padStart(6, '0')
+  const rect = (cls, r, extra) => {
+    const e = document.createElement('div')
+    e.className = cls
+    e.style.left = r.x + 'px'
+    e.style.top = r.y + 'px'
+    e.style.width = r.w + 'px'
+    e.style.height = r.h + 'px'
+    if (extra) Object.assign(e.style, extra)
     return e
   }
-  // back wall furniture
-  spr('bookshelf', 4, 112, 2)
-  spr('filing-cabinet', 76, 112, 2)
-  spr('server-rack', 122, 112, 2)
-  spr('wall-clock', 190, 52, 1.5, 3)
-  spr('plant-tall', 334, 116, 2)
-  spr('coffee-machine', 392, 112, 2)
-  spr('fridge', 474, 112, 2)
-  spr('water-cooler', 530, 112, 2)
-  // team room desks (foot y 226), seated people behind them
-  spr('desk-monitor', 16, 226, 2, 226); spr('mug', 22, 204, 0.8, 227)
-  spr('desk-dual', 128, 226, 2, 226);   spr('mug', 196, 206, 0.8, 227)
-  spr('desk-monitor', 252, 226, 2, 226); spr('laptop-closed', 262, 206, 0.7, 227)
-  spr('chair', 28, 186, 2, 120);  spr('person1-down', 28, 182, 2, 150)
-  spr('chair', 154, 186, 2, 120); spr('person7-down', 154, 182, 2, 150)
-  spr('chair', 270, 188, 2, 120)
-  // standing at desk 3
-  spr('person2-left', 326, 232, 2)
-  // kitchen
-  spr('cat-orange-walk', 420, 166, 2)
-  spr('cat-bed', 516, 170, 2)
-  // meeting corner
-  spr('whiteboard', 516, 262, 2)
-  spr('person8-right', 462, 262, 2)
-  spr('round-table', 412, 350, 2)
-  spr('plant-small', 560, 360, 2)
-  spr('plant-tall', 4, 358, 2)
-  spr('sofa', 150, 366, 1.5)
-
-  // walker: loops the lower team room with a 2-frame bob
-  const L = 30, R = 300, T = 262, B = 340
-  const per = 2 * ((R - L) + (B - T))
-  const wk = spr('person6-down', 0, 0, 2, 0)
-  const walkerAt = t => {
-    let d = (t / 1000 * 40) % per
-    let x, y, dir
-    if (d < R - L) { x = L + d; y = T; dir = 'right' }
-    else if ((d -= R - L) < B - T) { x = R; y = T + d; dir = 'down' }
-    else if ((d -= B - T) < R - L) { x = R - d; y = B; dir = 'left' }
-    else { d -= R - L; x = L; y = B - d; dir = 'up' }
-    return { x, y, dir }
+  const textColorOn = css => {
+    const n = parseInt(css.slice(1), 16)
+    const lum = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)
+    return lum > 140 ? '#1c1e26' : '#ffffff'
   }
 
-  // wanderers: pick a point, walk to it slowly, pause, repeat
-  const wanderer = (prefix, scale, x, y, speed) =>
-    ({ prefix, x, y, tx: x, ty: y, pause: 0, speed, el: spr(prefix + '-down', x, y, scale, y), face: 'down' })
-  const pets = [wanderer('mascot', 2, 90, 330, 14), wanderer('corgi', 2, 250, 300, 18)]
-  const bounds = { x0: 20, x1: 540, y0: 262, y1: 350 }
-  const rnd = (a, b) => a + Math.random() * (b - a)
+  // Placement of a sprite from its table entry: the box is w*scale by h*scale, centred on x, and bottom (foot) or top at y.
+  const boxOf = (name, x, y) => {
+    const s = SPRITES[name]
+    if (!s) return null
+    const w = s.w * s.scale
+    const h = s.h * s.scale
+    return { left: x - w / 2, top: s.anchor === 'top' ? y : y - h, w, h, s }
+  }
+  const spriteEl = (name, x, y, z) => {
+    const b = boxOf(name, x, y)
+    if (!b) return null
+    const e = document.createElement('img')
+    e.className = 'spr'
+    e.src = 'sprites/' + name + '.png'
+    e.style.left = b.left + 'px'
+    e.style.top = b.top + 'px'
+    e.style.width = b.w + 'px'
+    e.style.height = b.h + 'px'
+    e.style.zIndex = z
+    return e
+  }
 
-  let last = performance.now()
-  const tick = now => {
-    const dt = Math.min(0.1, (now - last) / 1000)
-    last = now
-    const wp = walkerAt(now)
-    const bob = Math.floor(now / 220) % 2 ? -2 : 0
-    wk.src = 'sprites/person6-' + wp.dir + '.png'
-    wk.style.left = wp.x + 'px'
-    wk.style.bottom = (368 - wp.y - bob) + 'px'
-    wk.style.zIndex = Math.round(wp.y)
-    for (const p of pets) {
-      if (p.pause > 0) p.pause -= dt
-      else {
-        const dx = p.tx - p.x, dy = p.ty - p.y, dist = Math.hypot(dx, dy)
-        if (dist < 2) { p.tx = rnd(bounds.x0, bounds.x1); p.ty = rnd(bounds.y0, bounds.y1); p.pause = rnd(1, 4) }
-        else {
-          p.x += dx / dist * p.speed * dt; p.y += dy / dist * p.speed * dt
-          const face = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up')
-          if (face !== p.face) { p.face = face; p.el.src = 'sprites/' + p.prefix + '-' + face + '.png' }
-        }
-      }
-      p.el.style.left = p.x + 'px'
-      p.el.style.bottom = (368 - p.y) + 'px'
-      p.el.style.zIndex = Math.round(p.y)
+  // Static layer: corridor, rooms, walls, doors, props. Rebuilt only when it changes.
+  let staticSig = ''
+  let staticEls = []
+  const buildStatic = m => {
+    for (const e of staticEls) e.remove()
+    staticEls = []
+    const add = e => {
+      if (!e) return
+      staticEls.push(e)
+      world.insertBefore(e, figLayerStart)
     }
-    requestAnimationFrame(tick)
+    add(rect('floor', m.corridor, { background: hex(m.corridor.floor) }))
+    for (const r of m.rooms) add(rect('floor', r, { background: hex(r.floor) }))
+    for (const w of m.walls) add(rect('wall', w))
+    for (const d of m.doors) add(rect('door', d))
+    for (const r of m.rooms) {
+      const e = document.createElement('div')
+      e.className = 'sign'
+      e.textContent = r.name
+      e.style.left = r.x + 4 + 'px'
+      e.style.top = r.y - 15 + 'px'
+      add(e)
+    }
+    for (const p of m.props) {
+      const z = p.layer === 'floor' ? WORLD_Z.floor : p.layer === 'wall' ? WORLD_Z.wall : WORLD_Z.base + p.y
+      add(spriteEl(p.sprite, p.x, p.y, z))
+    }
   }
-  requestAnimationFrame(tick)
+  const figLayerStart = document.createComment('figures')
+  world.appendChild(figLayerStart)
 
-  window.setState = state => {
-    if (state && typeof state.label === 'string') document.getElementById('label').textContent = state.label
+  // Figures: one sprite element and one tag element per key, tweened toward the model's foot point.
+  const figs = new Map()
+  let model = null
+  let bubbleUntil = 0
+  let camera = null
+  let camNow = null
+
+  const syncTag = (f, fig) => {
+    const sig = [fig.plate, fig.plateColor, fig.bubble || '', fig.emote || '', fig.chat || ''].join('\u0001')
+    if (f.tagSig === sig) return
+    // A change after the first draw pops the bubble in and keeps the page busy while it does.
+    const later = f.tagSig !== undefined
+    if (later) bubbleUntil = performance.now() + 200
+    f.tagSig = sig
+    f.tag.textContent = ''
+    const bub = (cls, text) => {
+      const b = document.createElement('div')
+      b.className = later ? cls + ' fresh' : cls
+      b.textContent = text
+      f.tag.appendChild(b)
+    }
+    if (fig.bubble) bub('bub', fig.bubble)
+    if (fig.chat) bub('bub chat', fig.chat)
+    if (fig.emote) bub('emote', fig.emote)
+    if (fig.plate) {
+      const p = document.createElement('div')
+      p.className = 'plate'
+      p.textContent = fig.plate
+      p.style.background = fig.plateColor
+      p.style.color = textColorOn(fig.plateColor)
+      f.tag.appendChild(p)
+    }
+  }
+
+  const reconcile = (m, now) => {
+    const seen = new Set()
+    m.figures.forEach((fig, order) => {
+      seen.add(fig.key)
+      let f = figs.get(fig.key)
+      const fresh = !f
+      if (fresh) {
+        f = { key: fig.key, img: document.createElement('img'), tag: document.createElement('div'), x: fig.x, y: fig.y, fromX: fig.x, fromY: fig.y, t0: 0, tx: fig.x, ty: fig.y }
+        f.img.className = 'spr fig'
+        f.tag.className = 'tag'
+        world.appendChild(f.img)
+        world.appendChild(f.tag)
+        figs.set(fig.key, f)
+      }
+      if (fig.x !== f.tx || fig.y !== f.ty) {
+        f.fromX = f.x
+        f.fromY = f.y
+        f.t0 = now
+        f.tx = fig.x
+        f.ty = fig.y
+      }
+      if (f.name !== fig.sprite) {
+        f.name = fig.sprite
+        f.img.src = 'sprites/' + fig.sprite + '.png'
+      }
+      f.fig = fig
+      f.order = order
+      f.img.classList.toggle('dim', fig.status === 'done' || fig.status === 'leaving')
+      f.img.classList.toggle('hl', fig.highlight)
+      syncTag(f, fig)
+    })
+    for (const [key, f] of figs) {
+      if (seen.has(key)) continue
+      f.img.remove()
+      f.tag.remove()
+      figs.delete(key)
+      bubbleUntil = now + 200
+    }
+  }
+
+  const placeFigures = now => {
+    let moving = false
+    for (const f of figs.values()) {
+      const p = f.t0 === 0 ? 1 : Math.min(1, (now - f.t0) / TWEEN_MS)
+      if (p < 1) moving = true
+      f.x = f.fromX + (f.tx - f.fromX) * p
+      f.y = f.fromY + (f.ty - f.fromY) * p
+      f.walking = p < 1
+      const seated = f.fig.pose === 'seated'
+      const bob = f.walking && Math.floor(now / BOB_MS) % 2 ? 2 : 0
+      const y = f.y - (seated ? SEAT_LIFT : 0) - bob
+      const b = boxOf(f.fig.sprite, f.x, y)
+      if (!b) continue
+      f.img.style.left = b.left + 'px'
+      f.img.style.top = b.top + 'px'
+      f.img.style.width = b.w + 'px'
+      f.img.style.height = b.h + 'px'
+      f.img.style.zIndex = WORLD_Z.base + Math.round(f.fig.z) + (seated ? 1 : 0)
+      f.tag.style.left = f.x + 'px'
+      f.tag.style.top = b.top - 2 + 'px'
+      f.tag.style.transform = 'translate(-50%, -100%)'
+    }
+    return moving
+  }
+
+  // Camera: eases toward the model's camera rectangle, snaps on the first scene or when its size changes.
+  const placeCamera = () => {
+    const t = model.camera
+    let easing = false
+    if (!camNow || camNow.w !== t.w || camNow.h !== t.h) camNow = { ...t }
+    else {
+      const dx = t.x - camNow.x
+      const dy = t.y - camNow.y
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+        camNow.x = t.x
+        camNow.y = t.y
+      } else {
+        camNow.x += dx * EASE
+        camNow.y += dy * EASE
+        easing = true
+      }
+    }
+    const raw = Math.min(innerWidth / t.w, innerHeight / t.h)
+    const k = raw >= 1 ? Math.floor(raw) : raw
+    const vw = Math.round(t.w * k)
+    const vh = Math.round(t.h * k)
+    view.style.left = Math.round((innerWidth - vw) / 2) + 'px'
+    view.style.top = Math.round((innerHeight - vh) / 2) + 'px'
+    view.style.width = vw + 'px'
+    view.style.height = vh + 'px'
+    world.style.transform = 'translate(' + Math.round(-camNow.x * k) + 'px,' + Math.round(-camNow.y * k) + 'px) scale(' + k + ')'
+    return easing
+  }
+
+  let busy = false
+  const frame = now => {
+    if (!model) return
+    const easing = placeCamera()
+    const moving = placeFigures(now)
+    busy = easing || moving || now < bubbleUntil
+  }
+  const loop = now => {
+    frame(now)
+    requestAnimationFrame(loop)
+  }
+  requestAnimationFrame(loop)
+  addEventListener('resize', () => frame(performance.now()))
+
+  window.sceneBusy = () => busy
+
+  // Draws the model. The promise resolves once every image in the world is decoded, so a screenshot taken right
+  // after it never shows an empty sprite.
+  window.setScene = async m => {
+    if (!m || !m.world) return
+    const now = performance.now()
+    const sig = JSON.stringify([m.world, m.corridor, m.rooms, m.walls, m.doors, m.props])
+    if (sig !== staticSig) {
+      staticSig = sig
+      world.style.width = m.world.w + 'px'
+      world.style.height = m.world.h + 'px'
+      model = m
+      buildStatic(m)
+    }
+    model = m
+    night.style.display = m.night ? 'block' : 'none'
+    caption.style.display = m.caption ? 'block' : 'none'
+    caption.textContent = m.caption || ''
+    reconcile(m, now)
+    frame(now)
+    await Promise.all([...world.querySelectorAll('img')].map(i => i.decode().catch(() => {})))
   }
 </script>
 </body>

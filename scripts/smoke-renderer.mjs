@@ -1,14 +1,18 @@
 // Smoke test for the renderer: start render.mjs on the basic fixture, wait for the first
 // `frame` line, check the PNG size equals the fixture's size, then stop the renderer.
 // Runs locally only: it needs Chromium (`npx playwright install chromium`).
-import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { spawn, spawnSync } from 'node:child_process'
+import { copyFileSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const renderer = join(root, '.claude/skills/agents-office/renderer/render.mjs')
-const fixture = join(root, 'scripts/fixtures/state-basic.json')
+// Optional first argument: a fixture path (default state-basic.json), e.g. scripts/fixtures/state-busy.json.
+const fixture = process.argv[2] === undefined ? join(root, 'scripts/fixtures/state-basic.json') : resolve(process.argv[2])
+// The page's sprite table must match hooks/sceneArt.ts (the page cannot import TS).
+const table = spawnSync('node', [join(root, 'scripts/sprites/write-table.mjs'), '--check'], { stdio: 'inherit' })
+if (table.status !== 0) process.exit(1)
 const { size } = JSON.parse(readFileSync(fixture, 'utf8'))
 const TIMEOUT_MS = 30_000
 
@@ -57,6 +61,8 @@ try {
   const w = png.readUInt32BE(16)
   const h = png.readUInt32BE(20)
   if (w !== size.w || h !== size.h) throw new Error(`frame is ${w}x${h}, want ${size.w}x${size.h}`)
+  // SMOKE_FRAME_OUT=<file.png> keeps a copy of the frame, because the renderer deletes its temp dir on exit.
+  if (process.env.SMOKE_FRAME_OUT) copyFileSync(file, process.env.SMOKE_FRAME_OUT)
   console.log(`ok ${w}x${h}`)
 } catch (err) {
   console.error(`smoke failed: ${err instanceof Error ? err.message : String(err)}`)
