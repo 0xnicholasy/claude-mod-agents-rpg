@@ -131,6 +131,7 @@ function save(name, img) {
 const atlas = {}
 const jobs = []
 const FACTOR = Number(process.argv[4] || 6)
+if (!Number.isInteger(FACTOR) || FACTOR < 1) throw new Error('factor must be a positive integer')
 
 // characters
 {
