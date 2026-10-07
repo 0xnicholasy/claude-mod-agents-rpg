@@ -49,8 +49,8 @@ import type { PadState } from './pad'
 import { padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
-import { initialLife, next as nextLife } from './rendererLife'
-import type { Life, LifeEvent } from './rendererLife'
+import { effectiveScene, initialLife, next as nextLife } from './rendererLife'
+import type { Life, LifeEvent, Probe } from './rendererLife'
 import { sceneKey, sceneOf } from './scene'
 import { baseName, branchOf, teamLabel } from './team'
 import { hashKey } from './sprites'
@@ -115,8 +115,8 @@ const identity = atom({ plugin: 'agents-office', key: 'identity' } as const, nul
 // The share preference (D19), mirrored from `$.store` key `share`.
 const share = atom({ plugin: 'agents-office', key: 'share' } as const, DEFAULT_SHARE as ShareMode)
 
-// The scene preference and what the pane draws (D10), `want` mirrored from `$.store` key `scene`. T12 draws the image
-// scene only when `want` is `image`; `auto` is stored and behaves as `text` until T13 adds the probe.
+// The scene preference and what the pane draws (D10), `want` mirrored from `$.store` key `scene`. `effective` is
+// decided by `effectiveScene`: `probe` while `auto` waits for the placeholder blit (D11), then `image` or `text`.
 type SceneState = { want: SceneMode; effective: 'probe' | 'image' | 'text'; reason?: string }
 const scene = atom({ plugin: 'agents-office', key: 'scene' } as const, { want: DEFAULT_SCENE, effective: 'text' } as SceneState)
 
@@ -297,10 +297,11 @@ const loadShare = async ($: EngineInterface): Promise<void> => {
   await update($, share, () => asShare(stored))
 }
 
-// Loads the stored scene preference into the atom (D10). `image` is forced; every other mode draws the v2 text office.
+// Loads the stored scene preference into the atom (D10). Nothing stored is `auto`: the render probes (D11).
 const loadScene = async ($: EngineInterface): Promise<void> => {
   const want = asScene(await $.store.get('scene'))
-  await update($, scene, () => ({ want, effective: want === 'image' ? 'image' : 'text' }))
+  const life = await read($, renderer)
+  await update($, scene, () => sceneFor(want, life))
 }
 
 // Writes the tombstone once (D18); a no-op without a presence file path or when it is already out.
@@ -833,9 +834,122 @@ const lifeEvent = async ($: EngineInterface, event: LifeEvent): Promise<Life> =>
   return after
 }
 
-// Switches the pane to the v2 text office with the reason; a scene already switched elsewhere is left alone.
-const fallToText = async ($: EngineInterface, reason: string): Promise<void> => {
-  await update($, scene, (cur): SceneState => (cur.effective === 'image' ? { ...cur, effective: 'text', reason } : cur))
+// The scene state for a wish before any probe ran: `auto` waits at `probe`, `image` draws, `text` is v2.
+const sceneFor = (want: SceneMode, life: Life): SceneState => {
+  const { effective, reason } = effectiveScene(want, { kind: 'pending' }, life)
+
+  return { want, effective, ...(reason === undefined ? {} : { reason }) }
+}
+
+const REASON_MS = 8000
+
+// Says why the pane fell back to text, once: a log line, and the overlay line for 8 s (D17).
+const announceReason = async ($: EngineInterface, reason: string): Promise<void> => {
+  const now = await $.clock.now()
+  await pushLines($, [clean(reason)])
+  await update($, inspect, () => ({ agentId: '', text: clean(reason), until: now + REASON_MS }))
+}
+
+// Decides the scene again from a probe result and the renderer life. Only a pane still drawing a scene is touched, so
+// a stale probe or loop never undoes `/office scene text`. A switch to text with a reason announces it once.
+const settleScene = async ($: EngineInterface, probe: Probe): Promise<void> => {
+  const life = await read($, renderer)
+  let announce: string | undefined
+  await update($, scene, (cur): SceneState => {
+    // `update` may run this again after a lost race; only the last run decides whether to announce.
+    announce = undefined
+    if (cur.effective === 'text') return cur
+    const { effective, reason } = effectiveScene(cur.want, probe, life)
+    if (effective === cur.effective && reason === cur.reason) return cur
+    if (effective === 'text') announce = reason
+
+    return { want: cur.want, effective, ...(reason === undefined ? {} : { reason }) }
+  })
+  if (announce !== undefined) await announceReason($, announce)
+}
+
+// The fallback reason for a command reply: empty unless the text office is showing because the image scene was wanted.
+const reasonSuffix = async ($: EngineInterface): Promise<string> => {
+  const cur = await read($, scene)
+
+  return cur.want !== 'text' && cur.effective === 'text' && cur.reason !== undefined ? ` ${cur.reason}` : ''
+}
+
+// Switches the pane to the v2 text office after a failure (a failed life or a refused blit), with the reason.
+const fallToText = async ($: EngineInterface, probe: Probe): Promise<void> => settleScene($, probe)
+
+// The probe (D11): a blit of the placeholder as a file source onto the mounted `scene` Image. Accepted means the
+// terminal can draw pictures; any other deny (the alt case, a file it cannot read) means text, and nothing is spawned.
+// A deny that only says nothing is mounted yet, or a changed pane size, is tried again a few times. Runs in a timer
+// closure because a render cannot write state (D20); one at a time.
+const PROBE_TRIES = 5
+const PROBE_RETRY_MS = 200
+let probing = false
+
+const runProbe = async ($: EngineInterface): Promise<void> => {
+  for (let attempt = 0; attempt < PROBE_TRIES; attempt++) {
+    if ((await read($, scene)).effective !== 'probe') return
+    const sized = await read($, viewport)
+    let deny: string | undefined
+    let threw = false
+    try {
+      const result = await $.ui.blit({
+        requestId: PANE,
+        key: SCENE_KEY,
+        source: { file: `${$.plugin.root}/renderer/placeholder.png`, format: 'png', generation: 0 },
+      })
+      deny = result.deny
+    } catch (error) {
+      // An exception is not a deny (D11): the engine may be closing, so it retries like "not mounted".
+      deny = String(error)
+      threw = true
+    }
+    if (deny === undefined) {
+      await settleScene($, { kind: 'ok' })
+      return
+    }
+    if (!threw && (await isFinalDeny($, deny, sized))) {
+      await settleScene($, { kind: 'denied', reason: deny })
+      return
+    }
+    // "No Image of its own is mounted" and a changed size are never a verdict: the scene stays at `probe`, and the
+    // next render probes again if the retries below ran out.
+    logOnce($, 'probe', `blit refused, trying again (${deny})`)
+    await new Promise<void>(resolve => {
+      $.clock.after(PROBE_RETRY_MS, () => resolve())
+    })
+  }
+}
+
+// When every try was refused as "not mounted" the scene stays at `probe`; a later round (1 s on, at most 5) tries again,
+// and a render starts a fresh set of rounds.
+const PROBE_ROUNDS = 5
+const startProbe = ($: EngineInterface, delay: number, round: number): void => {
+  probing = true
+  $.clock.after(delay, () => {
+    runProbe($)
+      .catch(error => logOnce($, 'probe', `threw ${String(error)}`))
+      .then(() => read($, scene))
+      .then(cur => {
+        if (cur.effective === 'probe' && round < PROBE_ROUNDS) startProbe($, 1000, round + 1)
+        else probing = false
+      })
+      .catch(() => {
+        probing = false
+      })
+  })
+}
+
+const scheduleProbe = ($: EngineInterface): void => {
+  if (probing) return
+  startProbe($, 0, 1)
+}
+
+// A scene change from the render itself (no Image element on this terminal): written in a timer closure (D20).
+const denyFromRender = ($: EngineInterface, reason: string): void => {
+  $.clock.after(0, () => {
+    settleScene($, { kind: 'denied', reason }).catch(error => logOnce($, 'scene', `settle threw ${String(error)}`))
+  })
 }
 
 // The same refusal handling as the v2 Raster blit: a changed viewport is a stale frame and a "mounted" deny means
@@ -857,6 +971,7 @@ const runRenderer = async ($: EngineInterface, loop: RendererLoop): Promise<void
   let denied: string | undefined
   let outcome: LifeEvent = { kind: 'closed' }
   let ending = 'ended'
+  let nodeAsked = false
   try {
     const current = await read($, renderer)
     if (current.status !== 'backoff') await lifeEvent($, { kind: 'closed' })
@@ -875,6 +990,7 @@ const runRenderer = async ($: EngineInterface, loop: RendererLoop): Promise<void
       ending = 'closed before spawn'
       return
     }
+    nodeAsked = true
     const child = $.process.spawn({ argv: ['node', script, `--session=${session}`, `--state=${dir}/${STATE_FILE}`] })
     loop.child = child
     if (loop.closed) {
@@ -938,7 +1054,7 @@ const runRenderer = async ($: EngineInterface, loop: RendererLoop): Promise<void
     }
   } catch (error) {
     ending = `threw ${String(error)}`
-    outcome = { kind: 'spawn-failed', error: String(error) }
+    outcome = { kind: 'spawn-failed', error: String(error), noOutput: nodeAsked && stdout === '' }
   } finally {
     endChild($, loop)
     const dir = loop.stateDir
@@ -951,8 +1067,8 @@ const runRenderer = async ($: EngineInterface, loop: RendererLoop): Promise<void
   const life = await lifeEvent($, outcome)
   // A loop stopped from outside is stale: the scene it served is already decided elsewhere, so it never falls to text.
   if (loop.closed) return
-  if (denied !== undefined) await fallToText($, `The terminal could not draw the image scene (${denied}).`)
-  else if (life.status === 'failed') await fallToText($, life.reason ?? 'The renderer failed.')
+  if (denied !== undefined) await fallToText($, { kind: 'denied', reason: denied })
+  else if (life.status === 'failed') await fallToText($, { kind: 'ok' })
 }
 
 // Starts the one renderer of this session when none runs.
@@ -985,7 +1101,7 @@ const ensureRenderer = async ($: EngineInterface, now: number): Promise<void> =>
   if (rendererLoop !== undefined) return
   const life = await read($, renderer)
   if (life.status === 'failed') {
-    await fallToText($, life.reason ?? 'The renderer failed.')
+    await fallToText($, { kind: 'ok' })
     return
   }
   if (life.status === 'backoff' && (life.retryAt ?? 0) > now) return
@@ -1072,7 +1188,14 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const noStrip = (await read($, viewport)).strip === 0
   const ownId = (await read($, team))?.id ?? ''
   const focus = focusOf(map, walker, ownId)
-  if ((await read($, scene)).effective === 'image') {
+  const drawing = (await read($, scene)).effective
+  if (drawing === 'probe') {
+    // The render's Image is being probed: the Raster has no mounted key yet, so nothing is blitted.
+    lastFrameCells = null
+
+    return
+  }
+  if (drawing === 'image') {
     // The image scene is fed to the renderer instead of the Raster; a later switch back to text blits afresh.
     lastFrameCells = null
     const typed = chatLine(await read($, pad))
@@ -1372,18 +1495,17 @@ export const register: Register = on => {
       }
       if (parsed.kind === 'scene') {
         await $.store.set('scene', parsed.mode)
-        // T12: only `image` draws the image scene; `auto` waits for the probe (T13) and draws text.
-        await update($, scene, () => ({ want: parsed.mode, effective: parsed.mode === 'image' ? 'image' : 'text' }))
-        // A new request clears an earlier crash count; a mode without the image scene ends a running renderer.
-        await update($, renderer, cur => (cur.status === 'failed' ? initialLife : cur))
+        // A new request clears an earlier crash count, then `auto` probes again and `image` draws (D10).
+        const cleared = await update($, renderer, cur => (cur.status === 'failed' ? initialLife : cur))
+        await update($, scene, () => sceneFor(parsed.mode, cleared))
         if (parsed.mode !== 'image') stopRenderer($, `/office scene ${parsed.mode}`)
 
-        return { text: `Office scene: ${parsed.mode}` }
+        return { text: `Office scene: ${parsed.mode}${await reasonSuffix($)}` }
       }
       const wasOpened = await read($, opened)
       await openOffice($)
 
-      return { text: wasOpened ? 'Office pane reopened.' : 'Office pane opened.' }
+      return { text: `${wasOpened ? 'Office pane reopened.' : 'Office pane opened.'}${await reasonSuffix($)}` }
     }),
   )
 
@@ -1461,7 +1583,8 @@ export const register: Register = on => {
           )
         }
 
-        const { Raster, Input, Image } = $.ui.resolve(e)
+        const elements = $.ui.resolve(e)
+        const { Raster, Input, Image } = elements
         const bodyRows = bodyRowsFor(e.props.placement, e.props.scroll.bodyRows, e.viewport?.rows)
         const { columns, rows, strip: stripCount, foot } = rasterSize(e.props.bodyColumns, bodyRows)
         // Drawing is pure: a state write inside the hook is denied. A timer closure
@@ -1478,7 +1601,12 @@ export const register: Register = on => {
             </Box>
           )
         }
-        if ((await read($, scene)).effective === 'image') {
+        const shownScene = (await read($, scene)).effective
+        // `Image` in the table is not proof the terminal draws it (tmux has it): the probe blit is the signal (D11).
+        const hasImage = 'Image' in elements && Image !== undefined
+        if (shownScene !== 'text' && !hasImage) denyFromRender($, 'this surface has no Image element.')
+        if (shownScene === 'probe' && hasImage) scheduleProbe($)
+        if (shownScene !== 'text' && hasImage) {
           // The image scene (T12, D18): the Image is mounted from the first render, with the placeholder until the
           // first frame is blitted to its key; the pad Input sits over its bottom-left cell like over the Raster.
           const drawn = await read($, scene)

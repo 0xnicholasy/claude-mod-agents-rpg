@@ -724,8 +724,8 @@ const startOffice = async ($: Engine, on: On, v1Roster?: Record<string, unknown>
     return next(e)
   })
   stubSession(on, logs)
-  // The share preference read in session.start: nothing stored.
-  on('store.get', () => ({ value: undefined }))
+  // The share preference read in session.start: nothing stored. The scene is pinned to the v2 text office (T13: `auto` probes).
+  on('store.get', (_$, e) => ({ value: e.key === 'scene' ? 'text' : undefined }))
   // The branch lookup in session.start: a repo with no branch (detached HEAD).
   on('process.run', () => ({
     value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
@@ -1531,7 +1531,7 @@ test('six teams at 76 columns still blit the mounted size', async ($, on) => {
   const dir = '/home/u/.claude/agents-office/presence'
   const lengths: number[] = []
   const clock = mock.clock(on)
-  stubStore(on, { share: 'all' })
+  stubStore(on, { share: 'all', scene: 'text' })
   stubSession(on)
   on('agent.list', () => ({ value: [] }))
   on('ui.blit', (_$, e) => {
@@ -1777,7 +1777,7 @@ const STATE_DIR = '/tmp/agents-office-state.t1'
 // Stubs the renderer's three spawns by argv: `mktemp` (the state dir), `node` (render.mjs, which prints `lines` and
 // then stays alive, setting `returned` once its stream is closed) and `rm` (the cleanup). Records every argv.
 // `idle` makes the child print `lines` once and then write nothing, like a renderer showing a static scene.
-const stubRenderer = (on: On, lines: string, idle = false): { spawned: string[][]; state: { returned: boolean } } => {
+const stubRenderer = (on: On, lines: string, idle = false, ending: 'run' | 'exit' | 'throw' = 'run'): { spawned: string[][]; state: { returned: boolean } } => {
   const spawned: string[][] = []
   const state = { returned: false }
   on('process.spawn', async function* (_$, e) {
@@ -1786,7 +1786,9 @@ const stubRenderer = (on: On, lines: string, idle = false): { spawned: string[][
       yield { stream: 'stdout' as const, text: `${STATE_DIR}\n` }
     } else if (e.argv[0] === 'node') {
       try {
+        if (ending === 'throw') throw new Error('spawn node ENOENT')
         yield { stream: 'stdout' as const, text: lines }
+        if (ending === 'exit') return { value: { code: 1, signal: null } }
         if (idle) await new Promise<void>(() => undefined)
         for (;;) {
           await new Promise<void>(resolve => setTimeout(() => resolve(), 20))
@@ -1920,10 +1922,10 @@ test('a stop ends a renderer that is writing nothing', async ($, on) => {
   await ui.unmount()
 })
 
-test('with the default text scene the v2 Raster frame is blitted and nothing is spawned', async ($, on) => {
+test('with the text scene the v2 Raster frame is blitted and nothing is spawned', async ($, on) => {
   const clock = mock.clock(on)
   const keys: string[] = []
-  stubStore(on)
+  stubStore(on, { scene: 'text' })
   stubSession(on)
   on('agent.list', () => ({ value: [] }))
   on('ui.blit', (_$, e) => {
@@ -1954,4 +1956,129 @@ test('/office scene stores the mode, answers with text and rejects other values'
   const bad = await $.command.run(runOffice('scene bogus'))
   expect(bad).toMatchObject({ text: 'Usage: /office scene auto|image|text' })
   expect(kept.get('scene')).toBe('auto')
+})
+
+// ---- Detection and the fallback (T13) ------------------------------------------------------------------
+const TMUX_DENY = 'the Image draws its alt here: the terminal draws no placeholder images (env: inside tmux or screen)'
+
+// A pane over the stored scene mode (nothing stored = `auto`), the probe answered by `answer` per call, and the
+// renderer stubbed. `logged` collects the strip log writes; `replies` is the `/office` reply.
+const autoSession = async (
+  $: Engine,
+  on: On,
+  answer: (n: number, file: string) => string | undefined,
+  opts: { stored?: string; lines?: string; spawnFails?: boolean; exits?: boolean } = {},
+) => {
+  const clock = mock.clock(on)
+  const probes: Array<{ key: string; file: string }> = []
+  const logs: string[][] = []
+  stubStore(on, opts.stored === undefined ? {} : { scene: opts.stored })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('state.set', ($$, e, next) => {
+    if (e.key === 'log') logs.push(e.value as string[])
+    return next(e)
+  })
+  on('ui.blit', (_$, e) => {
+    const file = 'source' in e && 'file' in e.source ? e.source.file : ''
+    if (file.endsWith('placeholder.png')) probes.push({ key: e.key, file })
+    const deny = file.endsWith('placeholder.png') ? answer(probes.length, file) : undefined
+
+    return { value: deny === undefined ? {} : { deny } }
+  })
+  on('fs.write', () => ({ value: undefined }))
+  const ending = opts.spawnFails === true ? 'throw' : opts.exits === true ? 'exit' : 'run'
+  const renderer = stubRenderer(on, opts.lines ?? 'ready\n', true, ending)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
+  for (let i = 0; i < 6; i++) {
+    await clock.advance(TICK_MS)
+    await settle()
+  }
+
+  return { ui, clock, probes, logs, ...renderer }
+}
+
+test('auto probes with the placeholder file, draws the Image and spawns once it is accepted', async ($, on) => {
+  const { ui, probes, spawned } = await autoSession($, on, () => undefined)
+
+  expect(probes[0]?.key).toBe('scene')
+  expect(probes[0]?.file.endsWith('/renderer/placeholder.png')).toBe(true)
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a probe deny gives the text office with the reason once, and never spawns', async ($, on) => {
+  const { ui, spawned, logs } = await autoSession($, on, () => TMUX_DENY)
+
+  expect(spawned.filter(argv => argv[0] === 'node' || argv[0] === 'mktemp')).toEqual([])
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  const reasons = (logs[logs.length - 1] ?? []).filter(line => line.includes(TMUX_DENY))
+  expect(reasons).toHaveLength(1)
+  const reply = await $.command.run(runOffice(''))
+  expect(JSON.stringify(reply)).toContain(TMUX_DENY)
+  await ui.unmount()
+})
+
+test('a not-mounted deny retries and is never the verdict', async ($, on) => {
+  const { ui, probes, spawned } = await autoSession($, on, n => (n < 3 ? 'no Image of its own is mounted under key "scene" in office' : undefined))
+
+  expect(probes.length).toBe(3)
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a stored text scene never probes or spawns', async ($, on) => {
+  const { ui, probes, spawned } = await autoSession($, on, () => undefined, { stored: 'text' })
+
+  expect(probes).toEqual([])
+  expect(spawned).toEqual([])
+  await ui.unmount()
+})
+
+test('a spawn that rejects gives the text office with the node fix line', async ($, on) => {
+  const { ui, logs } = await autoSession($, on, () => undefined, { spawnFails: true })
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  expect((logs[logs.length - 1] ?? []).some(line => line.includes('Node.js was not found'))).toBe(true)
+  await ui.unmount()
+})
+
+test('an error no-chromium line gives the text office with the chromium fix line', async ($, on) => {
+  const { ui, logs } = await autoSession($, on, () => undefined, { lines: 'dir /x\nerror no-chromium none\n', exits: true })
+  await settle(200)
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  expect((logs[logs.length - 1] ?? []).some(line => line.includes('npx playwright install chromium'))).toBe(true)
+  await ui.unmount()
+})
+
+test('/office scene auto after a failure probes again', async ($, on) => {
+  let deny: string | undefined = TMUX_DENY
+  const { ui, probes } = await autoSession($, on, () => deny)
+  expect(probes.length).toBe(1)
+
+  deny = undefined
+  await $.command.run(runOffice('scene auto'))
+  for (let i = 0; i < 3; i++) await settle()
+
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('3 renderer crashes give the text office with the crash reason', async ($, on) => {
+  const { ui, clock, logs, spawned } = await autoSession($, on, () => undefined, { lines: 'ready\n', exits: true })
+  for (let i = 0; i < 40; i++) {
+    await clock.advance(TICK_MS)
+    await settle(30)
+  }
+
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(3)
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  expect((logs[logs.length - 1] ?? []).some(line => line.includes('crashed 3 times'))).toBe(true)
+  await ui.unmount()
 })

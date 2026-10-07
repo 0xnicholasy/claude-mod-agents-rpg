@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { classify, initialLife, next } from './rendererLife'
-import type { Life, LifeEvent } from './rendererLife'
+import { classify, effectiveScene, initialLife, next } from './rendererLife'
+import type { Life, LifeEvent, Probe } from './rendererLife'
 
 const crash: LifeEvent = { kind: 'exit', code: 1, signal: null, stderr: 'boom' }
 
@@ -98,4 +98,39 @@ test('an exit carrying render.mjs stdout error lines fails at once', () => {
   ])
   expect(life.status).toBe('failed')
   expect(life.reason).toContain('npx playwright install chromium')
+})
+
+const pending: Probe = { kind: 'pending' }
+const ok: Probe = { kind: 'ok' }
+const alt = 'the Image draws its alt here: the terminal draws no placeholder images (env: inside tmux or screen)'
+const failedLife: Life = { status: 'failed', exits: [], reason: 'Chromium is not installed. Run npx playwright install chromium.' }
+
+test('auto stays at probe until the probe is accepted, then draws the image', () => {
+  expect(effectiveScene('auto', pending, initialLife)).toEqual({ effective: 'probe' })
+  expect(effectiveScene('auto', ok, initialLife)).toEqual({ effective: 'image' })
+})
+
+test('a denied probe gives text with the deny text as the reason', () => {
+  const result = effectiveScene('auto', { kind: 'denied', reason: alt }, initialLife)
+  expect(result.effective).toBe('text')
+  expect(result.reason).toContain(alt)
+})
+
+test('image is forced without a probe but a refused blit or a failed life still falls back', () => {
+  expect(effectiveScene('image', pending, initialLife)).toEqual({ effective: 'image' })
+  expect(effectiveScene('image', { kind: 'denied', reason: alt }, initialLife).effective).toBe('text')
+  expect(effectiveScene('image', ok, failedLife)).toEqual({ effective: 'text', reason: failedLife.reason })
+})
+
+test('a failed life gives text for auto, and text wants no reason', () => {
+  expect(effectiveScene('auto', ok, failedLife)).toEqual({ effective: 'text', reason: failedLife.reason })
+  expect(effectiveScene('text', { kind: 'denied', reason: alt }, failedLife)).toEqual({ effective: 'text' })
+})
+
+test('a spawn that fails before node printed anything is no-node, a later one is a crash', () => {
+  const quiet = run([...start(0).slice(0, 1), [{ kind: 'spawn-failed', error: 'hooks stream chain failed', noOutput: true }, 10]])
+  expect(quiet.status).toBe('failed')
+  expect(quiet.reason).toContain('Node.js was not found')
+  const loud = run([...start(0).slice(0, 1), [{ kind: 'spawn-failed', error: 'hooks stream chain failed' }, 10]])
+  expect(loud.status).toBe('backoff')
 })

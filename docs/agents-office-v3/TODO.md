@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 12/22 done
+Progress: 13/22 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -245,7 +245,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `rtk proxy npm run check`; LIVE (default still text); LIVEIMG and Read the frame PNG; GHOSTTY (owner)
 
 ### T13 Detect image support and fall back to the text office
-- status: todo
+- status: done (#77, 2026-10-07)
 - needs: T12
 - size: M
 - scope:
@@ -402,3 +402,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 2026-10-07 T10 #72 office.html draws a SceneModel (rooms, walls, doors, signs, props, y-sorted figures, plates, bubbles, highlight, caption, night tint, eased camera, 100 ms step tween, `sceneBusy()`); sprite scale/anchor reach the page through `renderer/sprite-table.json`, written from sceneArt.ts by `npm run sprites:table` and checked by `smoke:renderer`; `smoke:renderer` takes a fixture path and `SMOKE_FRAME_OUT`; state-busy.json is real `sceneOf` output
 2026-10-07 T11 #75 render.mjs paces frames (a frame only on a new seq or while sceneBusy, plus one settling frame, at most every 83 ms), follows `size` with setViewportSize, makes `agents-office-<session>-` (0700) with a `pid` file and sweeps siblings whose pid is dead, exits 0 on a heartbeat older than 10 s or a ppid change (1 s check), closes the browser and removes the dir on SIGTERM/SIGINT, and has `--once`, `--session=`; office.html camera ease is now time-based (25% per 1/60 s of elapsed time). Smoke: pass a: static fixture gave 1 frame, then none for 3 s; pass b: stale heartbeat (written 5 s old) exited 0 after 5348 ms, dir gone; pass c: exit 1, "error no-chromium browserType.launch: Executable doesn't exist at /nonexistent/chromium_headless_shell-1243/..." (T08's `/executable doesn't exist/i` matches, no change needed); also --once and the dead/live sibling sweep pass
 2026-10-07 T12 #76 /office scene image|auto|text (default text, auto behaves as text until T13); image mode mounts the keyed Image from the first render, writes state.json (heartbeat 2 s) and spawns render.mjs --session --state via $.process.spawn behind a mktemp 0700 state dir; the loop calls return() on the stream on every exit, logs one 'renderer loop ended: <reason>' line per exit, and a same-size blit deny falls back to text (tmux always does, about 70 ms after ready, after a frame was written). LIVE default text: v2 office draws, no render.mjs spawned. LIVEIMG in tmux: frame-0.png shows the team room with main and you; 0 render.mjs/headless_shell after stop, no agents-office* temp dirs left. GHOSTTY owner check PENDING: run `cd W && claude --plugin-dir .claude/skills/agents-office` in Ghostty (not tmux), `/office scene image`, confirm the image office shows with the pad Input at the bottom-left not breaking the picture
+2026-10-07 T13 #77 `auto` is the default (nothing stored = auto); a render with Image draws it at effective `probe` and a `$.clock.after(0)` closure blits placeholder.png as a file source: accepted -> image and the renderer starts, a deny -> text with `Image scene off: <deny text>` and nothing spawned; a deny that says no Image is mounted (or a size change) retries 5 x 200 ms and is never the verdict (Ghostty probe finding). `effectiveScene(want, probe, life)` in rendererLife.ts decides probe/image/text; a failed life (no-node via a spawn rejection before node printed, `error no-chromium`, 3 crashes) also gives text with the fix line. The reason is logged once, shown as the overlay for 8 s and appended to the `/office` reply; `/office scene auto|image` resets `failed` and re-probes. LIVE tmux default auto: v2 5x5 figures, overlay `Image scene off: the Image draws its alt here: the terminal draws no place...`, no render.mjs from this worktree. GHOSTTY and Terminal.app owner checks PENDING (plain `/office` in Ghostty shows the image office; Terminal.app shows the text office)

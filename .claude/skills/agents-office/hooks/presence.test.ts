@@ -34,8 +34,8 @@ test('office arguments split into open, share and usage', () => {
 
 test('the scene mode falls back to text', () => {
   expect(asScene('image')).toBe('image')
-  expect(asScene('bogus')).toBe('text')
-  expect(asScene(undefined)).toBe('text')
+  expect(asScene('bogus')).toBe('auto')
+  expect(asScene(undefined)).toBe('auto')
 })
 
 test('/office scene takes auto, image or text and anything else is the scene usage', () => {
