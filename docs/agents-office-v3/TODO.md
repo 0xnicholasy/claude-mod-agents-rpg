@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 1/22 done
+Progress: 2/22 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -98,7 +98,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `npx playwright install chromium && npm run smoke:renderer`; `rtk proxy npm run check`
 
 ### T05 Put the sprite scale and anchor table in one place
-- status: todo
+- status: done (#PR, 2026-10-07)
 - needs: T03
 - size: S
 - scope:
@@ -385,6 +385,8 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - Page-local pets (corgi, mascot) with collision against props.
 - Art cleanup: drop the `laptop-closed` near duplicate of `laptop-back`, remove the zzz mark from `corgi-sleep`.
 - A remote player walked tile by tile instead of jumping on each presence write (from v2 D46).
+- T04: wire `npm run sprites:check` into `smoke:renderer` (T05 used the script route instead of a smoke-renderer check).
 
 ## Log
 2026-10-07 T03 #64 sprites, atlas, raw sheets and the slicer live in the repo; `npm run sprites` regenerates the 82 sprites and atlas.json byte-identical
+2026-10-07 T05 #PR sceneArt.ts holds the sprite scale/anchor/layer table, personVariant, tierPlate and CELL_PX; deviation: smoke-renderer.mjs does not exist yet, so the atlas-vs-table check is `npm run sprites:check` (scripts/sprites/check-table.mjs)
