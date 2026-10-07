@@ -67,7 +67,9 @@ const emit = bytes => {
 }
 
 const done = () => seconds > 0 && Date.now() - startedAt > seconds * 1000
+let closing = false
 const shutdown = async () => {
+  closing = true
   await browser.close().catch(() => {})
   process.exit(0)
 }
@@ -78,8 +80,15 @@ process.on('SIGINT', shutdown)
 const paced = flag('paced') !== '0'
 for (;;) {
   const t0 = Date.now()
-  await pushState()
-  const bytes = await page.screenshot({ type: 'png', omitBackground: false })
+  let bytes
+  try {
+    await pushState()
+    bytes = await page.screenshot({ type: 'png', omitBackground: false })
+  } catch (err) {
+    // SIGTERM closes the browser mid-frame; that is a normal stop, not an error.
+    if (closing) await new Promise(() => {})
+    throw err
+  }
   emit(bytes)
   if (done()) break
   const wait = FRAME_MS - (Date.now() - t0)
