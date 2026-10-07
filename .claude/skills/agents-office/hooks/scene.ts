@@ -159,6 +159,12 @@ export const PLAYER_VARIANT = 1
 export const PLATE_MAX = 16
 const PLAYER_PLATE = '#ffffff'
 
+// The pad picks glyphs the terminal Raster can draw (pad.ts EMOTE_GLYPHS: a diamond U+25C6 and a tilde stand in for
+// the heart and the note). The HTML page draws the real ones.
+const EMOTE_ART: Readonly<Record<string, string>> = { '\u25c6': '\u2665', '~': '\u266a' }
+
+export const emoteArt = (glyph: string): string => EMOTE_ART[glyph] ?? glyph
+
 const spriteOf = (name: string): SpriteName => SPRITE_NAMES.find(n => n === name) ?? 'person1-down'
 
 const personSprite = (variant: number, facing: Facing): SpriteName => spriteOf(`person${variant}-${facing}`)
@@ -220,7 +226,7 @@ const figuresOf = (input: SceneInput): SceneFigure[] => {
     say: { emote?: string; emoteUntil?: number; chat?: string; chatUntil?: number },
   ): Ranked => {
     const y = footY(at.y, map.foot.h)
-    const emote = say.emote !== undefined && (say.emoteUntil ?? 0) > now ? say.emote : undefined
+    const emote = say.emote !== undefined && (say.emoteUntil ?? 0) > now ? emoteArt(say.emote) : undefined
     const chat = say.chat !== undefined && (say.chatUntil ?? 0) > now ? say.chat : undefined
     return {
       rank: remote ? 2 : 3,
