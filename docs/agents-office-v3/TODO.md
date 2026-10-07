@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 29/36 done
+Progress: 30/36 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -484,7 +484,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: `rtk proxy npm run check`; a mutation check that swaps the tie order and fails a test
 
 ### T28 Action outcomes and pane lines
-- status: todo
+- status: done (#90, 2026-10-07)
 - needs: T27
 - size: M
 - scope: In `hooks/use.ts`: `outcomeOf(target, ctx, now, seed)` -> inspect|peek|board|rack|act('mug'|'sit')|say|pet|line; `COOLER_LINES` (8) with a seeded pick; `boardLines(plan|todos)` with `[x]`/`[>]`/`[ ]` and indent, capped at PEEK_MAX, else `No plan yet.`; `rackLines({ roster, agentList, usage })` with own tools only; `settleAct(player, now, moved)` (the mug expires, a move clears sit).
@@ -565,6 +565,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - done when: skill removed from the branch, spike folder removed, TODO.md archived, landing PR into feat/agents-office-v2 open and approved by the owner
 
 ## Backlog
+- Whiteboard markers for `blocked` and `skipped` plan nodes (T28 draws both as `[ ]`).
 - Draw the top 3 plan items on the whiteboard sprite (from T25-T33 plan).
 - Walk cycles: generate a walk sheet with GPT /image (4 frames x 4 facings x 8 people), slice it with `npm run sprites`, and switch the page from the procedural leg cycle to frames.
 - Floor and wall tile sheets to replace the CSS gradients.
@@ -600,3 +601,4 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 2026-10-07 T25 #86 spike in a scratch plugin (not committed) run LIVE in tmux -L aot25 with both mods: cross-plugin read of the todo-list `plan` atom typechecks, validates, is `undefined` without a plan and redraws the pane on every plan change; `session.measure` and `$.session.usage()` give `context.percent` 7 and `cost.usd` 0.383951 after one prompt (absent / 0 before); `$.agent.list()` showed `Explore:running` then `Explore:completed`; D27 and D28 confirmed with the amendments written in them
 2026-10-07 T26 #88 hooks/items.ts holds ITEM_KINDS (table order = tie order), ITEMS (label, sprites, foot) and `itemsOf(map)`: one desk per team anchor (rect = the map footprint at the anchor) plus one item per whiteboard, coffee-machine, sofa, water-cooler and server-rack prop from the exported `propsOf`, rect in cells clamped inside its room or the corridor (1 whiteboard, 1 coffee, 1 sofa, 2 coolers, 2 racks on every map size tried); item footprints are guesses (whiteboard 6x2, sofa 6x2, coffee 3x2, cooler 2x2, rack 3x2) until the art is seen at GHOSTTY; 9 tests; mutation check: emptying the rack sprites failed 2 tests; review (sonnet) found 4 Medium test gaps (clamp, x placement, room per kind, table order), all closed
 2026-10-07 T27 #89 hooks/use.ts holds `targetOf` (agent target = the v2 `nearest` at the smallest range that finds one, so the inspect path is untouched; cat and items = rectangle gap <= 1 against the player body; sort by gap, agent > cat > item, table order, lower x, id), `rectGap`, `deskOwner` (resting at the anchor, else a path ending there, lower id) and `hintOf` (`e: <item label>`, `e: inspect <label>`, `e: pet the cat`); the small-foot agent gap is top-left Manhattan while item and cat gaps are rectangle gaps, so an agent 2 cells away loses to a touching item (kept, per D24); 11 tests, mutation check: swapping the tie rank failed the agent > cat > item test; review (sonnet) found 3 Medium test gaps (range edge, desk row, cat footprint on mid), all closed; note `targetOf` also exists in motion.ts with another meaning (path end), so import by module
+2026-10-07 T28 #90 use.ts gains `outcomeOf` (agent -> inspect, cat -> pet, whiteboard -> board, rack -> rack, coffee -> act mug until now + MUG_MS 8000, sofa -> act sit, cooler -> say COOLER_LINES[seed % 8], own desk -> peek of its owner or `Empty desk.`, remote desk -> `<room name>'s desk` with no peek), `boardLines` over `BoardNode[]` (the todo-list plan nodes fit; `nodesOfTodos` adapts TodoWrite; tree order, `[x]` `[>]` `[ ]`, two spaces per level, first PEEK_MAX 10, a parent cycle shown as roots, `No plan yet.` when empty), `rackLines` (context, cost, running and idle counts from `status` only, own agents with tool names, ids with a colon skipped as remote, capped at PEEK_MAX with `+N more`, `-` for a missing or non-finite value) and `settleAct` (mug ends at now >= until, a move clears sit); `Act`, `Outcome`, `UseCtx`, `MUG_MS`, `PET_MS` exported for T29-T32; 21 tests in use.test.ts, mutation check: `now > until` failed the settleAct test; review (sonnet) found 4 Medium (remote-keyed rack entry, cycle handling, unsanitised text untested, duplicate id), all fixed; blocked and skipped plan nodes draw as `[ ]` (no marker in the spec)
