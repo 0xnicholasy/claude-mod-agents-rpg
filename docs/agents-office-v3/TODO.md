@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 20/31 done
+Progress: 21/31 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -409,7 +409,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: LIVE with `--plugin-dir` for both mods, log excerpt in the Log
 
 ### T26 Interactables table and item geometry
-- status: todo
+- status: done (#PRNUM, 2026-10-07)
 - needs: none
 - size: S
 - scope: New `hooks/items.ts` (pure): `ItemKind` = desk|whiteboard|coffee|sofa|cooler|rack; `ITEMS: Record<ItemKind, { label; sprites: SpriteName[]; foot: Footprint }>`; `itemsOf(map): Item[]` (`{ id, kind, label, rect, room?, anchor? }`) from the exported `propsOf` plus one desk per team anchor. The only edit to scene.ts is exporting `propsOf`.
@@ -550,3 +550,4 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 2026-10-07 T19 #83 resize follows in both axes: render -> viewport atom -> tick -> `size` in state.json (columns*8 x rows*17) -> renderer viewport; D23 records the T02 finding (height-only resize re-renders in tmux and Ghostty) so no workaround exists; `writeKeyOf` guards a resize against waiting for the heartbeat (the scene text already changes with the box); below 60x11 the size line shows, no new seq is sent (no frames) and `holdRenderer` keeps the heartbeat so the renderer lives. LIVEIMG tmux resize frames were replaced by a direct render.mjs run because tmux denies blits, so the Image/renderer loop stops there (D20) and no resized frame is ever written in a tmux session; the state-size half is covered by office tests (box -> state.json size) and the PNG half by a scratch driver that feeds render.mjs `size` 608x187 -> 928x391 -> 560x187 with the state-busy fixture: `file` gave PNG 608 x 187, 928 x 391, 560 x 187, and 4 s of same-seq heartbeat rewrites produced 0 frames; renderer exited 0 on SIGTERM with no process left. GHOSTTY height-only drag pending (owner)
 2026-10-07 T21 #84 README gains the Chromium install step and `--no-chromium`, `/office scene auto|image|text`, an "Image office" section with the fallback reasons, image-office requirements, v3 known limits and the develop commands; `docs/images/office-image-120x40.png` is a 928x391 frame from real `sceneOf` output (one team room with 3 agents, a Test Lab agent, the corridor and 5 shared rooms) rendered by `SMOKE_FRAME_OUT=<png> npm run smoke:renderer -- <fixture>` (72 KB). WezTerm and iTerm2 are listed as untested and kitty as expected from the API docs only (no D-entry covers them). T02 stays `todo`: its Decisions record the tmux results (D20) and the height-only resize in Ghostty (D23), but no D-entry records Image-in-elements for Ghostty or the D18 Input check, and the Terminal.app probe was not run
 2026-10-07 T25-T33 planned: Decisions D24-D30 and nine interaction todos (desk peek, whiteboard, server rack, coffee, sofa, water cooler, cat pet, hint) added; D27 and D28 stay assumed until T25
+2026-10-07 T26 #PRNUM hooks/items.ts holds ITEM_KINDS (table order = tie order), ITEMS (label, sprites, foot) and `itemsOf(map)`: one desk per team anchor (rect = the map footprint at the anchor) plus one item per whiteboard, coffee-machine, sofa, water-cooler and server-rack prop from the exported `propsOf`, rect in cells clamped inside its room or the corridor (1 whiteboard, 1 coffee, 1 sofa, 2 coolers, 2 racks on every map size tried); item footprints are guesses (whiteboard 6x2, sofa 6x2, coffee 3x2, cooler 2x2, rack 3x2) until the art is seen at GHOSTTY; 9 tests; mutation check: emptying the rack sprites failed 2 tests; review (sonnet) found 4 Medium test gaps (clamp, x placement, room per kind, table order), all closed
