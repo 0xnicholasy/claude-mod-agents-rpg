@@ -9,10 +9,14 @@
     "uninstall:user": "sh scripts/uninstall-user.sh",
     "check": "npm run validate && npm run typecheck && npm run test",
     "sprites": "node scripts/sprites/slice.mjs",
-    "sprites:check": "node scripts/sprites/check-table.mjs"
+    "sprites:check": "node scripts/sprites/check-table.mjs",
+    "smoke:renderer": "node scripts/smoke-renderer.mjs"
   },
   "devDependencies": {
     "pngjs": "^7.0.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "playwright": "^1.63.0"
   }
 }
