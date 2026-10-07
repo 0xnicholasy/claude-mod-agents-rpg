@@ -33,7 +33,7 @@ const firstFrame = () =>
     const timer = setTimeout(() => reject(new Error(`no frame within ${TIMEOUT_MS / 1000} s`)), TIMEOUT_MS)
     child.stdout.on('data', chunk => {
       buf += chunk
-      const m = /^frame \d+ (.+)$/m.exec(buf)
+      const m = /^frame \d+ (.+)\n/m.exec(buf)
       if (m) {
         clearTimeout(timer)
         resolve(m[1])
