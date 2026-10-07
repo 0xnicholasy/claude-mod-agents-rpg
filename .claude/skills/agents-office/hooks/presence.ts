@@ -19,7 +19,7 @@ export const SHARE_USAGE = 'Usage: /office share all|anon|off'
 export type SceneMode = 'auto' | 'image' | 'text'
 
 const SCENE_MODES: readonly SceneMode[] = ['auto', 'image', 'text']
-export const DEFAULT_SCENE: SceneMode = 'text'
+export const DEFAULT_SCENE: SceneMode = 'auto'
 export const SCENE_USAGE = 'Usage: /office scene auto|image|text'
 
 // `<CLAUDE_CONFIG_DIR>/agents-office/presence`, else `<HOME>/.claude/agents-office/presence`; undefined when both are empty.

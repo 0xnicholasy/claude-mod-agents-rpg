@@ -20,7 +20,8 @@ export type LifeEvent =
   | { kind: 'spawned' }
   | { kind: 'ready'; dir?: string }
   | { kind: 'exit'; code: number | null; signal: string | null; stderr: string; stdout?: string }
-  | { kind: 'spawn-failed'; error: string }
+  // `noOutput`: node was asked for and printed nothing before the call failed, which means it could not start.
+  | { kind: 'spawn-failed'; error: string; noOutput?: boolean }
   | { kind: 'closed' }
   | { kind: 'retry-due' }
 
@@ -61,6 +62,13 @@ export const classify = (stderr: string, error?: string): Failure => {
   return { code: 'crash', reason: crashReason(lastLine(stderr) || (error ?? '')) }
 }
 
+const spawnFailure = (event: { error: string; noOutput?: boolean }): Failure => {
+  const found = classify('', event.error)
+  if (found.code === 'crash' && event.noOutput === true) return { code: 'no-node', reason: REASON_NO_NODE }
+
+  return found
+}
+
 const fail = (reason: string, exits: number[]): Life => ({ status: 'failed', exits, reason })
 
 const onFailure = (life: Life, failure: Failure, now: number): Life => {
@@ -90,7 +98,7 @@ export const next = (life: Life, event: LifeEvent, now: number): Life => {
       return onFailure(life, classify(`${event.stderr}\n${event.stdout ?? ''}`), now)
     case 'spawn-failed':
       if (life.status !== 'starting' && life.status !== 'running') return life
-      return onFailure(life, classify('', event.error), now)
+      return onFailure(life, spawnFailure(event), now)
     case 'closed':
       if (life.status === 'failed') return life
       return { status: 'off', exits: life.exits }
@@ -99,4 +107,21 @@ export const next = (life: Life, event: LifeEvent, now: number): Life => {
       if (life.retryAt !== undefined && now < life.retryAt) return life
       return { status: 'starting', exits: life.exits }
   }
+}
+
+// What the image probe found (D11): not run yet, a blit of the placeholder was accepted, or refused with this text.
+export type Probe = { kind: 'pending' } | { kind: 'ok' } | { kind: 'denied'; reason: string }
+
+export type Effective = { effective: 'probe' | 'image' | 'text'; reason?: string }
+
+// What the pane draws (D10, D11): `text` is the v2 office; a failed renderer or a refused blit falls back to it with a
+// reason, whatever the wish (so a forced `image` still falls back); `image` is forced without a probe; `auto` draws
+// the picture only after the probe was accepted and stays at `probe` until then.
+export const effectiveScene = (want: 'auto' | 'image' | 'text', probe: Probe, life: Life): Effective => {
+  if (want === 'text') return { effective: 'text' }
+  if (life.status === 'failed') return { effective: 'text', reason: life.reason ?? 'The renderer failed.' }
+  if (probe.kind === 'denied') return { effective: 'text', reason: `Image scene off: ${probe.reason}` }
+  if (want === 'image' || probe.kind === 'ok') return { effective: 'image' }
+
+  return { effective: 'probe' }
 }
