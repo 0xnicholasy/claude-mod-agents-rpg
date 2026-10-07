@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 28/36 done
+Progress: 29/36 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -468,7 +468,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: `rtk proxy npm run check`; a mutation check that breaks one rule and fails a key test
 
 ### T27 Nearest-target resolution and hint
-- status: todo
+- status: done (#PRNUM, 2026-10-07)
 - needs: T26
 - size: S
 - scope: New `hooks/use.ts` (pure): `targetOf({ player, foot, agents, motion, items, cat })` -> Target (agent|cat|item) per D24; `deskOwner(desk, motion, roster)` (the agent resting at the anchor or whose path ends there); `hintOf(target, roster)` per D30.
@@ -599,3 +599,4 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 2026-10-07 T25-T33 planned: Decisions D24-D30 and nine interaction todos (desk peek, whiteboard, server rack, coffee, sofa, water cooler, cat pet, hint) added; D27 and D28 stay assumed until T25
 2026-10-07 T25 #86 spike in a scratch plugin (not committed) run LIVE in tmux -L aot25 with both mods: cross-plugin read of the todo-list `plan` atom typechecks, validates, is `undefined` without a plan and redraws the pane on every plan change; `session.measure` and `$.session.usage()` give `context.percent` 7 and `cost.usd` 0.383951 after one prompt (absent / 0 before); `$.agent.list()` showed `Explore:running` then `Explore:completed`; D27 and D28 confirmed with the amendments written in them
 2026-10-07 T26 #88 hooks/items.ts holds ITEM_KINDS (table order = tie order), ITEMS (label, sprites, foot) and `itemsOf(map)`: one desk per team anchor (rect = the map footprint at the anchor) plus one item per whiteboard, coffee-machine, sofa, water-cooler and server-rack prop from the exported `propsOf`, rect in cells clamped inside its room or the corridor (1 whiteboard, 1 coffee, 1 sofa, 2 coolers, 2 racks on every map size tried); item footprints are guesses (whiteboard 6x2, sofa 6x2, coffee 3x2, cooler 2x2, rack 3x2) until the art is seen at GHOSTTY; 9 tests; mutation check: emptying the rack sprites failed 2 tests; review (sonnet) found 4 Medium test gaps (clamp, x placement, room per kind, table order), all closed
+2026-10-07 T27 #PRNUM hooks/use.ts holds `targetOf` (agent target = the v2 `nearest` at the smallest range that finds one, so the inspect path is untouched; cat and items = rectangle gap <= 1 against the player body; sort by gap, agent > cat > item, table order, lower x, id), `rectGap`, `deskOwner` (resting at the anchor, else a path ending there, lower id) and `hintOf` (`e: <item label>`, `e: inspect <label>`, `e: pet the cat`); the small-foot agent gap is top-left Manhattan while item and cat gaps are rectangle gaps, so an agent 2 cells away loses to a touching item (kept, per D24); 11 tests, mutation check: swapping the tie rank failed the agent > cat > item test; review (sonnet) found 3 Medium test gaps (range edge, desk row, cat footprint on mid), all closed; note `targetOf` also exists in motion.ts with another meaning (path end), so import by module
