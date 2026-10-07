@@ -1098,13 +1098,17 @@ const startRenderer = ($: EngineInterface): void => {
 // Starts the renderer when the image scene is wanted and the pane is drawn (the tick only gets here with a map).
 // A failed life shows the text office; a backoff waits for its retry time.
 const ensureRenderer = async ($: EngineInterface, now: number): Promise<void> => {
-  if (rendererLoop !== undefined) return
+  // One renderer per session (D12): a running loop is never doubled, and a tick that was in flight when
+  // session.end cancelled the timer must not start a new one.
+  if (rendererLoop !== undefined || loopTimer === undefined) return
   const life = await read($, renderer)
   if (life.status === 'failed') {
     await fallToText($, { kind: 'ok' })
     return
   }
   if (life.status === 'backoff' && (life.retryAt ?? 0) > now) return
+  // session.end may have run while the read above was pending.
+  if (rendererLoop !== undefined || loopTimer === undefined) return
   startRenderer($)
 }
 
@@ -1386,6 +1390,10 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     presenceTimer?.cancel()
     presenceTimer = undefined
+    // The tick is the only thing that starts a renderer, so ending it first keeps the loop from coming back (D12).
+    loopTimer?.cancel()
+    loopTimer = undefined
+    stopRenderer($, 'session.end')
     await guard($, 'session.end', undefined, async () => writeTombstone($))
 
     return next(e)
