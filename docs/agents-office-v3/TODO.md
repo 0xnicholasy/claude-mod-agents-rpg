@@ -132,7 +132,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `rtk proxy npm run check`
 
 ### T07 Map figures, player, bubbles, inspect and status into the scene
-- status: done (#PR, 2026-10-07)
+- status: done (#69, 2026-10-07)
 - needs: T06
 - size: M
 - scope: Extend `sceneOf` with figures for own and remote agents (`remoteRoster`), the player, remote players (`remotePlayersOf`) and the cat atom. Each figure carries:
@@ -393,4 +393,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 2026-10-07 T05 #66 sceneArt.ts holds the sprite scale/anchor/layer table, personVariant, tierPlate and CELL_PX; deviation: smoke-renderer.mjs does not exist yet, so the atlas-vs-table check is `npm run sprites:check` (scripts/sprites/check-table.mjs)
 2026-10-07 T01 #65 (a) reload, `return()` and `/exit` each ended node and Chromium (5 -> 0 processes in 3 s), `ui.close` alone did not (5 -> 5); (b) kill -9 left 5 processes for 15 s without the watchdog, 0 at t+1 s with ppid poll, stale heartbeat exit at 11 s; (c) 0 parse failures (`torn 0`) in 111 s at 10 writes/s of 20 KB; (d) `process.spawn` generator and `ui.blit` deny stubs work in `claude plugin test` (D19)
 2026-10-07 T06 #67 scene.ts holds SceneModel and sceneOf (rooms, corridor, walls, doors, props, camera, night in world px = cells x CELL_PX); figures come in T07
-2026-10-07 T07 #PR scene.ts maps figures (agents, remote agents, players, cat) with sprite, pose, plate, bubble/emote/chat (until > now), highlight, plus caption and sceneKey; SceneInput.player is now a Player (was Point)
+2026-10-07 T07 #69 scene.ts maps figures (agents, remote agents, players, cat) with sprite, pose, plate, bubble/emote/chat (until > now), highlight, plus caption and sceneKey; SceneInput.player is now a Player (was Point)
