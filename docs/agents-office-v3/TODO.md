@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 2/22 done
+Progress: 3/22 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -85,7 +85,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `npm ci && npm run sprites && git diff --exit-code -- .claude/skills/agents-office/renderer/sprites`; `rtk proxy npm run check`
 
 ### T04 Add playwright and the renderer skeleton with a smoke script
-- status: todo
+- status: done (#PR, 2026-10-07)
 - needs: T01, T03
 - size: S
 - scope:
@@ -390,3 +390,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 ## Log
 2026-10-07 T03 #64 sprites, atlas, raw sheets and the slicer live in the repo; `npm run sprites` regenerates the 82 sprites and atlas.json byte-identical
 2026-10-07 T01 #65 (a) reload, `return()` and `/exit` each ended node and Chromium (5 -> 0 processes in 3 s), `ui.close` alone did not (5 -> 5); (b) kill -9 left 5 processes for 15 s without the watchdog, 0 at t+1 s with ppid poll, stale heartbeat exit at 11 s; (c) 0 parse failures (`torn 0`) in 111 s at 10 writes/s of 20 KB; (d) `process.spawn` generator and `ui.blit` deny stubs work in `claude plugin test` (D19)
+2026-10-07 T04 #PR playwright is a dependency; render.mjs, office.html and placeholder.png live in the mod renderer dir (screencast removed, `--state=` flag and `size: { w, h }` read added); `npm run smoke:renderer` prints `ok 608x368` and leaves no render.mjs or headless_shell behind
