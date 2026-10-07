@@ -13,9 +13,9 @@ export interface SpriteSpec {
 }
 
 export const SPRITES = {
-  'armchair': { scale: 2, anchor: 'foot', layer: 'figure' },
+  'armchair': { scale: 1.5, anchor: 'foot', layer: 'figure' },
   'backpack': { scale: 1, anchor: 'foot', layer: 'over' },
-  'bookshelf': { scale: 2, anchor: 'foot', layer: 'wall' },
+  'bookshelf': { scale: 1.5, anchor: 'foot', layer: 'wall' },
   'cat-bed': { scale: 2, anchor: 'foot', layer: 'floor' },
   'cat-black-sit': { scale: 2, anchor: 'foot', layer: 'figure' },
   'cat-black-walk': { scale: 2, anchor: 'foot', layer: 'figure' },
@@ -24,21 +24,21 @@ export const SPRITES = {
   'cat-tabby-sit': { scale: 2, anchor: 'foot', layer: 'figure' },
   'cat-tabby-walk': { scale: 2, anchor: 'foot', layer: 'figure' },
   'chair': { scale: 2, anchor: 'foot', layer: 'figure' },
-  'coffee-machine': { scale: 2, anchor: 'foot', layer: 'figure' },
-  'conference-table': { scale: 2, anchor: 'foot', layer: 'figure' },
+  'coffee-machine': { scale: 1.5, anchor: 'foot', layer: 'figure' },
+  'conference-table': { scale: 1.5, anchor: 'foot', layer: 'figure' },
   'corgi-down': { scale: 2, anchor: 'foot', layer: 'figure' },
   'corgi-left': { scale: 2, anchor: 'foot', layer: 'figure' },
   'corgi-right': { scale: 2, anchor: 'foot', layer: 'figure' },
   'corgi-sleep': { scale: 2, anchor: 'foot', layer: 'figure' },
   'corgi-up': { scale: 2, anchor: 'foot', layer: 'figure' },
   'desk-dual': { scale: 2, anchor: 'foot', layer: 'figure' },
-  'desk-monitor': { scale: 2, anchor: 'foot', layer: 'figure' },
+  'desk-monitor': { scale: 1.5, anchor: 'foot', layer: 'figure' },
   'dog-bed': { scale: 2, anchor: 'foot', layer: 'floor' },
   'filing-cabinet': { scale: 2, anchor: 'foot', layer: 'figure' },
   'fridge': { scale: 2, anchor: 'foot', layer: 'figure' },
   'headphones': { scale: 1, anchor: 'foot', layer: 'over' },
   'keyboard': { scale: 1, anchor: 'foot', layer: 'over' },
-  'kitchen-counter': { scale: 2, anchor: 'foot', layer: 'figure' },
+  'kitchen-counter': { scale: 1.5, anchor: 'foot', layer: 'figure' },
   'lamp': { scale: 1, anchor: 'foot', layer: 'over' },
   'laptop-back': { scale: 0.7, anchor: 'foot', layer: 'over' },
   'laptop-closed': { scale: 0.7, anchor: 'foot', layer: 'over' },
@@ -85,16 +85,16 @@ export const SPRITES = {
   'person8-up': { scale: 2, anchor: 'foot', layer: 'figure' },
   'phone': { scale: 1, anchor: 'foot', layer: 'over' },
   'plant-small': { scale: 2, anchor: 'foot', layer: 'figure' },
-  'plant-tall': { scale: 2, anchor: 'foot', layer: 'figure' },
-  'printer': { scale: 2, anchor: 'foot', layer: 'figure' },
-  'reception-desk': { scale: 2, anchor: 'foot', layer: 'figure' },
-  'round-table': { scale: 2, anchor: 'foot', layer: 'figure' },
-  'server-rack': { scale: 2, anchor: 'foot', layer: 'figure' },
+  'plant-tall': { scale: 1.5, anchor: 'foot', layer: 'figure' },
+  'printer': { scale: 1.5, anchor: 'foot', layer: 'figure' },
+  'reception-desk': { scale: 1.25, anchor: 'foot', layer: 'figure' },
+  'round-table': { scale: 1.5, anchor: 'foot', layer: 'figure' },
+  'server-rack': { scale: 1.5, anchor: 'foot', layer: 'figure' },
   'sofa': { scale: 1.5, anchor: 'foot', layer: 'figure' },
   'sticky-notes': { scale: 1, anchor: 'foot', layer: 'over' },
   'wall-clock': { scale: 1.5, anchor: 'top', layer: 'wall' },
   'water-cooler': { scale: 2, anchor: 'foot', layer: 'figure' },
-  'whiteboard': { scale: 2, anchor: 'foot', layer: 'wall' },
+  'whiteboard': { scale: 1.5, anchor: 'foot', layer: 'wall' },
 } as const satisfies Record<string, SpriteSpec>
 
 export type SpriteName = keyof typeof SPRITES
@@ -103,6 +103,12 @@ export const SPRITE_NAMES = Object.keys(SPRITES) as readonly SpriteName[]
 
 // Terminal cell size in image pixels (v3 D8, from the spike's box.ts).
 export const CELL_PX = { w: 8, h: 17 } as const
+
+// Seating offsets in px (v3 D21). A seated figure is the back view (`personN-up`) in the chair, in front of its desk,
+// so the monitor shows over its head. Both are relative to the desk anchor's top (a.y x CELL_PX.h): the desk's foot
+// line sits `deskFootY` below it, the chair's foot line at the footprint's bottom, and the figure's foot line `lift`
+// above the chair's, so the chair's base shows under it. The figure keeps the chair's foot line as its depth.
+export const SEAT = { deskFootY: 34, lift: 12 } as const
 
 export const PERSON_VARIANTS = 8
 

@@ -11,7 +11,7 @@ import { remotePlayersOf, remoteRoster } from './presence'
 import type { PresenceRecord, Remote } from './presence'
 import type { Player } from './player'
 import { MID_SEAT_W } from './midArt'
-import { CELL_PX, personVariant, SPRITES } from './sceneArt'
+import { CELL_PX, personVariant, SEAT, SPRITES } from './sceneArt'
 
 const teams = (n: number): TeamSpec[] => Array.from({ length: n }, (_, i) => ({ id: `team:s${i}` as const, label: `project-${i}` }))
 const at = (hour: number): number => new Date(2026, 9, 7, hour, 0, 0).getTime()
@@ -74,18 +74,20 @@ test('2 teams give 2 team rooms plus 5 shared rooms with px bounds = cells x CEL
 })
 
 test('every desk anchor has one desk prop and a chair', () => {
-  const input = inputOf()
+  const input = inputOf({ map: buildOffice(100, 24, teams(2), MID_FOOT) })
   const scene = sceneOf(input)
   const anchors = input.map.rooms.filter(r => r.kind === 'team').flatMap(r => r.anchors)
   expect(anchors.length > 0).toBe(true)
-  expect(scene.props.filter(p => p.sprite === 'desk-monitor').length).toBe(anchors.length)
+  // The Test Lab also has a bench desk, so count the desks above the corridor (the team band).
+  expect(scene.props.filter(p => p.sprite === 'desk-monitor' && p.y < scene.corridor.y).length).toBe(anchors.length)
   expect(scene.props.filter(p => p.sprite === 'chair').length).toBe(anchors.length)
-  // Small footprint 3x2: centre = anchor + 1.5 cells; desk foot one row above the chair foot.
+  // Mid footprint 5x5: centre = anchor + 4 cells (the 8-cell seat); the desk foot sits SEAT.deskFootY below the anchor's top
+  // and the chair foot at the footprint's bottom.
   for (const a of anchors) {
-    const desk = scene.props.filter(p => p.sprite === 'desk-monitor' && p.x === a.x * 8 + 12)
+    const desk = scene.props.filter(p => p.sprite === 'desk-monitor' && p.x === a.x * 8 + 32)
     expect(desk.length).toBe(1)
-    expect(desk[0]?.y).toBe((a.y + 1) * 17)
-    expect(scene.props.filter(p => p.sprite === 'chair' && p.x === a.x * 8 + 12 && p.y === (a.y + 2) * 17).length).toBe(1)
+    expect(desk[0]?.y).toBe(a.y * 17 + SEAT.deskFootY)
+    expect(scene.props.filter(p => p.sprite === 'chair' && p.x === a.x * 8 + 32 && p.y === (a.y + 5) * 17).length).toBe(1)
   }
 })
 
@@ -103,15 +105,15 @@ test('each room kind holds exactly its own furniture', () => {
   const scene = sceneOf(inputOf())
   const want: Record<string, string[]> = {
     team: ['chair', 'desk-monitor'],
-    reception: ['plant-tall', 'reception-desk'],
-    conference: ['conference-table', 'whiteboard'],
-    kitchen: ['coffee-machine', 'fridge', 'water-cooler'],
-    lab: ['printer', 'server-rack'],
-    booths: ['armchair', 'phone'],
+    reception: ['plant-tall', 'reception-desk', 'wall-clock'],
+    conference: ['conference-table', 'plant-small', 'whiteboard'],
+    kitchen: ['coffee-machine', 'fridge', 'kitchen-counter', 'water-cooler'],
+    lab: ['desk-monitor', 'printer', 'server-rack', 'wall-clock'],
+    booths: ['armchair', 'phone', 'wall-clock'],
   }
   for (const room of scene.rooms) {
     // Props sit on or above the room's floor line, inside its x range.
-    const inside = scene.props.filter(p => p.x >= room.x && p.x < room.x + room.w && p.y > room.y && p.y <= room.y + room.h)
+    const inside = scene.props.filter(p => p.x >= room.x && p.x < room.x + room.w && p.y >= room.y && p.y <= room.y + room.h)
     expect([...new Set(inside.map(p => p.sprite))].sort()).toEqual(want[room.kind])
   }
   for (const p of scene.props) expect(p.layer).toBe(SPRITES[p.sprite].layer)
@@ -148,10 +150,13 @@ test('a reading agent is seated at its own desk, a walking one stands', () => {
   const read = agentOf({ pose: 'read' })
   const input = withAgents(rosterOf(read))
   const fig = sceneOf(input).figures.find(f => f.key === 'main')
-  const chair = sceneOf(input).props.filter(p => p.sprite === 'chair' && p.x === fig?.x && p.y === fig?.y)
   expect(fig?.pose).toBe('seated')
-  expect(chair.length).toBe(1)
-  expect(fig?.sprite).toBe(`person${personVariant('main')}-down`)
+  // Seating offsets (v3 D21): the back view, SEAT.lift above the chair's foot line, depth = the chair's foot line.
+  const seat = sceneOf(input).props.filter(p => p.sprite === 'chair' && p.x === fig?.x && p.y === (fig?.y ?? 0) + SEAT.lift)
+  expect(seat.length).toBe(1)
+  expect(fig?.z).toBe((fig?.y ?? 0) + SEAT.lift)
+  expect(fig?.facing).toBe('up')
+  expect(fig?.sprite).toBe(`person${personVariant('main')}-up`)
   expect(fig?.plate).toBe('main')
 
   const walking: Motion = { main: { ...(input.motion?.main ?? { x: 0, y: 0, frame: 0 }), path: [{ x: 99, y: 0 }] } }
@@ -159,6 +164,23 @@ test('a reading agent is seated at its own desk, a walking one stands', () => {
   expect(moving?.pose).toBe('standing')
   expect(moving?.facing).toBe('right')
   expect(moving?.sprite).toBe(`person${personVariant('main')}-right`)
+})
+
+test('the desk stands behind the seated figure so the monitor shows over its head', () => {
+  const base = inputOf({ map: buildOffice(100, 24, teams(2), MID_FOOT) })
+  const agents = rosterOf(agentOf({ pose: 'type' }))
+  const scene = sceneOf({ ...base, agents, motion: placeMotion(base.map, agents, {}) })
+  const fig = scene.figures.find(f => f.key === 'main')
+  const desk = scene.props.find(p => p.sprite === 'desk-monitor' && p.x === fig?.x)
+  expect(desk !== undefined && fig !== undefined && desk.y < fig.y).toBe(true)
+})
+
+test('team room signs carry project and branch, and shared rooms and the corridor hold furniture', () => {
+  const scene = sceneOf(inputOf({ map: buildOffice(100, 24, [{ id: 'team:s0', label: 'proj (feat/x)' }], MID_FOOT) }))
+  expect(scene.rooms.find(r => r.kind === 'team')?.name).toBe('proj (feat/x)')
+  const c = scene.corridor
+  const inCorridor = scene.props.filter(p => p.x >= c.x && p.x <= c.x + c.w && p.y >= c.y && p.y <= c.y + c.h)
+  expect(inCorridor.length >= 4).toBe(true)
 })
 
 test('a remote agent is drawn with remote true and no tool text', () => {

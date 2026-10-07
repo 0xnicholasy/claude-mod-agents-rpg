@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { CELL_PX, PERSON_VARIANTS, SPRITES, SPRITE_NAMES, personVariant, tierPlate } from './sceneArt'
+import { CELL_PX, PERSON_VARIANTS, SEAT, SPRITES, SPRITE_NAMES, personVariant, tierPlate } from './sceneArt'
 import type { Tier } from './agents'
 
 const TIERS: readonly Tier[] = ['haiku', 'sonnet', 'opus', 'fable', 'grey']
@@ -36,4 +36,8 @@ test('every person sprite variant and facing has a table entry', async () => {
 
 test('CELL_PX is the spike cell size', async () => {
   expect(CELL_PX).toEqual({ w: 8, h: 17 })
+})
+
+test('the seating offsets are pinned: desk foot 2 rows below the anchor, figure 12 px above the chair', async () => {
+  expect(SEAT).toEqual({ deskFootY: 34, lift: 12 })
 })
