@@ -1,0 +1,1 @@
+{ "name": "imgspike", "version": "0.1.0", "description": "Throwaway spike: a pane showing a live pixel image.", "types": "./types/index.d.ts" }
