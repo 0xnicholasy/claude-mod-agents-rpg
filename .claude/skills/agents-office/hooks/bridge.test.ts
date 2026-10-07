@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { clampCells, newestFrame, parseLine, pixelsFor, shouldWrite, splitLines, stateText } from './bridge'
+import { clampCells, newestFrame, parseLine, pixelsFor, shouldWrite, splitLines, stateText, writeKeyOf } from './bridge'
 import type { RendererLine } from './bridge'
 
 const parseAll = (lines: string[]): RendererLine[] =>
@@ -63,4 +63,18 @@ test('300 columns clamps to 255 and 2048 px', () => {
   expect(clampCells(Number.NaN)).toBe(1)
   expect(pixelsFor({ columns: 300, rows: 300 })).toEqual({ w: 2040, h: 2048 })
   expect(pixelsFor({ columns: 76, rows: 21 })).toEqual({ w: 608, h: 357 })
+})
+
+test('a new box gives a new size in the state text and a new write key for the same scene', () => {
+  const scene = { rooms: [] }
+  const small = pixelsFor({ columns: 76, rows: 11 })
+  const wide = pixelsFor({ columns: 116, rows: 23 })
+  const text = (size: { w: number; h: number }) => JSON.parse(stateText({ seq: 1, heartbeatAt: 5, size, scene })) as { size: { w: number; h: number } }
+  expect(text(small).size).toEqual({ w: 608, h: 187 })
+  expect(text(wide).size).toEqual({ w: 928, h: 391 })
+  // A resize with an unchanged scene still writes at once, not at the next heartbeat.
+  const sceneText = JSON.stringify(scene)
+  expect(writeKeyOf(small, sceneText)).not.toBe(writeKeyOf(wide, sceneText))
+  expect(shouldWrite({ key: writeKeyOf(small, sceneText), at: 1000 }, writeKeyOf(wide, sceneText), 1100)).toBe(true)
+  expect(shouldWrite({ key: writeKeyOf(small, sceneText), at: 1000 }, writeKeyOf(small, sceneText), 1100)).toBe(false)
 })

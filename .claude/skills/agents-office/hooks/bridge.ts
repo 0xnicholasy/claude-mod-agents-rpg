@@ -80,6 +80,10 @@ export const stateText = <S>(input: {
 export const shouldWrite = (prev: WriteMark | undefined, nextKey: string, now: number): boolean =>
   prev === undefined || prev.key !== nextKey || now - prev.at >= HEARTBEAT_MS
 
+// The write key of a scene at an Image box: a resize changes it even when the scene text does not (D8, T19), so the
+// renderer gets the new `size` at the next tick instead of at the next heartbeat.
+export const writeKeyOf = (size: { w: number; h: number }, sceneText: string): string => `${size.w}x${size.h}|${sceneText}`
+
 export const clampCells = (n: number): number => {
   const whole = Number.isFinite(n) ? Math.floor(n) : 1
   return Math.min(MAX_CELLS, Math.max(1, whole))

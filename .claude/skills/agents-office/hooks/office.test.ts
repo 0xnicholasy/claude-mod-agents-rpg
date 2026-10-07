@@ -1911,6 +1911,81 @@ test('in image mode the tick writes the scene to state.json and the pane draws t
   await ui.unmount()
 })
 
+// A pane of the given body size; the Image box is columns x rows cells and the state size is columns*8 x rows*17 (D8, D57).
+const paneBox = (bodyColumns: number, bodyRows: number) =>
+  ({
+    plugin: 'agents-office',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'office',
+    props: { ...paneProps, bodyColumns, scroll: { offset: 0, bodyRows } },
+  }) as const
+
+type StateSeen = { seq: number; heartbeatAt: number; size: { w: number; h: number } }
+const statesOf = (writes: Array<{ path: string; text: string }>): StateSeen[] =>
+  writes.filter(w => w.path === `${STATE_DIR}/state.json`).map(w => JSON.parse(w.text) as StateSeen)
+
+test('image scene: a width and a height resize each write the new box as the state size', async ($, on) => {
+  const { ui, clock, writes } = await imageSession($, on, 'ready\n')
+  expect(statesOf(writes).at(-1)?.size).toEqual({ w: 76 * 8, h: 23 * 17 })
+  const boxes: Array<{ columns: number; rows: number }> = []
+  let current = ui
+  for (const [columns, rows] of [[116, 40], [76, 28], [70, 24]] as const) {
+    await current.unmount()
+    current = await $.ui.mount(paneBox(columns, rows))
+    await settle()
+    // One tick: the new size is written at once, without waiting for the 2 s heartbeat.
+    await clock.advance(TICK_MS)
+    await clock.advance(TICK_MS)
+    await settle()
+    const image = await current.find({ type: 'Image', key: 'scene' })
+    const box = { columns: Number(image?.props.columns), rows: Number(image?.props.rows) }
+    boxes.push(box)
+    expect(statesOf(writes).at(-1)?.size).toEqual({ w: box.columns * 8, h: box.rows * 17 })
+  }
+  // Width and height each changed from the previous box.
+  expect(boxes[0]?.columns).toBe(116)
+  expect(boxes[1]).toEqual({ columns: 76, rows: 23 })
+  expect(boxes[0]?.rows).not.toBe(boxes[1]?.rows)
+  expect(boxes[2]?.columns).toBe(70)
+  await current.unmount()
+})
+
+test('image scene: a pane below the minimum size shows the size line, sends no new scene and keeps the heartbeat', async ($, on) => {
+  const { ui, clock, writes, state } = await imageSession($, on, 'ready\n')
+  const before = statesOf(writes).at(-1)
+  expect(before).toBeDefined()
+  await ui.unmount()
+  const small = await $.ui.mount(paneBox(50, 8))
+  await settle()
+  for (let i = 0; i < 40; i++) {
+    await clock.advance(TICK_MS)
+    await settle(5)
+  }
+  const texts = await small.findAll({ type: 'Text' })
+
+  expect(JSON.stringify(texts)).toContain('Office needs a 60x11 pane')
+  expect(await small.find({ type: 'Image' })).toBeUndefined()
+  const held = statesOf(writes).filter(s => s.seq === before?.seq)
+  // 4 s below the minimum: the same seq is rewritten with newer heartbeats and no higher seq appears.
+  expect(statesOf(writes).at(-1)?.seq).toBe(before?.seq)
+  expect(held.length).toBeGreaterThan(1)
+  expect(held.at(-1)?.heartbeatAt ?? 0).toBeGreaterThan(before?.heartbeatAt ?? 0)
+  expect(state.returned).toBe(false)
+  await small.unmount()
+
+  // Back above the minimum: a new seq (so a new frame) with the new box.
+  const back = await $.ui.mount(paneBox(76, 28))
+  await settle()
+  for (let i = 0; i < 4; i++) {
+    await clock.advance(TICK_MS)
+    await settle(5)
+  }
+  expect(statesOf(writes).at(-1)?.seq).toBeGreaterThan(before?.seq ?? 0)
+  expect(statesOf(writes).at(-1)?.size).toEqual({ w: 608, h: 391 })
+  await back.unmount()
+})
+
 // The test engine cannot raise `ui.close` (its `$.ui` has no close), so the loop is ended by the other caller of
 // `stopRenderer`, `/office scene text`; the `ui.close` hook calls the same function.
 test('ending the scene ends the renderer loop, closes its stream and removes the state dir', async ($, on) => {

@@ -10,7 +10,7 @@ import type { Cat } from './cat'
 import { cropFrame, focusOf, overlaySpan, viewFor } from './camera'
 import { buildFrame, hourOf, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
-import { clampCells, newestFrame, parseLine, pixelsFor, shouldWrite, splitLines, stateText } from './bridge'
+import { clampCells, newestFrame, parseLine, pixelsFor, shouldWrite, splitLines, stateText, writeKeyOf } from './bridge'
 import type { WriteMark } from './bridge'
 import { arrived, clean, interrupted, interruptFailed, nudged, nudgeFailed, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
@@ -52,6 +52,7 @@ import { packCells } from './raster'
 import { effectiveScene, initialLife, next as nextLife } from './rendererLife'
 import type { Life, LifeEvent, Probe } from './rendererLife'
 import { sceneKey, sceneOf } from './scene'
+import type { SceneModel } from './scene'
 import { baseName, branchOf, teamLabel } from './team'
 import { hashKey } from './sprites'
 import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timing'
@@ -772,6 +773,9 @@ type RendererLoop = {
   stateDir?: string
   seq: number
   mark?: WriteMark
+  // The last scene written and its pixel box: below the minimum pane size only the heartbeat is rewritten, with this
+  // same seq, so the renderer stays alive and draws nothing (T19).
+  held?: { size: { w: number; h: number }; scene: SceneModel; seq: number }
   whenClosed: Promise<undefined>
   close: () => void
 }
@@ -1123,16 +1127,30 @@ const imageTick = async (
   const loop = rendererLoop
   if (loop === undefined || loop.closed || loop.stateDir === undefined) return
   const model = sceneOf(input)
-  const key = sceneKey(model)
+  const px = pixelsFor(size)
+  const key = writeKeyOf(px, sceneKey(model))
   if (!shouldWrite(loop.mark, key, input.now)) return
   loop.seq += 1
   loop.mark = { key, at: input.now }
+  loop.held = { size: px, scene: model, seq: loop.seq }
   try {
-    await $.fs.write(`${loop.stateDir}/${STATE_FILE}`, stateText({ seq: loop.seq, heartbeatAt: input.now, size: pixelsFor(size), scene: model }))
+    await $.fs.write(`${loop.stateDir}/${STATE_FILE}`, stateText({ seq: loop.seq, heartbeatAt: input.now, size: px, scene: model }))
   } catch (error) {
     loop.mark = undefined
     throw error
   }
+}
+
+// A pane below the minimum size draws the size line and no Image, so no new scene is sent: the renderer gets no new
+// seq and writes no frame. The heartbeat is still rewritten (same seq) so the watchdog does not end the renderer (D7).
+const holdRenderer = async ($: EngineInterface, now: number): Promise<void> => {
+  const loop = rendererLoop
+  if (loop === undefined || loop.closed || loop.stateDir === undefined || loop.held === undefined) return
+  if (!shouldWrite(loop.mark, '', now)) return
+  // The empty key matches no scene, so the first write after the pane is big enough again is a new seq and a new
+  // frame (the Image remounts with the placeholder and needs one).
+  loop.mark = { key: '', at: now }
+  await $.fs.write(`${loop.stateDir}/${STATE_FILE}`, stateText({ seq: loop.held.seq, heartbeatAt: now, size: loop.held.size, scene: loop.held.scene }))
 }
 
 const tick = async ($: EngineInterface): Promise<void> => {
@@ -1163,7 +1181,9 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const size = await read($, viewport)
   const map = await mapAt($, size.columns, size.rows)
   if (map === undefined) {
-    // No pane drawn: scripts cannot advance, but a shown bubble still expires.
+    // No pane drawn (or one below the minimum size): the image renderer only keeps its heartbeat (T19).
+    await guard($, 'hold', undefined, async () => holdRenderer($, now))
+    // Scripts cannot advance, but a shown bubble still expires.
     await guard($, 'bubbles', undefined, async () => {
       if (expireBubbles(await read($, bubbles), now) === (await read($, bubbles))) return
       await update($, bubbles, cur => expireBubbles(cur, now))
