@@ -50,7 +50,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 ## Todos
 
 ### T01 Spike the renderer lifecycle and the test engine
-- status: done (#PR, 2026-10-07)
+- status: done (#65, 2026-10-07)
 - needs: none
 - size: M
 - scope: In a scratch plugin copied from `SPIKE/imgspike` (not committed), measure:
@@ -389,4 +389,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 
 ## Log
 2026-10-07 T03 #64 sprites, atlas, raw sheets and the slicer live in the repo; `npm run sprites` regenerates the 82 sprites and atlas.json byte-identical
-2026-10-07 T01 #PR (a) reload, `return()` and `/exit` each ended node and Chromium (5 -> 0 processes in 3 s), `ui.close` alone did not (5 -> 5); (b) kill -9 left 5 processes for 15 s without the watchdog, 0 at t+1 s with ppid poll, stale heartbeat exit at 11 s; (c) 0 parse failures (`torn 0`) in 111 s at 10 writes/s of 20 KB; (d) `process.spawn` generator and `ui.blit` deny stubs work in `claude plugin test` (D19)
+2026-10-07 T01 #65 (a) reload, `return()` and `/exit` each ended node and Chromium (5 -> 0 processes in 3 s), `ui.close` alone did not (5 -> 5); (b) kill -9 left 5 processes for 15 s without the watchdog, 0 at t+1 s with ppid poll, stale heartbeat exit at 11 s; (c) 0 parse failures (`torn 0`) in 111 s at 10 writes/s of 20 KB; (d) `process.spawn` generator and `ui.blit` deny stubs work in `claude plugin test` (D19)
