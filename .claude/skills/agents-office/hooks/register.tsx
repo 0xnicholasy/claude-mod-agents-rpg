@@ -1538,7 +1538,7 @@ export const register: Register = on => {
   )
 
   // Not a render, so it may write state (D20). Bursts are coalesced: onPadInput diffs the value.
-  on('ui.input', { element: PAD_KEY }, async ($, e, next) => {
+  on('ui.input', { element: PAD_KEY }, async ($, e) => {
     await guard($, 'ui.input', undefined, async () => {
       const now = await $.clock.now()
       if (e.kind === 'submit') await update($, pad, cur => onPadSubmit(cur, now))
@@ -1551,7 +1551,11 @@ export const register: Register = on => {
       await confirmTick($, await $.clock.now(), await read($, player), await footOf($))
     })
 
-    return next(e)
+    // The hook answers the input itself instead of `next(e)`: the pad's own handlers do nothing, and core would look
+    // them up under the handle of the render the key was typed into. A render that replaced that tree (a remount,
+    // image <-> raster, a reload) has released the handle, and core then threw `no handler is held under handle N`,
+    // which reached the transcript (T22b). The answer has the shape core's would have.
+    return { element: e.element, value: e.value }
   })
 
   // The peek pane (D25): the lines the tick stored, one truncating Text each. Drawing writes nothing.

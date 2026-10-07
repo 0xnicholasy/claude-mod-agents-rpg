@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 20/22 done
+Progress: 26/28 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -44,7 +44,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - D15 Assets. Generated sprites and `atlas.json` go to `.claude/skills/agents-office/renderer/sprites/`. The raw sheets go to `assets/sprites/raw/` (outside the mod folder, so the user-wide link does not ship them). `slice.mjs` and `lib.mjs` go to `scripts/sprites/`. pngjs becomes a devDependency, and `npm run sprites` regenerates. (planner, 2026-10-07) | assumed, confirm by T03
 - D16 `playwright` is a `dependencies` entry of the repo-root package.json. Node resolves imports from the real path of `render.mjs`, so the user-wide symlink install still finds `<checkout>/node_modules/playwright`. (planner, 2026-10-07) | assumed, confirm by T04, T20
 - D17 Overlays: the inspect line, the chat draft (`Say: ..._`) and a renderer reason are drawn inside the scene as a caption bar at the view's bottom. Speech bubbles, emotes and chat bubbles are HTML bubbles above figures. Log strip rows (when the body has any) stay as Text under the Image. (planner, 2026-10-07) | caption bar and HTML bubbles confirmed T10 (the caption sits at the bottom of the camera window, not scaled with the world; tags draw above every figure); log strip and renderer reason assumed, confirm by T15
-- D18 In image mode the pad Input sits like v2 (`position="absolute" bottom={0} left={0}` over the Image's bottom-left) if T02 shows it draws over an Image without breaking the picture. Otherwise it goes on its own row under the Image, which then gets bodyRows - 1. (planner, 2026-10-07) | assumed, confirm by T02
+- D18 In image mode the pad Input sits like v2 (`position="absolute" bottom={0} left={0}` over the Image's bottom-left) if T02 shows it draws over an Image without breaking the picture. Otherwise it goes on its own row under the Image, which then gets bodyRows - 1. (planner, 2026-10-07) | confirmed T02 (owner, Ghostty, 2026-10-07): the pad Input drawn over the Image's bottom-left does not break the picture (the `...` pad sits at the Image's bottom-left)
 - D19 Test stubs work in `claude plugin test`: `on('process.spawn', async function* () { yield { stream: 'stdout' as const, text: 'ready\n' }; return { value: { code: 0, signal: null } } })` and `on('ui.blit', (_$, e) => ({ deny: 'x' }))` (`({ value: {} })` allows). End the spawn hook with `{ value }`, because a bare `{ code, signal }` return logs "returned neither { value } nor { deny }" (yielded chunks still arrive). Stub every other call the code makes (`clock.every`, `ui.open`, `ui.log`, `command.register`): an unstubbed one is refused ("no implementation for clock.every") and the test fails. Ran `claude plugin test` on the scratch imgspike: the stub test passed, and the one failure was an old test broken by a `$.clock.every` I added. (T01, 2026-10-07) | confirmed T01
 - D20 T12 proceeds without the owner's Ghostty half of T02. tmux facts (T02, 2026-10-07): the probe blit is denied with "the Image draws its alt here: the terminal draws no placeholder images (env: inside tmux or screen)"; `'Image' in $.ui.resolve(e)` is true in tmux, so it is not a detection signal alone; a height-only pane resize re-renders the pane in tmux (bodyRows updates); ui.render must not write state (write via $.clock.after(0)); the Image must be mounted from the first render (placeholder file source) or blits are denied. D18 (pad Input absolute bottom-left over the Image, like v2) is ASSUMED until the owner checks it in Ghostty; if it breaks the picture, move the Input to its own row under the Image. | assumed, confirm by T02 owner check, T13
 - D21 Seating fix (T15): a seated agent is drawn with the back view (`personN-up`) in the chair, in front of its desk, with its foot line `SEAT.lift` (12 px) above the chair's foot line and its depth `z` equal to the chair's foot line. The desk (`desk-monitor`, scale 1.5) stands behind it with its foot line `SEAT.deskFootY` (34 px, 2 rows) below the anchor's top, so the monitor shows over the head and the chair base shows under the feet. The lift is in the model's `y` (the page no longer lifts). Rejected: lowering the monitor layer (it still hides the face of a front-view figure). Desk, reception desk, kitchen and lab sprites are scaled down (1.25-1.5) so desks at the 72 px pitch no longer overlap and shared rooms fit the narrowest room (13 cells = 104 px) to within 1.5 px. Shared rooms get two rows of furniture and the corridor gets plants, a sofa, a water cooler and clocks (wall-hugging, behind figures). The cat sprite is mirrored by the page for the non-native facing. Team signs are clipped to the room width. | confirmed T15 in frames at 608x187 and 928x391; D8 held without a scale factor (CELL_PX 8x17); D9 facing/variant held; D17 log strip and renderer reason still assumed
@@ -81,7 +81,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: the pgrep lines and parse-failure count pasted into the Log; the stub recipe passes in a scratch `claude plugin test`
 
 ### T02 Spike detection, the Input over an Image, and height-only resize
-- status: todo
+- status: done (#PR, 2026-10-07; owner verified in Ghostty 2026-10-07: pad Input over the Image does not break the picture (D18 confirmed), Image-in-elements=true, height-only resize re-renders (D23); Terminal.app probe not run: owner-skipped, the README already says Terminal.app is expected to fall back)
 - needs: none
 - size: S
 - scope: With the scratch plugin, record:
@@ -392,6 +392,58 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - done when: every command in the README runs as written, and the owner reads the Image office section
 - verify: run each README command; `rtk proxy npm run check`; owner review
 
+### T22 Walk faster
+- status: done (#PR, 2026-10-07)
+- needs: none
+- size: S
+- scope: Owner feedback from Ghostty: the player walks too slowly. A held WASD key moves one tile per 100 ms tick (tween 100 ms); the first or a lone tap still moves one tile, and a tap that repeats the last step's direction within INTENT_MS moves RUN_TILES = 2 tiles (player.ts). The page tween stays 100 ms, so it is not longer than the tick. Held-key speed: 10 -> 20 tiles/s (same code for the image and text paths).
+- files: `hooks/player.ts`, tests
+- done when: a held key moves 1 + 2 + 2 + ... tiles per tick and a lone tap moves 1
+- verify: `rtk proxy npm run check`
+
+### T23 Cat faces the wrong way walking left
+- status: done (#PR, 2026-10-07)
+- needs: none
+- size: S
+- scope: The cat PNGs (cat-orange-walk, cat-orange-sit) are drawn facing LEFT (head and ears at the left edge), while office.html assumed right and mirrored the wrong facing. `scene.ts` now sets `mirror` on the cat figure (`catMirror`: mirrored only when facing right) and the page flips on `fig.mirror`.
+- files: `hooks/scene.ts`, `renderer/office.html`, tests
+- done when: a left-walking cat is drawn unflipped, a right-walking cat flipped (scene test)
+- verify: `rtk proxy npm run check`; a rendered frame
+
+### T24 Widen the room doors
+- status: done (#PR, 2026-10-07)
+- needs: none
+- size: S
+- scope: Mid-layout doors were 5 cells (40 px) wide, one figure footprint. They are now 2x the footprint (10 cells, 80 px) where the room is at least 14 wide (`min(10, width - 4)`), with the doorStand where it was so signs and anchors do not move. The small layout keeps 3-cell doors.
+- files: `hooks/map.ts`, `hooks/map.test.ts`
+- done when: every mid room's door is `min(10, width - 4)` cells and contains the doorStand footprint; BFS and the v2 tests stay green
+- verify: `rtk proxy npm run check`; a rendered frame
+
+### T22b Stale handle error in the transcript
+- status: done (#PR, 2026-10-07)
+- needs: none
+- size: S
+- scope: `ui.input hook skipped: threw ... no handler is held under handle N` reached the transcript after a reload or pad remount. The pad Input's closures are held under a handle of the render that drew it; a key typed into a tree that a later render (or a reload) replaced reaches core after the handle is released, and `next(e)` throws. The pad's own closures do nothing, so the `ui.input` hook now answers `{ element, value }` itself instead of calling `next(e)`.
+- files: `hooks/register.tsx`
+- done when: the hook never calls `next(e)`; keys still reach the pad (office tests)
+- verify: `rtk proxy npm run check`; owner: reload plugins with the pane open, no leaked line
+
+### T23b Procedural walk cycle
+- status: done (#PR, 2026-10-07)
+- needs: none
+- size: S
+- scope: Owner feedback: the walk looked like a ghost. `renderer/office.html` splits a walking person sprite into the body and a legs band (bottom 30%, two halves, two clipped copies) and alternates the legs per tween: stride pose (first half), passing pose with a 1 art px body bob (second half). Down/up: the legs take turns lifting a foot; left/right: the halves swing opposite ways. Real walk-cycle art stays in the Backlog.
+- files: `renderer/office.html`
+- done when: three frames mid-walk show the legs change
+- verify: rendered frames walk-a/b/c
+
+### T25 Interaction feature
+- status: todo
+- needs: none
+- size: ?
+- scope: Pending owner: an interaction feature for the image office (scope to be given by the owner before building).
+- done when: set when the owner gives the scope
+
 ### TZZ Cleanup and land
 - status: todo
 - needs: every other todo
@@ -399,7 +451,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - done when: skill removed from the branch, spike folder removed, TODO.md archived, landing PR into feat/agents-office-v2 open and approved by the owner
 
 ## Backlog
-- Walk cycles: generate a walk sheet with GPT /image (4 frames x 4 facings x 8 people), slice it with `npm run sprites`, and switch the page from bob to frames.
+- Walk cycles: generate a walk sheet with GPT /image (4 frames x 4 facings x 8 people), slice it with `npm run sprites`, and switch the page from the procedural leg cycle to frames.
 - Floor and wall tile sheets to replace the CSS gradients.
 - Page-local pets (corgi, mascot) with collision against props.
 - Art cleanup: drop the `laptop-closed` near duplicate of `laptop-back`, remove the zzz mark from `corgi-sleep`.
@@ -407,6 +459,8 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - T04: wire `npm run sprites:check` into `smoke:renderer` (T05 used the script route instead of a smoke-renderer check).
 
 ## Log
+2026-10-07 T02 #PR closed from the owner's Ghostty run (D18 confirmed, Image-in-elements=true, height-only resize re-renders per D23); Terminal.app probe not run, owner-skipped.
+2026-10-07 T22-T24 #PR owner fixes: held-key walk 1 -> 2 tiles per 100 ms tick after the first (tween stays 100 ms); cat art faces left so the mirror is on right-facing; mid doors 5 -> 10 cells; ui.input hook answers itself (stale handle error); procedural walk cycle in the page.
 2026-10-07 T03 #64 sprites, atlas, raw sheets and the slicer live in the repo; `npm run sprites` regenerates the 82 sprites and atlas.json byte-identical
 2026-10-07 T05 #66 sceneArt.ts holds the sprite scale/anchor/layer table, personVariant, tierPlate and CELL_PX; deviation: smoke-renderer.mjs does not exist yet, so the atlas-vs-table check is `npm run sprites:check` (scripts/sprites/check-table.mjs)
 2026-10-07 T01 #65 (a) reload, `return()` and `/exit` each ended node and Chromium (5 -> 0 processes in 3 s), `ui.close` alone did not (5 -> 5); (b) kill -9 left 5 processes for 15 s without the watchdog, 0 at t+1 s with ppid poll, stale heartbeat exit at 11 s; (c) 0 parse failures (`torn 0`) in 111 s at 10 writes/s of 20 KB; (d) `process.spawn` generator and `ui.blit` deny stubs work in `claude plugin test` (D19)

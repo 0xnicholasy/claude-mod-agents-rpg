@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { buildOffice, canStand, MID_FOOT, roomAt } from './map'
 import type { OfficeMap } from './map'
 import type { Intent } from './pad'
-import { jumpOrder, padRect, padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
+import { RUN_TILES, jumpOrder, padRect, padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { INTENT_MS } from './timing'
 
@@ -50,12 +50,21 @@ test('walls block', () => {
   expect(blocked.intent?.taps).toBe(0)
 })
 
-test('a held key moves one tile per tick', () => {
+test('a held key moves one tile on the first tick, then RUN_TILES per tick (T22)', () => {
   let p: Player = start
   for (let i = 0; i < 4; i++) p = stepPlayer(p, map, tap('d', i * 100), i * 100, 'team:t1').player ?? p
 
-  expect(p.x).toBe(start.x + 4)
-  expect(p.frame).toBe(0)
+  expect(p.x).toBe(start.x + 1 + 3 * RUN_TILES)
+  expect(p.frame).toBe((1 + 3 * RUN_TILES) % 4)
+})
+
+test('a lone tap, a tap after a pause and a tap that turns each move one tile', () => {
+  const first = stepPlayer(start, map, tap('d', 0), 0, 'team:t1').player ?? start
+  expect(first.x).toBe(start.x + 1)
+  const paused = stepPlayer(first, map, tap('d', 1000), 1000, 'team:t1').player ?? first
+  expect(paused.x).toBe(first.x + 1)
+  const turned = stepPlayer(paused, map, tap('a', 1100), 1100, 'team:t1').player ?? paused
+  expect(turned.x).toBe(paused.x - 1)
 })
 
 test('several queued taps are consumed one per tick', () => {
@@ -114,7 +123,7 @@ test('a burst of 4 taps applies all 4 at one tick per 100 ms (D37)', () => {
     player = out.player ?? player
     intent = out.intent
   }
-  expect(player.x).toBe(start.x + 4)
+  expect(player.x).toBe(start.x + 1 + 3 * RUN_TILES)
   expect(intent?.taps).toBe(0)
 })
 

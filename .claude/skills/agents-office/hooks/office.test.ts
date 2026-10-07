@@ -253,7 +253,7 @@ test('typing into the pad records a coalesced burst and flips the drawn value', 
   await ui.unmount()
 })
 
-test('a pad key walks the player one tile per tick', async ($, on) => {
+test('a pad key walks the player one tile, then two per tick while held', async ($, on) => {
   const clock = mock.clock(on)
   const xs: number[] = []
   on('state.set', ($, e, next) => {
@@ -273,7 +273,7 @@ test('a pad key walks the player one tile per tick', async ($, on) => {
   await clock.advance(100)
   expect(xs.at(-1)).toBe((spawn ?? 0) + 1)
   await clock.advance(100)
-  expect(xs.at(-1)).toBe((spawn ?? 0) + 2)
+  expect(xs.at(-1)).toBe((spawn ?? 0) + 3)
   await ui.unmount()
 })
 
@@ -2268,18 +2268,18 @@ const toDesk = async ($: Engine, wait: (ms: number) => Promise<void>) => {
   await wait(JUMP_MS)
 }
 
-test('image scene: wasd steps the player one tile per tick and turns it', async ($, on) => {
+test('image scene: wasd runs the player two tiles per tick after the first and turns it', async ($, on) => {
   const { ui, wait, you } = await padSession($, on)
   const before = you()
   await pressKey($, 'dddd')
   await wait(1000)
   const right = you()
-  expect(right.x - before.x).toBe(4 * 8)
+  expect(right.x - before.x).toBe(7 * 8)
   expect(right.facing).toBe('right')
   expect(right.sprite).toBe('person1-right')
   await pressKey($, 'aa')
   await wait(1000)
-  expect(you().x - right.x).toBe(-2 * 8)
+  expect(you().x - right.x).toBe(-3 * 8)
   expect(you().facing).toBe('left')
   await ui.unmount()
 })
