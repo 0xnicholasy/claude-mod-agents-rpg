@@ -52,8 +52,6 @@
   const EASE_STEP_MS = 1000 / 60
   let camAt = 0
   const BOB_MS = 220
-  // The way the cat sprites face; the other facing mirrors them.
-  const CAT_NATIVE = 'right'
   const WORLD_Z = { floor: 3, wall: 4, base: 100 }
   // Depth = foot y x 1024, leaving room for a seated lift and the model order of figures on the same foot line.
   const zOf = y => (WORLD_Z.base + Math.round(y)) * 1024
@@ -177,10 +175,17 @@
       let f = figs.get(fig.key)
       const fresh = !f
       if (fresh) {
-        f = { key: fig.key, img: document.createElement('img'), tag: document.createElement('div'), x: fig.x, y: fig.y, fromX: fig.x, fromY: fig.y, t0: 0, tx: fig.x, ty: fig.y }
+        f = { key: fig.key, img: document.createElement('img'), legL: document.createElement('img'), legR: document.createElement('img'), tag: document.createElement('div'), x: fig.x, y: fig.y, fromX: fig.x, fromY: fig.y, t0: 0, tx: fig.x, ty: fig.y, stride: 0 }
         f.img.className = 'spr fig'
+        // The legs are two clipped copies of the sprite, drawn over the body while the figure strides (placeFigures).
+        f.legL.className = 'spr fig'
+        f.legR.className = 'spr fig'
+        f.legL.style.display = 'none'
+        f.legR.style.display = 'none'
         f.tag.className = 'tag'
         world.appendChild(f.img)
+        world.appendChild(f.legL)
+        world.appendChild(f.legR)
         world.appendChild(f.tag)
         figs.set(fig.key, f)
       }
@@ -188,25 +193,72 @@
         f.fromX = f.x
         f.fromY = f.y
         f.t0 = now
+        f.stride++
         f.tx = fig.x
         f.ty = fig.y
       }
       if (f.name !== fig.sprite) {
         f.name = fig.sprite
         f.img.src = 'sprites/' + fig.sprite + '.png'
+        f.legL.src = f.img.src
+        f.legR.src = f.img.src
       }
       f.fig = fig
       f.order = order
-      f.img.classList.toggle('dim', fig.status === 'done' || fig.status === 'leaving')
-      f.img.classList.toggle('hl', fig.highlight)
+      for (const el of [f.img, f.legL, f.legR]) {
+        el.classList.toggle('dim', fig.status === 'done' || fig.status === 'leaving')
+        el.classList.toggle('hl', fig.highlight)
+      }
       syncTag(f, fig)
     })
     for (const [key, f] of figs) {
       if (seen.has(key)) continue
       f.img.remove()
+      f.legL.remove()
+      f.legR.remove()
       f.tag.remove()
       figs.delete(key)
       bubbleUntil = now + 200
+    }
+  }
+
+  // Procedural walk cycle (no walk art exists): the person sprite is split into the body and a legs band (the bottom
+  // LEG_BAND of it, two halves). Each tween is one step; the step's first half is the stride pose, its second half the
+  // passing pose with the body one art px higher. Down/up: the legs take turns lifting a foot. Left/right: the halves
+  // swing opposite ways along the walk and swap each step. ART_PX is one art pixel in world px (every person sprite is
+  // drawn at scale 2).
+  const ART_PX = 2
+  const LEG_BAND = 0.3
+  const strideOf = (f, p) => {
+    const odd = f.stride % 2 === 1
+    return { passing: p >= 0.5, odd }
+  }
+  const legPose = (f, cycle) => {
+    if (cycle.passing) return { l: [0, 0], r: [0, 0] }
+    const side = f.fig.facing === 'left' || f.fig.facing === 'right'
+    const sign = cycle.odd ? 1 : -1
+    if (side) return { l: [sign * 2 * ART_PX, 0], r: [-sign * 2 * ART_PX, 0] }
+    return cycle.odd ? { l: [0, -2 * ART_PX], r: [0, 0] } : { l: [0, 0], r: [0, -2 * ART_PX] }
+  }
+  const applyStride = (f, b, cycle, z) => {
+    if (!cycle) {
+      f.img.style.clipPath = ''
+      f.legL.style.display = 'none'
+      f.legR.style.display = 'none'
+      return
+    }
+    const cut = Math.round((1 - LEG_BAND) * 100)
+    f.img.style.clipPath = 'inset(0 0 ' + (100 - cut) + '% 0)'
+    const pose = legPose(f, cycle)
+    for (const [el, half, at] of [[f.legL, 'l', pose.l], [f.legR, 'r', pose.r]]) {
+      el.style.display = 'block'
+      el.style.left = b.left + 'px'
+      el.style.top = b.top + 'px'
+      el.style.width = b.w + 'px'
+      el.style.height = b.h + 'px'
+      el.style.zIndex = z
+      el.style.clipPath = 'inset(' + cut + '% ' + (half === 'l' ? '50% 0 0' : '0 0 50%') + ')'
+      el.style.transform = 'translate(' + at[0] + 'px,' + at[1] + 'px)'
     }
   }
 
@@ -219,7 +271,12 @@
       f.y = f.fromY + (f.ty - f.fromY) * p
       f.walking = p < 1
       const seated = f.fig.pose === 'seated'
-      const bob = f.walking && Math.floor(now / BOB_MS) % 2 ? 2 : 0
+      // A walking person strides (below); the cat and anything else keeps the plain bob.
+      // A highlighted or dimmed figure keeps the plain bob: its filter or opacity would be cut or doubled on the clipped copies.
+      const plain = f.fig.highlight || f.fig.status === 'done' || f.fig.status === 'leaving'
+      const strides = f.walking && !seated && !plain && f.fig.key !== 'cat' && /^person\d+-/.test(f.fig.sprite)
+      const cycle = strides ? strideOf(f, p) : null
+      const bob = strides ? (cycle.passing ? ART_PX : 0) : f.walking && Math.floor(now / BOB_MS) % 2 ? 2 : 0
       // A seated figure's y already carries the seat lift (scene.ts SEAT); its depth z stays the chair's foot line.
       const y = f.y - bob
       const b = boxOf(f.fig.sprite, f.x, y)
@@ -230,7 +287,9 @@
       f.img.style.height = b.h + 'px'
       // The model's array order breaks ties on equal depth (cat, agents, other players, own player).
       f.img.style.zIndex = zOf(f.fig.z) + (seated ? 1 : 0) + f.order
-      f.img.style.transform = f.fig.key === 'cat' && f.fig.facing === CAT_NATIVE ? '' : f.fig.key === 'cat' ? 'scaleX(-1)' : ''
+      // The model decides the flip (scene.ts catMirror): the cat art faces left.
+      applyStride(f, b, cycle, f.img.style.zIndex)
+      f.img.style.transform = f.fig.mirror ? 'scaleX(-1)' : ''
       f.tag.style.left = f.x + 'px'
       f.tag.style.top = b.top - 2 + 'px'
       f.tag.style.transform = 'translate(-50%, -100%)'

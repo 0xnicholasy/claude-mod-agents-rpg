@@ -102,6 +102,11 @@ const stretch = (specs: Array<{ width: number }>, total: number): number[] => {
   return widths
 }
 
+// Mid doors are twice the footprint wide so they read as openings in the image scene (T24): 10 cells for the 5-wide
+// figure, less in a room too narrow to keep 2 cells of wall at its sides. The small layout keeps footprint-wide doors.
+const doorWidth = (width: number, foot: Footprint): number =>
+  isMid(foot) ? Math.max(foot.w, Math.min(foot.w * 2, width - 4)) : foot.w
+
 type RowBand = { interiorTop: number; interiorRows: number; doorRow: number }
 
 // `pitch` is the distance between desk anchors: the footprint plus the gap. `doorInset` is how far a
@@ -122,25 +127,29 @@ const makeRoom = (spec: Spec, x: number, width: number, band: RowBand, doorBelow
   }))
   // Top-row rooms centre the door; bottom-row rooms put it at the right so the
   // doorStand footprint never stands on the left-aligned sign.
-  const doorX = doorBelow ? x + Math.floor((width - foot.w) / 2) : x + width - doorInset
+  // The stand stays where it always was (centred in a top room, flush right in a bottom one); a mid door is wider
+  // than the footprint and extends around it (T24), so only the door cells change.
+  const doorW = doorWidth(width, foot)
+  const doorStandX = doorBelow ? x + Math.floor((width - foot.w) / 2) : x + width - doorInset
+  const doorX = doorBelow ? doorStandX - Math.floor((doorW - foot.w) / 2) : doorStandX + foot.w - doorW
   const doorStandY = doorBelow ? interiorTop + interiorRows - foot.h : interiorTop
   // In a bottom room the doorStand is on the top interior rows, where short rooms also
   // seat their desks, so a desk overlapping it is dropped. Top rooms keep every desk: their
   // centred stand sits among the desks by design and dropping them would empty the Phone Booths.
   const anchors = doorBelow
     ? allAnchors
-    : allAnchors.filter(a => Math.abs(a.x - doorX) >= foot.w || Math.abs(a.y - doorStandY) >= foot.h)
+    : allAnchors.filter(a => Math.abs(a.x - doorStandX) >= foot.w || Math.abs(a.y - doorStandY) >= foot.h)
   // A bottom room's sign shares its row with the door (wall row) or the doorStand (interior row), so it is
   // cut before them.
-  const sign = doorBelow ? cut(spec.sign, width) : cut(spec.sign, doorX - x)
+  const sign = doorBelow ? cut(spec.sign, width) : cut(spec.sign, doorStandX - x)
   return {
     id: spec.id,
     name: spec.name,
     kind: spec.kind,
     bounds: { x, y: interiorTop, w: width, h: interiorRows },
     sign: { text: sign, cells: Array.from(sign, (_, i) => ({ x: x + i, y: signY })) },
-    door: Array.from({ length: foot.w }, (_, i) => ({ x: doorX + i, y: doorRow })),
-    doorStand: { x: doorX, y: doorStandY },
+    door: Array.from({ length: doorW }, (_, i) => ({ x: doorX + i, y: doorRow })),
+    doorStand: { x: doorStandX, y: doorStandY },
     anchors,
   }
 }

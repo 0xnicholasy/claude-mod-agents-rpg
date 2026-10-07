@@ -290,7 +290,11 @@ test('mid rooms fit a 5x5 figure with a plate row', () => {
         const room = at(map.rooms, i)
         for (let j = i + 1; j < map.rooms.length; j++) expect(overlap(room.bounds, at(map.rooms, j).bounds)).toBe(false)
         expect(canStand(map, room.doorStand.x, room.doorStand.y)).toBe(true)
-        expect(room.door).toHaveLength(MID_FOOT.w)
+        // T24: twice the footprint wide where the room allows, and the stand's footprint lies under it.
+        expect(room.door).toHaveLength(Math.min(MID_FOOT.w * 2, room.bounds.w - 4))
+        expect(room.door.length).toBeGreaterThanOrEqual(MID_FOOT.w)
+        expect(room.door[0]?.x ?? 0).toBeLessThanOrEqual(room.doorStand.x)
+        expect((room.door.at(-1)?.x ?? 0) >= room.doorStand.x + MID_FOOT.w - 1).toBe(true)
         expect(room.anchors.length).toBeGreaterThan(0)
         for (const a of room.anchors) {
           expect(canStand(map, a.x, a.y)).toBe(true)

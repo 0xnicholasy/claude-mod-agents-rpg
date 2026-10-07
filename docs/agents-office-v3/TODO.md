@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 21/31 done
+Progress: 28/36 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -44,7 +44,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - D15 Assets. Generated sprites and `atlas.json` go to `.claude/skills/agents-office/renderer/sprites/`. The raw sheets go to `assets/sprites/raw/` (outside the mod folder, so the user-wide link does not ship them). `slice.mjs` and `lib.mjs` go to `scripts/sprites/`. pngjs becomes a devDependency, and `npm run sprites` regenerates. (planner, 2026-10-07) | assumed, confirm by T03
 - D16 `playwright` is a `dependencies` entry of the repo-root package.json. Node resolves imports from the real path of `render.mjs`, so the user-wide symlink install still finds `<checkout>/node_modules/playwright`. (planner, 2026-10-07) | assumed, confirm by T04, T20
 - D17 Overlays: the inspect line, the chat draft (`Say: ..._`) and a renderer reason are drawn inside the scene as a caption bar at the view's bottom. Speech bubbles, emotes and chat bubbles are HTML bubbles above figures. Log strip rows (when the body has any) stay as Text under the Image. (planner, 2026-10-07) | caption bar and HTML bubbles confirmed T10 (the caption sits at the bottom of the camera window, not scaled with the world; tags draw above every figure); log strip and renderer reason assumed, confirm by T15
-- D18 In image mode the pad Input sits like v2 (`position="absolute" bottom={0} left={0}` over the Image's bottom-left) if T02 shows it draws over an Image without breaking the picture. Otherwise it goes on its own row under the Image, which then gets bodyRows - 1. (planner, 2026-10-07) | assumed, confirm by T02
+- D18 In image mode the pad Input sits like v2 (`position="absolute" bottom={0} left={0}` over the Image's bottom-left) if T02 shows it draws over an Image without breaking the picture. Otherwise it goes on its own row under the Image, which then gets bodyRows - 1. (planner, 2026-10-07) | confirmed T02 (owner, Ghostty, 2026-10-07): the pad Input drawn over the Image's bottom-left does not break the picture (the `...` pad sits at the Image's bottom-left)
 - D19 Test stubs work in `claude plugin test`: `on('process.spawn', async function* () { yield { stream: 'stdout' as const, text: 'ready\n' }; return { value: { code: 0, signal: null } } })` and `on('ui.blit', (_$, e) => ({ deny: 'x' }))` (`({ value: {} })` allows). End the spawn hook with `{ value }`, because a bare `{ code, signal }` return logs "returned neither { value } nor { deny }" (yielded chunks still arrive). Stub every other call the code makes (`clock.every`, `ui.open`, `ui.log`, `command.register`): an unstubbed one is refused ("no implementation for clock.every") and the test fails. Ran `claude plugin test` on the scratch imgspike: the stub test passed, and the one failure was an old test broken by a `$.clock.every` I added. (T01, 2026-10-07) | confirmed T01
 - D20 T12 proceeds without the owner's Ghostty half of T02. tmux facts (T02, 2026-10-07): the probe blit is denied with "the Image draws its alt here: the terminal draws no placeholder images (env: inside tmux or screen)"; `'Image' in $.ui.resolve(e)` is true in tmux, so it is not a detection signal alone; a height-only pane resize re-renders the pane in tmux (bodyRows updates); ui.render must not write state (write via $.clock.after(0)); the Image must be mounted from the first render (placeholder file source) or blits are denied. D18 (pad Input absolute bottom-left over the Image, like v2) is ASSUMED until the owner checks it in Ghostty; if it breaks the picture, move the Input to its own row under the Image. | assumed, confirm by T02 owner check, T13
 - D21 Seating fix (T15): a seated agent is drawn with the back view (`personN-up`) in the chair, in front of its desk, with its foot line `SEAT.lift` (12 px) above the chair's foot line and its depth `z` equal to the chair's foot line. The desk (`desk-monitor`, scale 1.5) stands behind it with its foot line `SEAT.deskFootY` (34 px, 2 rows) below the anchor's top, so the monitor shows over the head and the chair base shows under the feet. The lift is in the model's `y` (the page no longer lifts). Rejected: lowering the monitor layer (it still hides the face of a front-view figure). Desk, reception desk, kitchen and lab sprites are scaled down (1.25-1.5) so desks at the 72 px pitch no longer overlap and shared rooms fit the narrowest room (13 cells = 104 px) to within 1.5 px. Shared rooms get two rows of furniture and the corridor gets plants, a sofa, a water cooler and clocks (wall-hugging, behind figures). The cat sprite is mirrored by the page for the non-native facing. Team signs are clipped to the room width. | confirmed T15 in frames at 608x187 and 928x391; D8 held without a scale factor (CELL_PX 8x17); D9 facing/variant held; D17 log strip and renderer reason still assumed
@@ -67,8 +67,8 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - D24 One `e`, nearest wins (interactions, 2026-10-07, assumed). Targets: own agents within INSPECT_RANGE 2 (`nearest` in inspect.ts); the cat and items within footprint gap <= 1. Smallest gap wins. Ties: agent > cat > item, then table order, then lower x. `E` unchanged. An agent target keeps the v2 inspect path exactly.
 - D25 Item geometry (interactions, 2026-10-07, assumed): from scene.ts `propsOf` (exported), px -> cells via CELL_PX. Desks come from team anchors. No collision. The text fallback uses the same items undrawn; art-only outcomes show as a caption line.
 - D26 Peek panes (interactions, 2026-10-07, assumed): desk, whiteboard and rack open the existing `office-peek` pane, only from the `ui.input` hook (a plugin-initiated open waits undrawn below 144 cols, register.tsx ~1546). The `peek` atom becomes `{ source: 'agent'|'board'|'rack', agentId?, label, lines }`.
-- D27 Whiteboard source (interactions, 2026-10-07, assumed, confirm by T25): the todo-list `plan` atom via `read($, { plugin: 'todo-list', key: 'plan' })` (d.ts 3286-3300, 8787-8790; contract todo-list types/index.d.ts:46-62). If undefined, an own `board` atom mirrored from successful TodoWrite/TaskCreate/TaskUpdate `tool.call`s (`result.newTodos ?? e.todos`, d.ts 15839-15887). The render reads the source live. Own session only.
-- D28 Server rack lines (interactions, 2026-10-07, assumed, confirm by T25): own roster agents with tool names (D16 privacy); running/idle counts from `$.agent.list()` (d.ts 3080-3087, AgentInfo.status 159-167); context % and cost from a `session.measure` hook (d.ts 4265, 10554-10580) into a `usage` atom (context.percent?/window 10409-10434; cost?.usd 10439-10444, 11182-11185). No background shell tasks (no live API).
+- D27 Whiteboard source (interactions, 2026-10-07, confirmed T25 with an amendment): the todo-list `plan` atom via `read($, { plugin: 'todo-list', key: 'plan' })` (d.ts 3286-3300, 8787-8790; contract todo-list types/index.d.ts:46-62). If undefined, an own `board` atom mirrored from successful TodoWrite/TaskCreate/TaskUpdate `tool.call`s (`result.newTodos ?? e.todos`, d.ts 15839-15887). The render reads the source live. Own session only. T25 spike (Claude Code 2.1.292, scratch plugin, tmux -L aot25, both plugins loaded): `read($, { plugin: 'todo-list', key: 'plan' } as const)` typechecks with the contract vendored (a typo key `plam` fails TS2769); `claude plugin validate` passes and lists "state reads: todo-list.plan" with "state of other plugins, not checked"; value is `undefined` both with todo-list absent and with it loaded before any plan exists (no throw); after the model made a plan the pane redrew by itself each time the plan changed (render log: `plan=undefined`, then `plan=2 nodes: read sample.ts/pending|report/pending`, `.../in_progress|pending`, `.../completed|completed`), with no `$.ui.invalidate`. Amendment: with todo-list loaded the model had no TodoWrite tool (it said "no TodoWrite tool exists in this session" and used the todo-list `plan` MCP tool), so the `board` mirror is only for sessions without todo-list; `undefined` means "no plan yet" or "todo-list absent" and the whiteboard shows the empty line in both.
+- D28 Server rack lines (interactions, 2026-10-07, confirmed T25 with amendments): own roster agents with tool names (D16 privacy); running/idle counts from `$.agent.list()` (d.ts 3080-3087, AgentInfo.status 159-167); context % and cost from a `session.measure` hook (d.ts 4265, 10554-10580) into a `usage` atom (context.percent?/window 10409-10434; cost?.usd 10439-10444, 11182-11185). No background shell tasks (no live API). T25 spike values, LIVE (2.1.292): `session.measure` first fired at session start with `ctx={"window":1000000} cost={"usd":0} changed=context,rateLimits,cost`, so before the first response `context.tokens` and `context.percent` are absent and only `window` is set; after the first API response `cost={"usd":0.0010119999999999999} changed=rateLimits,cost` (context still absent); after the prompt turn `ctx={"tokens":[REDACTED in the debug log],"window":1000000,"percent":7} cost={"usd":0.383951} changed=context,cost`, then `cost={"usd":0.44717080000000003}`. `$.session.usage()` in `turn.start` returned `{"startedAt":...,"context":{"window":1000000},"rateLimits":[...],"cost":{"usd":0}}` before the prompt and `"context":{"tokens":[REDACTED],"window":1000000,"percent":7},"cost":{"usd":0.4075246}` at the second turn start, the same shape as the measure input. Amendments: the rack must treat `percent` and `tokens` as absent (show the window or a dash) until the first response, and `cost.usd` is a float to round for display. `$.agent.list()` polled every 1 s while one Explore subagent ran: `[Explore:running]` then `[Explore:completed]` (it was not listed as `idle`; a finished subagent stays listed for seconds, d.ts 3080-3087), so the running count is `status === 'running'` and completed entries must not count as idle.
 - D29 Fun props (interactions, 2026-10-07, assumed): local, never published to presence (presence.ts:442 picks fields). Coffee = mug for MUG_MS 8 s; sofa = sit until any WASD/[/]/jump; water cooler = one of 8 fixed lines by seed as player chat for CHAT_MS; cat = heart emote on the cat for 3 s. An empty desk says `Empty desk.`; a remote agent's desk says `<Session N>'s desk` and has no peek.
 - D30 Caption order (interactions, 2026-10-07, assumed): chat draft > inspect/action line > hint. Hint `e: coffee machine` (item), `e: inspect <label>` (agent). The text fallback shows it on the overlay/strip row like inspect.
 
@@ -88,7 +88,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: the pgrep lines and parse-failure count pasted into the Log; the stub recipe passes in a scratch `claude plugin test`
 
 ### T02 Spike detection, the Input over an Image, and height-only resize
-- status: todo
+- status: done (#87, 2026-10-07; owner verified in Ghostty 2026-10-07: pad Input over the Image does not break the picture (D18 confirmed), Image-in-elements=true, height-only resize re-renders (D23); Terminal.app probe not run: owner-skipped, the README already says Terminal.app is expected to fall back)
 - needs: none
 - size: S
 - scope: With the scratch plugin, record:
@@ -399,8 +399,53 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - done when: every command in the README runs as written, and the owner reads the Image office section
 - verify: run each README command; `rtk proxy npm run check`; owner review
 
+### T22 Walk faster
+- status: done (#87, 2026-10-07)
+- needs: none
+- size: S
+- scope: Owner feedback from Ghostty: the player walks too slowly. A held WASD key moves one tile per 100 ms tick (tween 100 ms); the first or a lone tap still moves one tile, and a tap that repeats the last step's direction within INTENT_MS moves RUN_TILES = 2 tiles (player.ts). The page tween stays 100 ms, so it is not longer than the tick. Held-key speed: 10 -> 20 tiles/s (same code for the image and text paths).
+- files: `hooks/player.ts`, tests
+- done when: a held key moves 1 + 2 + 2 + ... tiles per tick and a lone tap moves 1
+- verify: `rtk proxy npm run check`
+
+### T23 Cat faces the wrong way walking left
+- status: done (#87, 2026-10-07)
+- needs: none
+- size: S
+- scope: The cat PNGs (cat-orange-walk, cat-orange-sit) are drawn facing LEFT (head and ears at the left edge), while office.html assumed right and mirrored the wrong facing. `scene.ts` now sets `mirror` on the cat figure (`catMirror`: mirrored only when facing right) and the page flips on `fig.mirror`.
+- files: `hooks/scene.ts`, `renderer/office.html`, tests
+- done when: a left-walking cat is drawn unflipped, a right-walking cat flipped (scene test)
+- verify: `rtk proxy npm run check`; a rendered frame
+
+### T24 Widen the room doors
+- status: done (#87, 2026-10-07)
+- needs: none
+- size: S
+- scope: Mid-layout doors were 5 cells (40 px) wide, one figure footprint. They are now 2x the footprint (10 cells, 80 px) where the room is at least 14 wide (`min(10, width - 4)`), with the doorStand where it was so signs and anchors do not move. The small layout keeps 3-cell doors.
+- files: `hooks/map.ts`, `hooks/map.test.ts`
+- done when: every mid room's door is `min(10, width - 4)` cells and contains the doorStand footprint; BFS and the v2 tests stay green
+- verify: `rtk proxy npm run check`; a rendered frame
+
+### T22b Stale handle error in the transcript
+- status: done (#87, 2026-10-07)
+- needs: none
+- size: S
+- scope: `ui.input hook skipped: threw ... no handler is held under handle N` reached the transcript after a reload or pad remount. The pad Input's closures are held under a handle of the render that drew it; a key typed into a tree that a later render (or a reload) replaced reaches core after the handle is released, and `next(e)` throws. The pad's own closures do nothing, so the `ui.input` hook now answers `{ element, value }` itself instead of calling `next(e)`.
+- files: `hooks/register.tsx`
+- done when: the hook never calls `next(e)`; keys still reach the pad (office tests)
+- verify: `rtk proxy npm run check`; owner: reload plugins with the pane open, no leaked line
+
+### T23b Procedural walk cycle
+- status: done (#87, 2026-10-07)
+- needs: none
+- size: S
+- scope: Owner feedback: the walk looked like a ghost. `renderer/office.html` splits a walking person sprite into the body and a legs band (bottom 30%, two halves, two clipped copies) and alternates the legs per tween: stride pose (first half), passing pose with a 1 art px body bob (second half). Down/up: the legs take turns lifting a foot; left/right: the halves swing opposite ways. Real walk-cycle art stays in the Backlog.
+- files: `renderer/office.html`
+- done when: three frames mid-walk show the legs change
+- verify: rendered frames walk-a/b/c
+
 ### T25 Spike plan and activity data
-- status: todo
+- status: done (#86, 2026-10-07)
 - needs: none
 - size: S
 - scope: In a scratch plugin (not committed), check: (a) `read($, { plugin: 'todo-list', key: 'plan' } as const)` typechecks with the todo-list contract vendored at `vendor/todo-list/index.d.ts`, passes validate, returns the plan with todo-list loaded and undefined (no throw) without it, and a render reading it redraws on a plan change; (b) `$.session.usage()` and `session.measure` values (context.percent, cost.usd) in LIVE before and after one prompt; (c) `$.agent.list()` statuses while a subagent runs.
@@ -521,7 +566,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 
 ## Backlog
 - Draw the top 3 plan items on the whiteboard sprite (from T25-T33 plan).
-- Walk cycles: generate a walk sheet with GPT /image (4 frames x 4 facings x 8 people), slice it with `npm run sprites`, and switch the page from bob to frames.
+- Walk cycles: generate a walk sheet with GPT /image (4 frames x 4 facings x 8 people), slice it with `npm run sprites`, and switch the page from the procedural leg cycle to frames.
 - Floor and wall tile sheets to replace the CSS gradients.
 - Page-local pets (corgi, mascot) with collision against props.
 - Art cleanup: drop the `laptop-closed` near duplicate of `laptop-back`, remove the zzz mark from `corgi-sleep`.
@@ -529,6 +574,8 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - T04: wire `npm run sprites:check` into `smoke:renderer` (T05 used the script route instead of a smoke-renderer check).
 
 ## Log
+2026-10-07 T02 #87 closed from the owner's Ghostty run (D18 confirmed, Image-in-elements=true, height-only resize re-renders per D23); Terminal.app probe not run, owner-skipped.
+2026-10-07 T22-T24 #87 owner fixes: held-key walk 1 -> 2 tiles per 100 ms tick after the first (tween stays 100 ms); cat art faces left so the mirror is on right-facing; mid doors 5 -> 10 cells; ui.input hook answers itself (stale handle error); procedural walk cycle in the page.
 2026-10-07 T03 #64 sprites, atlas, raw sheets and the slicer live in the repo; `npm run sprites` regenerates the 82 sprites and atlas.json byte-identical
 2026-10-07 T05 #66 sceneArt.ts holds the sprite scale/anchor/layer table, personVariant, tierPlate and CELL_PX; deviation: smoke-renderer.mjs does not exist yet, so the atlas-vs-table check is `npm run sprites:check` (scripts/sprites/check-table.mjs)
 2026-10-07 T01 #65 (a) reload, `return()` and `/exit` each ended node and Chromium (5 -> 0 processes in 3 s), `ui.close` alone did not (5 -> 5); (b) kill -9 left 5 processes for 15 s without the watchdog, 0 at t+1 s with ppid poll, stale heartbeat exit at 11 s; (c) 0 parse failures (`torn 0`) in 111 s at 10 writes/s of 20 KB; (d) `process.spawn` generator and `ui.blit` deny stubs work in `claude plugin test` (D19)
@@ -550,4 +597,5 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 2026-10-07 T19 #83 resize follows in both axes: render -> viewport atom -> tick -> `size` in state.json (columns*8 x rows*17) -> renderer viewport; D23 records the T02 finding (height-only resize re-renders in tmux and Ghostty) so no workaround exists; `writeKeyOf` guards a resize against waiting for the heartbeat (the scene text already changes with the box); below 60x11 the size line shows, no new seq is sent (no frames) and `holdRenderer` keeps the heartbeat so the renderer lives. LIVEIMG tmux resize frames were replaced by a direct render.mjs run because tmux denies blits, so the Image/renderer loop stops there (D20) and no resized frame is ever written in a tmux session; the state-size half is covered by office tests (box -> state.json size) and the PNG half by a scratch driver that feeds render.mjs `size` 608x187 -> 928x391 -> 560x187 with the state-busy fixture: `file` gave PNG 608 x 187, 928 x 391, 560 x 187, and 4 s of same-seq heartbeat rewrites produced 0 frames; renderer exited 0 on SIGTERM with no process left. GHOSTTY height-only drag pending (owner)
 2026-10-07 T21 #84 README gains the Chromium install step and `--no-chromium`, `/office scene auto|image|text`, an "Image office" section with the fallback reasons, image-office requirements, v3 known limits and the develop commands; `docs/images/office-image-120x40.png` is a 928x391 frame from real `sceneOf` output (one team room with 3 agents, a Test Lab agent, the corridor and 5 shared rooms) rendered by `SMOKE_FRAME_OUT=<png> npm run smoke:renderer -- <fixture>` (72 KB). WezTerm and iTerm2 are listed as untested and kitty as expected from the API docs only (no D-entry covers them). T02 stays `todo`: its Decisions record the tmux results (D20) and the height-only resize in Ghostty (D23), but no D-entry records Image-in-elements for Ghostty or the D18 Input check, and the Terminal.app probe was not run
 2026-10-07 T25-T33 planned: Decisions D24-D30 and nine interaction todos (desk peek, whiteboard, server rack, coffee, sofa, water cooler, cat pet, hint) added; D27 and D28 stay assumed until T25
+2026-10-07 T25 #86 spike in a scratch plugin (not committed) run LIVE in tmux -L aot25 with both mods: cross-plugin read of the todo-list `plan` atom typechecks, validates, is `undefined` without a plan and redraws the pane on every plan change; `session.measure` and `$.session.usage()` give `context.percent` 7 and `cost.usd` 0.383951 after one prompt (absent / 0 before); `$.agent.list()` showed `Explore:running` then `Explore:completed`; D27 and D28 confirmed with the amendments written in them
 2026-10-07 T26 #88 hooks/items.ts holds ITEM_KINDS (table order = tie order), ITEMS (label, sprites, foot) and `itemsOf(map)`: one desk per team anchor (rect = the map footprint at the anchor) plus one item per whiteboard, coffee-machine, sofa, water-cooler and server-rack prop from the exported `propsOf`, rect in cells clamped inside its room or the corridor (1 whiteboard, 1 coffee, 1 sofa, 2 coolers, 2 racks on every map size tried); item footprints are guesses (whiteboard 6x2, sofa 6x2, coffee 3x2, cooler 2x2, rack 3x2) until the art is seen at GHOSTTY; 9 tests; mutation check: emptying the rack sprites failed 2 tests; review (sonnet) found 4 Medium test gaps (clamp, x placement, room per kind, table order), all closed

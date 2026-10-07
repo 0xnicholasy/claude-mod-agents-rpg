@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { focusOf, viewFor } from './camera'
 import { buildOffice, MID_FOOT } from './map'
 import type { TeamSpec } from './map'
-import { PLAYER_VARIANT, sceneKey, sceneOf } from './scene'
+import { catMirror, PLAYER_VARIANT, sceneKey, sceneOf } from './scene'
 import type { SceneInput } from './scene'
 import { placeMotion } from './frame'
 import type { Motion } from './frame'
@@ -270,7 +270,7 @@ test('the player uses the fixed variant with the plate you, over agents on equal
   })
   const me = scene.figures.find(f => f.player)
   expect(me).toMatchObject({ key: 'player', plate: 'you', sprite: `person${PLAYER_VARIANT}-up`, remote: false })
-  expect(scene.figures.find(f => f.key === 'cat')).toMatchObject({ sprite: 'cat-orange-sit', plate: '', facing: 'left' })
+  expect(scene.figures.find(f => f.key === 'cat')).toMatchObject({ sprite: 'cat-orange-sit', plate: '', facing: 'left', mirror: false })
   expect(scene.figures.findIndex(f => f.key === 'main') < scene.figures.findIndex(f => f.key === 'player')).toBe(true)
 })
 
@@ -334,4 +334,14 @@ test('3 remote records give their rooms in startedAt order with remote figures a
   expect(inside('team:a', guests[0] ?? { x: -1, y: 0 })).toBe(true)
   expect(inside('team:c', guests[1] ?? { x: -1, y: 0 })).toBe(true)
   expect(guests[0]).toMatchObject({ emote: '♥', chat: 'hello' })
+})
+
+test('the cat art faces left, so only a right-facing cat is drawn mirrored', () => {
+  expect(catMirror('left')).toBe(false)
+  expect(catMirror('right')).toBe(true)
+  const input = withAgents(rosterOf(agentOf({ pose: 'idle' })))
+  const catFigure = (facing: 'left' | 'right') =>
+    sceneOf({ ...input, cat: { x: 30, y: 4, facing, frame: 0, path: [{ x: 29, y: 4 }], restUntil: 0, seed: 1 } }).figures.find(f => f.key === 'cat')
+  expect(catFigure('left')).toMatchObject({ sprite: 'cat-orange-walk', mirror: false })
+  expect(catFigure('right')).toMatchObject({ sprite: 'cat-orange-walk', mirror: true })
 })
