@@ -132,7 +132,7 @@ const corridorProps = (c: SceneRect): SceneProp[] => {
   ]
 }
 
-const propsOf = (map: OfficeMap): SceneProp[] => {
+export const propsOf = (map: OfficeMap): SceneProp[] => {
   const props: SceneProp[] = []
   const add = (sprite: SpriteName, x: number, y: number): void => {
     props.push({ sprite, x, y, layer: SPRITES[sprite].layer })
