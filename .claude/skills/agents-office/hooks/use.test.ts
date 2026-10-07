@@ -5,8 +5,9 @@ import type { Motion } from './frame'
 import { ITEMS } from './items'
 import type { Item, ItemKind } from './items'
 import { MID_FOOT, SMALL_FOOT } from './map'
-import { deskOwner, hintOf, rectGap, targetOf } from './use'
-import type { TargetInput } from './use'
+import { boardLines, COOLER_LINES, deskOwner, hintOf, MUG_MS, nodesOfTodos, NO_PLAN, outcomeOf, rackLines, rectGap, settleAct, targetOf } from './use'
+import type { Act, AgentListItem, BoardNode, Target, TargetInput, UseCtx } from './use'
+import { PEEK_MAX } from './inspect'
 
 const agent = (id: string, label = id): OfficeAgent => ({
   id,
@@ -137,4 +138,108 @@ test('hints: item label, inspect label, cat, none', () => {
   expect(hintOf({ kind: 'cat', gap: 1 }, roster)).toBe('e: pet the cat')
   expect(hintOf({ kind: 'agent', id: 'gone', gap: 1 }, roster)).toBeUndefined()
   expect(hintOf(undefined, roster)).toBeUndefined()
+})
+
+const ctxOf = (over: Partial<UseCtx> = {}): UseCtx => ({
+  ownId: 'team:s0',
+  roster: {},
+  motion: {},
+  roomNames: { 'team:s0': 'mine', 'team:s1': 'Session 2' },
+  ...over,
+})
+const itemTarget = (kind: ItemKind, over: Partial<Item> = {}): Target => ({ kind: 'item', item: item(kind, 5, 5, over), gap: 0 })
+
+test('each target kind has its outcome', () => {
+  const ctx = ctxOf()
+  expect(outcomeOf({ kind: 'agent', id: 'a', gap: 1 }, ctx, 1000, 0)).toEqual({ kind: 'inspect', id: 'a' })
+  expect(outcomeOf({ kind: 'cat', gap: 1 }, ctx, 1000, 0)).toEqual({ kind: 'pet' })
+  expect(outcomeOf(itemTarget('whiteboard'), ctx, 1000, 0)).toEqual({ kind: 'board' })
+  expect(outcomeOf(itemTarget('rack'), ctx, 1000, 0)).toEqual({ kind: 'rack' })
+  expect(outcomeOf(itemTarget('coffee'), ctx, 1000, 0)).toEqual({ kind: 'act', act: { kind: 'mug', until: 1000 + MUG_MS } })
+  expect(outcomeOf(itemTarget('sofa'), ctx, 1000, 0)).toEqual({ kind: 'act', act: { kind: 'sit' } })
+  expect(MUG_MS).toBe(8000)
+})
+
+test('the water cooler says one of 8 fixed lines picked by the seed', () => {
+  expect(COOLER_LINES).toHaveLength(8)
+  expect(new Set(COOLER_LINES).size).toBe(8)
+  const say = (seed: number): string => {
+    const out = outcomeOf(itemTarget('cooler'), ctxOf(), 0, seed)
+
+    return out.kind === 'say' ? out.text : ''
+  }
+  for (let seed = 0; seed < 8; seed++) expect(say(seed)).toBe(COOLER_LINES[seed])
+  expect(say(8)).toBe(COOLER_LINES[0])
+  expect(say(-3)).toBe(COOLER_LINES[3])
+  expect(say(1.9)).toBe(COOLER_LINES[1])
+})
+
+test('a desk peeks its own owner, says empty, or names a remote session without a peek', () => {
+  const desk = (room: string): Target => itemTarget('desk', { room: room as Item['room'], anchor: { x: 20, y: 4 } })
+  const roster: Roster = { a: agent('a', 'main') }
+  const motion: Motion = { a: at(20, 4) }
+  expect(outcomeOf(desk('team:s0'), ctxOf({ roster, motion }), 0, 0)).toEqual({ kind: 'peek', agentId: 'a', label: 'main' })
+  expect(outcomeOf(desk('team:s0'), ctxOf(), 0, 0)).toEqual({ kind: 'line', text: 'Empty desk.' })
+  // A remote desk never peeks, even with someone sitting at it.
+  expect(outcomeOf(desk('team:s1'), ctxOf({ roster, motion }), 0, 0)).toEqual({ kind: 'line', text: "Session 2's desk" })
+})
+
+test('boardLines draws the plan tree with markers and indent', () => {
+  const nodes: BoardNode[] = [
+    { id: 'p', parentId: null, title: 'Ship it', status: 'in_progress' },
+    { id: 'a', parentId: 'p', title: 'Write', status: 'completed' },
+    { id: 'a1', parentId: 'a', title: 'Tests', status: 'completed' },
+    { id: 'b', parentId: 'p', title: 'Review', status: 'pending' },
+    { id: 'q', parentId: null, title: 'Later', status: 'blocked' },
+  ]
+  expect(boardLines(nodes)).toEqual(['[>] Ship it', '  [x] Write', '    [x] Tests', '  [ ] Review', '[ ] Later'])
+  // Tree order, not array order: a child listed before its parent still sits under it, in its own array order.
+  expect(boardLines([nodes[3] as BoardNode, ...nodes.filter(n => n.id !== 'b')])).toEqual(['[>] Ship it', '  [ ] Review', '  [x] Write', '    [x] Tests', '[ ] Later'])
+  // An orphan counts as a root.
+  expect(boardLines([{ id: 'o', parentId: 'gone', title: 'Orphan', status: 'pending' }])).toEqual(['[ ] Orphan'])
+})
+
+test('boardLines caps at PEEK_MAX, says No plan yet, and survives a parent cycle', () => {
+  const many: BoardNode[] = Array.from({ length: 14 }, (_, i) => ({ id: `n${i}`, parentId: null, title: `step ${i}`, status: 'pending' }))
+  expect(PEEK_MAX).toBe(10)
+  expect(boardLines(many)).toHaveLength(10)
+  expect(boardLines(many)[9]).toBe('[ ] step 9')
+  expect(boardLines(undefined)).toEqual([NO_PLAN])
+  expect(boardLines([])).toEqual(['No plan yet.'])
+  expect(boardLines([{ id: 'a', parentId: 'b', title: 'a', status: 'pending' }, { id: 'b', parentId: 'a', title: 'b', status: 'pending' }])).toEqual(['No plan yet.'])
+  // A flat TodoWrite list becomes root nodes in order.
+  expect(boardLines(nodesOfTodos([{ content: 'one', status: 'completed' }, { content: 'two', status: 'in_progress' }, { content: 'three', status: 'pending' }]))).toEqual(['[x] one', '[>] two', '[ ] three'])
+})
+
+test('rackLines shows own tools and counts, never anything from the agent list but its status', () => {
+  const roster: Roster = { a: { ...agent('a', 'main'), tool: 'Read' }, b: agent('b', 'helper') }
+  // An agent list entry may carry prompt text; only `id` and `status` are read.
+  const leaky = { id: 'x', status: 'running', description: 'secret prompt text', tool: 'Bash --hidden-arg' }
+  const list: AgentListItem[] = [{ id: 'a', status: 'running' }, { id: 'b', status: 'idle' }, { id: 'c', status: 'completed' }, leaky]
+  const lines = rackLines({ roster, agentList: list, usage: { percent: 7.4, usd: 0.4395 } })
+  expect(lines).toEqual(['context: 7%', 'cost: $0.44', 'agents: 2 running, 1 idle', 'main: Read', 'helper: -'])
+  expect(lines.join('\n')).not.toContain('secret')
+  expect(lines.join('\n')).not.toContain('hidden-arg')
+})
+
+test('rackLines prints a dash for a missing percent or cost', () => {
+  expect(rackLines({ roster: {}, agentList: [] })).toEqual(['context: -', 'cost: -', 'agents: 0 running, 0 idle'])
+  expect(rackLines({ roster: {}, agentList: [], usage: { usd: 0 } })).toEqual(['context: -', 'cost: $0.00', 'agents: 0 running, 0 idle'])
+  expect(rackLines({ roster: {}, agentList: [], usage: { percent: 0 } })[0]).toBe('context: 0%')
+})
+
+test('settleAct: the mug ends at until, a move clears sit and nothing else', () => {
+  const holder = (act?: Act): { x: number; act?: Act } => (act === undefined ? { x: 1 } : { x: 1, act })
+  const mug = holder({ kind: 'mug', until: 9000 })
+  expect(settleAct(mug, 8999, false).act).toEqual({ kind: 'mug', until: 9000 })
+  expect(settleAct(mug, 9000, false).act).toBeUndefined()
+  expect(settleAct(mug, 9500, true).act).toBeUndefined()
+  // Walking with the mug keeps it until it runs out.
+  expect(settleAct(mug, 8000, true).act).toEqual({ kind: 'mug', until: 9000 })
+  const sit = holder({ kind: 'sit' })
+  expect(settleAct(sit, 99999, false).act).toEqual({ kind: 'sit' })
+  expect(settleAct(sit, 0, true).act).toBeUndefined()
+  expect(settleAct(sit, 0, true).x).toBe(1)
+  const none = holder()
+  expect(settleAct(none, 0, true)).toBe(none)
 })

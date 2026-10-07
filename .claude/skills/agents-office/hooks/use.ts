@@ -1,13 +1,15 @@
-// Using things in the office with `e` (interactions D24, D30). Pure, no `$`. `targetOf` picks the one nearest thing the
-// player can use; `deskOwner` says who sits at a desk; `hintOf` words the one-line hint shown near a target.
+// Using things in the office with `e` (interactions D24-D30). Pure, no `$`. `targetOf` picks the one nearest thing the
+// player can use; `deskOwner` says who sits at a desk; `hintOf` words the one-line hint shown near a target; `outcomeOf`
+// says what pressing `e` does; `boardLines` and `rackLines` fill the whiteboard and server rack panes.
 import type { OfficeAgent, Roster } from './agents'
 import type { Cat } from './cat'
 import type { Motion } from './frame'
-import { INSPECT_RANGE, nearest } from './inspect'
+import { INSPECT_RANGE, nearest, PEEK_MAX, PEEK_WIDTH } from './inspect'
 import { ITEM_KINDS } from './items'
 import type { Item } from './items'
+import { clean } from './log'
 import { CAT_FOOT } from './map'
-import type { Footprint, Point, Rect } from './map'
+import type { Footprint, Point, Rect, RoomId } from './map'
 
 // Items and the cat count from a footprint gap of 1 (D24); agents keep the v2 inspect range.
 export const USE_RANGE = 1
@@ -98,4 +100,133 @@ export const hintOf = (target: Target | undefined, roster: Roster): string | und
   const agent = roster[target.id]
 
   return agent === undefined ? undefined : `e: inspect ${agent.label}`
+}
+
+// ---- Outcomes (D26, D27, D28, D29) ----
+
+export const MUG_MS = 8000
+export const PET_MS = 3000
+
+// What the player holds or does after using a prop: a mug until `until`, or sitting on the sofa until a move.
+export type Act = { kind: 'mug'; until: number } | { kind: 'sit' }
+export type Outcome =
+  | { kind: 'inspect'; id: string }
+  | { kind: 'peek'; agentId: string; label: string }
+  | { kind: 'board' }
+  | { kind: 'rack' }
+  | { kind: 'act'; act: Act }
+  | { kind: 'say'; text: string }
+  | { kind: 'pet' }
+  // A caption line for outcomes the pane shows without a peek (empty desk, a remote desk).
+  | { kind: 'line'; text: string }
+
+export type UseCtx = {
+  // The room id of the player's own team: only its desks open a peek.
+  ownId: RoomId
+  roster: Roster
+  motion: Motion
+  // Room id to the name on its plate (`Session N` for an anonymous remote session).
+  roomNames: Readonly<Record<string, string>>
+}
+
+export const COOLER_LINES = [
+  'Cold water. Nice.',
+  'The cooler gurgles.',
+  'Somebody refilled the jug.',
+  'Hydrate or diedrate.',
+  'Water cooler talk: tests are green.',
+  'Just one more sip.',
+  'The jug is nearly empty.',
+  'Fresh cup, fresh start.',
+] as const
+
+const coolerLine = (seed: number): string => COOLER_LINES[Math.abs(Math.trunc(seed)) % COOLER_LINES.length] ?? COOLER_LINES[0]
+
+const deskOutcome = (desk: Item, ctx: UseCtx): Outcome => {
+  if (desk.room !== ctx.ownId) return { kind: 'line', text: `${clean(ctx.roomNames[desk.room ?? ''] ?? 'Remote')}'s desk` }
+  const owner = deskOwner(desk, ctx.motion, ctx.roster)
+
+  return owner === undefined ? { kind: 'line', text: 'Empty desk.' } : { kind: 'peek', agentId: owner.id, label: owner.label }
+}
+
+export const outcomeOf = (target: Target, ctx: UseCtx, now: number, seed: number): Outcome => {
+  if (target.kind === 'agent') return { kind: 'inspect', id: target.id }
+  if (target.kind === 'cat') return { kind: 'pet' }
+  switch (target.item.kind) {
+    case 'desk':
+      return deskOutcome(target.item, ctx)
+    case 'whiteboard':
+      return { kind: 'board' }
+    case 'rack':
+      return { kind: 'rack' }
+    case 'coffee':
+      return { kind: 'act', act: { kind: 'mug', until: now + MUG_MS } }
+    case 'sofa':
+      return { kind: 'act', act: { kind: 'sit' } }
+    case 'cooler':
+      return { kind: 'say', text: coolerLine(seed) }
+  }
+}
+
+// Clears an act that is over: the mug at `until`, sitting on any move (WASD, a room jump).
+export const settleAct = <P extends { act?: Act }>(player: P, now: number, moved: boolean): P => {
+  const act = player.act
+  if (act === undefined) return player
+  if ((act.kind === 'mug' && now >= act.until) || (act.kind === 'sit' && moved)) return { ...player, act: undefined }
+
+  return player
+}
+
+// ---- Pane lines ----
+
+// A plan node as the whiteboard reads it. The todo-list `plan` atom's nodes fit; `nodesOfTodos` makes a flat TodoWrite list fit.
+export type BoardNode = { id: string; parentId: string | null; title: string; status: string }
+export type BoardTodo = { content: string; status: string }
+
+export const nodesOfTodos = (todos: readonly BoardTodo[]): BoardNode[] =>
+  todos.map((todo, i) => ({ id: `todo-${i}`, parentId: null, title: todo.content, status: todo.status }))
+
+const MARK: Readonly<Record<string, string>> = { completed: '[x]', in_progress: '[>]' }
+export const NO_PLAN = 'No plan yet.'
+
+// The plan as a tree in file order: `[x] done`, `[>] doing`, `[ ] to do`, two spaces per level, first PEEK_MAX lines.
+export const boardLines = (nodes: readonly BoardNode[] | undefined): string[] => {
+  if (nodes === undefined || nodes.length === 0) return [NO_PLAN]
+  const ids = new Set(nodes.map(n => n.id))
+  const kids = new Map<string | null, BoardNode[]>()
+  for (const node of nodes) {
+    // A node whose parent is missing counts as a root, so nothing is lost.
+    const key = node.parentId !== null && ids.has(node.parentId) ? node.parentId : null
+    kids.set(key, [...(kids.get(key) ?? []), node])
+  }
+  const lines: string[] = []
+  const seen = new Set<string>()
+  const walk = (parent: string | null, depth: number): void => {
+    for (const node of kids.get(parent) ?? []) {
+      if (seen.has(node.id) || lines.length >= PEEK_MAX) continue
+      seen.add(node.id)
+      lines.push(Array.from(`${'  '.repeat(depth)}${MARK[node.status] ?? '[ ]'} ${clean(node.title)}`).slice(0, PEEK_WIDTH).join(''))
+      walk(node.id, depth + 1)
+    }
+  }
+  walk(null, 0)
+
+  // A parent cycle leaves no root to start from.
+  return lines.length === 0 ? [NO_PLAN] : lines
+}
+
+export type AgentListItem = { id: string; status: string }
+export type Usage = { percent?: number; usd?: number }
+
+// The server rack pane (D28): context and cost, running and idle counts, then each own agent's tool NAME. Only the
+// own roster and `status` of the agent list are read, so no remote tool, tool argument or prompt text can reach it.
+export const rackLines = (input: { roster: Roster; agentList: readonly AgentListItem[]; usage?: Usage }): string[] => {
+  const { roster, agentList, usage } = input
+  const percent = usage?.percent === undefined ? '-' : `${Math.round(usage.percent)}%`
+  const cost = usage?.usd === undefined ? '-' : `$${usage.usd.toFixed(2)}`
+  const running = agentList.filter(a => a.status === 'running').length
+  const idle = agentList.filter(a => a.status === 'idle').length
+  const rows = Object.values(roster).map(a => `${clean(a.label)}: ${a.tool === undefined ? '-' : clean(a.tool)}`)
+
+  return [`context: ${percent}`, `cost: ${cost}`, `agents: ${running} running, ${idle} idle`, ...rows].map(line => Array.from(line).slice(0, PEEK_WIDTH).join(''))
 }
