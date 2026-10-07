@@ -4,6 +4,7 @@ import type { OfficeMap, Point, Rect, Room } from './map'
 import { findPath } from './path'
 import type { Dir, Intent, PendingChat, PendingEmote } from './pad'
 import type { Facing } from './sprites'
+import type { Act } from './use'
 import { CHAT_MS, EMOTE_MS, INTENT_MS } from './timing'
 
 export type Player = {
@@ -21,6 +22,8 @@ export type Player = {
   emoteUntil?: number
   chat?: string
   chatUntil?: number
+  // A coffee mug in hand or sitting on the sofa (interactions D29); local, never published.
+  act?: Act
 }
 
 const FACING: Readonly<Record<Dir, Facing>> = { w: 'up', a: 'left', s: 'down', d: 'right' }

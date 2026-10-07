@@ -56,9 +56,9 @@ import { sceneKey, sceneOf } from './scene'
 import type { SceneModel } from './scene'
 import { baseName, branchOf, teamLabel } from './team'
 import { hashKey } from './sprites'
-import { boardLines, nodesOfTodos, outcomeOf, rackLines, targetOf as useTargetOf } from './use'
+import { boardLines, hintOf, MUG_MS, nodesOfTodos, outcomeOf, PET_MS, rackLines, settleAct, targetOf as useTargetOf } from './use'
 import type { BoardNode, Outcome } from './use'
-import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timing'
+import { CHAT_MS, INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timing'
 
 const PANE = 'office'
 const PAD_KEY = 'pad-input'
@@ -100,6 +100,12 @@ const cat = atom({ plugin: 'agents-office', key: 'cat' } as const, null as Cat |
 // The inspect line (D39): which agent, the text and when it stops showing; null when nothing is inspected.
 type Inspect = { agentId: string; text: string; until: number }
 const inspect = atom({ plugin: 'agents-office', key: 'inspect' } as const, null as Inspect | null)
+
+// The hint line (D30): what `e` would do for the nearest target, recomputed every tick; null when nothing is in reach.
+const hintLine = atom({ plugin: 'agents-office', key: 'hintLine' } as const, null as string | null)
+
+// When the heart over the cat stops (D29); an old time (or 0) once it is over. Local, never published.
+const catPetUntil = atom({ plugin: 'agents-office', key: 'catPetUntil' } as const, 0)
 
 // The peek pane's content (D25, D26): an own agent's last text messages (`agent`, from `E` or a desk), the plan (`board`,
 // drawn live from its source, so `lines` is only the first draw) or the server rack (`rack`); one `Nothing to show` line
@@ -576,8 +582,28 @@ const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number, p
     jumping === null
       ? { player: spawnPlayer(map, own.id, padCells), intent }
       : stepPlayer(jumping, map, intent, now, own.id, padCells)
-  const next = out.player === undefined ? undefined : settleChat(settleEmote(out.player, padNow.emote, now), padNow.chat, now)
-  if (next !== undefined && next !== current) await update($, player, () => next)
+  const settled = out.player === undefined ? undefined : settleChat(settleEmote(out.player, padNow.emote, now), padNow.chat, now)
+  // A key tap, a room jump or a step ends sitting (D29); the mug ends by the clock.
+  const moved =
+    (intent !== undefined && out.intent !== undefined && out.intent.taps < intent.taps) ||
+    padNow.jump !== undefined ||
+    (current !== null && settled !== undefined && (settled.x !== current.x || settled.y !== current.y))
+  let next = settled
+  if (settled !== undefined && (settled !== current || current?.act !== undefined)) {
+    const walked = settled
+    // The act and a chat line are taken from the atom's own current value, so one a hook wrote since the read above (an
+    // `e` press) is not dropped; only the tick's own changes (position, facing, emote, a typed chat) are applied.
+    await update($, player, cur => {
+      if (cur === null) return walked
+      const { act: _read, ...bare } = walked
+      const { chat: _text, chatUntil: _until, ...quiet } = bare
+      const kept = padNow.chat === undefined ? settleChat({ ...quiet, ...(cur.chat === undefined ? {} : { chat: cur.chat, ...(cur.chatUntil === undefined ? {} : { chatUntil: cur.chatUntil }) }) }, undefined, now) : bare
+      const result = settleAct({ ...kept, ...(cur.act === undefined ? {} : { act: cur.act }) }, now, moved)
+
+      return JSON.stringify(result) === JSON.stringify(cur) ? cur : result
+    })
+    next = (await read($, player)) ?? settled
+  }
   if (padNow.emote !== undefined && next !== undefined) {
     // Only the emote that was applied is cleared; a newer press stays for the next tick.
     const applied = padNow.emote
@@ -779,12 +805,50 @@ const useTick = async ($: EngineInterface, now: number, at: Player | null | unde
     case 'line':
       await update($, inspect, () => ({ agentId: '', text: clean(outcome.text), until: now + INSPECT_MS }))
       return
-    case 'inspect':
-    case 'act':
-    case 'say':
+    case 'act': {
+      const act = outcome.act
+      await update($, player, cur => (cur === null ? cur : { ...cur, act }))
+      await artLine($, now, act.kind === 'mug' ? ACT_LINES.mug : ACT_LINES.sit, act.kind === 'mug' ? MUG_MS : INSPECT_MS)
+      return
+    }
+    case 'say': {
+      const text = outcome.text
+      await update($, player, cur => (cur === null ? cur : { ...cur, chat: text, chatUntil: now + CHAT_MS }))
+      return
+    }
     case 'pet':
+      await update($, catPetUntil, () => now + PET_MS)
+      await artLine($, now, ACT_LINES.pet, PET_MS)
+      return
+    case 'inspect':
       return
   }
+}
+
+// What the art-only outcomes say when the scene is not an image (the text office draws no mug, sofa pose or heart), as
+// the action line of the caption (D25, D30). In the image scene the drawing is the answer and no line is written.
+const ACT_LINES = { mug: 'You hold a mug of coffee.', sit: 'You sit on the sofa.', pet: 'You pet the cat.' } as const
+
+const artLine = async ($: EngineInterface, now: number, text: string, ms: number): Promise<void> => {
+  if ((await read($, scene)).effective === 'image') return
+  await update($, inspect, () => ({ agentId: '', text, until: now + ms }))
+}
+
+// The hint (D30): the nearest target's `e: ...` line, kept in the `hintLine` atom for the caption. Written only when it
+// changes, so a still player does not redraw the pane each tick.
+const hintTick = async (
+  $: EngineInterface,
+  map: OfficeMap,
+  at: Player | null,
+  roster: Roster,
+  moving: Motion,
+  kitty: Cat | null,
+): Promise<string | undefined> => {
+  const target = at === null ? undefined : useTargetOf({ player: at, foot: map.foot, agents: roster, motion: moving, items: itemsOf(map), cat: kitty ?? undefined })
+  const line = hintOf(target, roster)
+  if ((await read($, hintLine)) !== (line ?? null)) await update($, hintLine, () => line ?? null)
+
+  return line
 }
 
 // Asks `question` with No first; `act` runs only when the answer is exactly Yes. A dismissed dialog rejects and a
@@ -1299,6 +1363,8 @@ const tick = async ($: EngineInterface): Promise<void> => {
   if (map === undefined) {
     // No pane drawn (or one below the minimum size): the image renderer only keeps its heartbeat (T19).
     await guard($, 'hold', undefined, async () => holdRenderer($, now))
+    // Nothing is drawn, so no hint is shown either.
+    if ((await read($, hintLine)) !== null) await update($, hintLine, () => null)
     // Scripts cannot advance, but a shown bubble still expires.
     await guard($, 'bubbles', undefined, async () => {
       if (expireBubbles(await read($, bubbles), now) === (await read($, bubbles))) return
@@ -1324,7 +1390,8 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const kitty = await guard($, 'cat', await read($, cat), async () => catTick($, map, now))
   const inspected = await guard($, 'inspect', undefined, async () => inspectTick($, map, now, walker))
   // The message being typed takes the inspect line (D47).
-  const shown = chatLine(await read($, pad)) ?? inspected
+  const hinted = await guard($, 'hint', undefined, async () => hintTick($, map, walker, after.agents, after.motion, kitty))
+  const shown = chatLine(await read($, pad)) ?? inspected ?? hinted
   const noStrip = (await read($, viewport)).strip === 0
   const ownId = (await read($, team))?.id ?? ''
   const focus = focusOf(map, walker, ownId)
@@ -1357,6 +1424,9 @@ const tick = async ($: EngineInterface): Promise<void> => {
           cat: kitty,
           inspect: await read($, inspect),
           chatLine: typed,
+          act: walker?.act ?? null,
+          catPetUntil: await read($, catPetUntil),
+          hint: hinted,
         },
         size,
       ),
@@ -1803,7 +1873,7 @@ export const register: Register = on => {
           )
         }
         const inspected = await read($, inspect)
-        const inspectLine = chatLine(await read($, pad)) ?? (inspected !== null && inspected.until > (await $.clock.now()) ? inspected.text : undefined)
+        const inspectLine = chatLine(await read($, pad)) ?? (inspected !== null && inspected.until > (await $.clock.now()) ? inspected.text : undefined) ?? (await read($, hintLine)) ?? undefined
         const drawnPlayer = await read($, player)
         const ownTeamId = (await read($, team))?.id ?? ''
         const focus = focusOf(map, drawnPlayer, ownTeamId)

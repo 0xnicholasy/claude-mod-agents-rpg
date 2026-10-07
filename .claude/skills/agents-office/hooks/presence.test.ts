@@ -303,6 +303,15 @@ test('a published player carries only its documented keys and a forged expiry is
   expect(toPresencePlayer(map, { x: 20, y: 3, facing: 'up', emote: '!', emoteUntil: 2000, chat: 'hello', chatUntil: 1000 }, 1500)).toMatchObject({ emote: '!', emoteUntil: 2000 })
 })
 
+test('a player holding a mug or sitting publishes no new field (interactions D29)', () => {
+  const map = teamMap(80)
+  const holding = { x: 20, y: 3, facing: 'up' as const, frame: 0, path: [], act: { kind: 'mug' as const, until: 9000 } }
+  const sitting = { ...holding, act: { kind: 'sit' as const } }
+
+  expect(Object.keys(toPresencePlayer(map, holding, 0) ?? {}).sort()).toEqual(['facing', 'room', 'rx', 'ry'])
+  expect(toPresencePlayer(map, sitting, 0)).toEqual(toPresencePlayer(map, { x: 20, y: 3, facing: 'up' }, 0))
+})
+
 test('a remote player moves between figure sizes', () => {
   const teams = [1, 2, 3, 4, 5].map(n => ({ id: `team:s${n}` as const, label: `p${n}` }))
   const small = buildOffice(60, 18, teams)

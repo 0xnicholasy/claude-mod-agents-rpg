@@ -4,8 +4,8 @@ import type { On } from 'claude-code'
 import { itemsOf } from './items'
 import type { Item } from './items'
 import { mapFor } from './loop'
-import { rectGap } from './use'
-import { buildOffice, canStand, MID_FOOT } from './map'
+import { COOLER_LINES, rectGap } from './use'
+import { buildOffice, canStand, CAT_FOOT, MID_FOOT } from './map'
 import { findPath } from './path'
 import { NUDGE_TEXT } from './pad'
 import { STRIP_ROWS, TICK_MS } from './timing'
@@ -1012,7 +1012,7 @@ test('the strip always renders exactly five truncating rows', async ($, on) => {
   await ui.unmount()
 })
 
-test('a 25-row body shows the two newest strip lines', async ($, on) => {
+test('a 25-row body shows the newest strip line and the caption in the last row', async ($, on) => {
   const { ui } = await startOffice($, on)
   await $.agent.spawn({ ...spawnArgs, name: 'a1' })
   for (let i = 0; i < 3; i += 1) await $.tool.call({ tool: 'SendMessage', to: 'a1', message: `m${i}` })
@@ -1020,12 +1020,11 @@ test('a 25-row body shows the two newest strip lines', async ($, on) => {
   const rows = await ui.findAll({ type: 'Text' })
 
   expect(rows).toHaveLength(2)
-  expect(await ui.find({ type: 'Text', text: /told a1: m2/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /told a1: m1/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /told a1: m0/ })).toBeUndefined()
-  // Oldest of the two first: m1 renders before m2.
+  // The player starts at its desk, so the hint takes the last strip row from the newest line (D30), as an inspect line does.
   expect(rows[0]?.text).toContain('m1')
-  expect(rows[1]?.text).toContain('m2')
+  expect(rows[1]?.text).toBe('e: desk')
   await ui.unmount()
 })
 
@@ -2326,13 +2325,14 @@ test('image scene: keys 1 to 4 show an emote above the player that ends after 3 
 test('image scene: e highlights the nearest agent and writes the inspect line as the caption for 6 s', async ($, on) => {
   const { ui, wait, scene } = await padSession($, on)
   await toDesk($, wait)
-  expect(scene().caption).toBeUndefined()
+  expect(scene().caption).toBe('e: inspect main')
   await pressKey($, 'e')
   await wait(1000)
   expect(scene().figures.filter(f => f.highlight).map(f => f.key)).toEqual(['main'])
   expect(scene().caption).toMatch(/^main \| working \| \w+ \| .+ \| \d+s$/)
   await wait(6000)
-  expect(scene().caption).toBeUndefined()
+  // The inspect line is over; the hint is the caption again while main is in reach.
+  expect(scene().caption).toBe('e: inspect main')
   expect(scene().figures.some(f => f.highlight)).toBe(false)
   await ui.unmount()
 })
@@ -2359,7 +2359,7 @@ test('image scene: t shows the draft as the caption, Enter turns it into a chat 
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'twasd hi', kind: 'submit' })
   await wait(1000)
   expect(you().chat).toBe('wasd hi')
-  expect(scene().caption).toBeUndefined()
+  expect(scene().caption).toBe('e: desk')
   expect({ x: you().x, y: you().y }).toEqual({ x: before.x, y: before.y })
   await wait(5000)
   expect(you().chat).toBeUndefined()
@@ -2479,7 +2479,10 @@ test('image scene: a tombstoned session leaves the scene within 5 s', async ($, 
 
 // ---- Using the office with e (T31) -------------------------------------------------------------------------
 type Written = {
-  player?: { x: number; y: number; path: unknown[] }
+  player?: { x: number; y: number; path: unknown[]; act?: { kind: 'mug' | 'sit'; until?: number }; chat?: string; chatUntil?: number }
+  cat?: { x: number; y: number }
+  hintLine?: string | null
+  catPetUntil?: number
   motion?: Record<string, { x: number; y: number; path: Array<{ x: number; y: number }> }>
   viewport?: { columns: number; rows: number }
   team?: { id: `team:${string}`; label: string }
@@ -2489,9 +2492,10 @@ type Written = {
 // A text-scene session with the pane mounted. A test cannot write atoms, so `state.set` keeps the newest value of each
 // and rewrites the player's position while `pin` is set (any key that moves the player then makes the write). `opened`
 // records the pane opens as `id|title`.
-const useSession = async ($: Engine, on: On) => {
+const useSession = async ($: Engine, on: On, mode: 'text' | 'image' = 'text') => {
   const clock = mock.clock(on)
   const opened: string[] = []
+  const states: string[] = []
   const last: Written = {}
   const pin: { at?: { x: number; y: number } } = {}
   on('state.set', ($$, e, next) => {
@@ -2503,12 +2507,18 @@ const useSession = async ($: Engine, on: On) => {
 
       return next({ ...e, value: pinned as never })
     }
-    if (e.key === 'player' || e.key === 'motion' || e.key === 'viewport' || e.key === 'team' || e.key === 'inspect') (last as Record<string, unknown>)[e.key] = value
+    if (e.key === 'player' || e.key === 'motion' || e.key === 'viewport' || e.key === 'team' || e.key === 'inspect' || e.key === 'hintLine' || e.key === 'catPetUntil' || e.key === 'cat') (last as Record<string, unknown>)[e.key] = value
 
     return next(e)
   })
   stubSession(on)
-  on('store.get', (_$, e) => ({ value: e.key === 'scene' ? 'text' : undefined }))
+  on('store.get', (_$, e) => ({ value: e.key === 'scene' ? mode : undefined }))
+  on('fs.write', (_$, e) => {
+    if (e.path === `${STATE_DIR}/state.json`) states.push(e.text)
+
+    return { value: undefined }
+  })
+  if (mode === 'image') stubRenderer(on, 'ready\n')
   on('ui.open', (_$, e) => {
     opened.push(`${e.id}|${e.title ?? ''}`)
 
@@ -2521,7 +2531,7 @@ const useSession = async ($: Engine, on: On) => {
   on('tool.call', () => ({ result: 'stub' }))
   on('session.measure', (_$, e) => ({ changed: e.changed }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount(paneAt(23))
+  const ui = await $.ui.mount(paneAt(mode === 'image' ? 23 + STRIP_ROWS : 23))
   await clock.advance(TICK_MS * 4)
   const mapOf = (): OfficeMap => {
     const size = last.viewport
@@ -2552,6 +2562,27 @@ const useSession = async ($: Engine, on: On) => {
     }
     throw new Error('no standable cell at that gap')
   }
+  // Puts the player on the first standable cell that is 2 or more cells from every item, the cat and each agent.
+  const standClear = async (): Promise<void> => {
+    const map = mapOf()
+    const bodies: Rect[] = [
+      ...items().map(i => i.rect),
+      ...(last.cat === undefined ? [] : [{ x: last.cat.x, y: last.cat.y, w: CAT_FOOT.w, h: CAT_FOOT.h }]),
+      ...Object.values(last.motion ?? {}).map(m => ({ x: m.x, y: m.y, w: 5, h: 5 })),
+    ]
+    for (let y = 0; y < map.rows; y++) {
+      for (let x = 0; x < map.columns; x++) {
+        const body = { x, y, w: map.foot.w, h: map.foot.h }
+        if (!canStand(map, x, y) || bodies.some(other => rectGap(body, other) <= 2)) continue
+        pin.at = { x, y }
+        // `a`, not `d`: the same key as the last press changes nothing, and the pin needs a write.
+        await press('a')
+
+        return
+      }
+    }
+    throw new Error('no cell clear of every target')
+  }
   const peekTexts = async (): Promise<string[]> => {
     const pane = await $.ui.mount({ ...paneAt(23), requestId: 'office-peek' })
     const texts = (await pane.findAll({ type: 'Text' })).map(t => String(t.text))
@@ -2560,7 +2591,10 @@ const useSession = async ($: Engine, on: On) => {
     return texts
   }
 
-  return { clock, ui, opened, last, items, press, stand, peekTexts }
+  const scene = (): SceneModel => (JSON.parse(states.at(-1) ?? '{}') as { scene: SceneModel }).scene
+  const figure = (key: string): SceneFigure | undefined => scene().figures.find(f => f.key === key)
+
+  return { clock, ui, opened, last, items, press, stand, standClear, peekTexts, scene, figure }
 }
 
 test('e at the whiteboard lists a TodoWrite and the pane redraws after a second TodoWrite', async ($, on) => {
@@ -2627,17 +2661,115 @@ test('e next to an agent inspects it and opens no peek pane', async ($, on) => {
   await run.ui.unmount()
 })
 
-test('e at the coffee machine is consumed: no inspect line and no pane', async ($, on) => {
-  const run = await useSession($, on)
-  const coffee = run.items().find(i => i.kind === 'coffee')
-  if (coffee === undefined) throw new Error('no coffee machine')
-  await run.stand(coffee.rect, 1)
-  await run.press('e')
+const MODES = ['text', 'image'] as const
 
-  expect(run.last.inspect).toBeUndefined()
-  expect(run.opened.filter(o => o.startsWith('office-peek'))).toEqual([])
-  await run.ui.unmount()
-})
+// Stands beside `rect` with every `apart` rect farther away: one cell off if some cell allows that, else touching it.
+const standBeside = async (run: Awaited<ReturnType<typeof useSession>>, rect: Rect, apart: Rect[]): Promise<void> => {
+  try {
+    await run.stand(rect, 1, apart)
+  } catch {
+    await run.stand(rect, 0, apart)
+  }
+}
+
+const besideItem = async (run: Awaited<ReturnType<typeof useSession>>, kind: Item['kind']): Promise<void> => {
+  const all = run.items()
+  const item = all.find(i => i.kind === kind)
+  if (item === undefined) throw new Error(`no ${kind}`)
+  await standBeside(run, item.rect, all.filter(i => i !== item).map(i => i.rect))
+}
+
+for (const mode of MODES) {
+  test(`${mode} scene: e at the coffee machine holds a mug for 8 s`, async ($, on) => {
+    const run = await useSession($, on, mode)
+    await besideItem(run, 'coffee')
+    await run.press('e')
+
+    expect(run.last.player?.act?.kind).toBe('mug')
+    if (mode === 'image') {
+      expect(run.figure('player')?.holding).toBe('mug')
+      expect(run.last.inspect ?? undefined).toBeUndefined()
+    } else {
+      expect(run.last.inspect?.text).toBe('You hold a mug of coffee.')
+    }
+    await run.clock.advance(7500)
+    expect(run.last.player?.act?.kind).toBe('mug')
+    if (mode === 'image') expect(run.figure('player')?.holding).toBe('mug')
+    await run.clock.advance(800)
+    expect(run.last.player?.act).toBeUndefined()
+    if (mode === 'image') expect(run.figure('player')?.holding).toBeUndefined()
+    // Over for good: no later tick brings the mug back.
+    await run.clock.advance(1000)
+    expect(run.last.player?.act).toBeUndefined()
+    await run.ui.unmount()
+  })
+
+  test(`${mode} scene: e at the sofa sits and d stands`, async ($, on) => {
+    const run = await useSession($, on, mode)
+    await besideItem(run, 'sofa')
+    await run.press('e')
+
+    expect(run.last.player?.act).toEqual({ kind: 'sit' })
+    if (mode === 'image') expect(run.figure('player')?.pose).toBe('seated')
+    else expect(run.last.inspect?.text).toBe('You sit on the sofa.')
+    await run.clock.advance(3000)
+    expect(run.last.player?.act).toEqual({ kind: 'sit' })
+    await run.press('d')
+    expect(run.last.player?.act).toBeUndefined()
+    if (mode === 'image') expect(run.figure('player')?.pose).toBe('standing')
+    // A room jump stands the player up as well.
+    await run.press('e')
+    expect(run.last.player?.act).toEqual({ kind: 'sit' })
+    await run.press(']')
+    expect(run.last.player?.act).toBeUndefined()
+    await run.ui.unmount()
+  })
+
+  test(`${mode} scene: e at the water cooler chats one of the fixed lines for 5 s`, async ($, on) => {
+    const run = await useSession($, on, mode)
+    await besideItem(run, 'cooler')
+    await run.press('e')
+
+    const said = run.last.player?.chat
+    expect(COOLER_LINES as readonly (string | undefined)[]).toContain(said)
+    if (mode === 'image') expect(run.figure('player')?.chat).toBe(said)
+    await run.clock.advance(5500)
+    expect(run.last.player?.chat).toBeUndefined()
+    if (mode === 'image') expect(run.figure('player')?.chat).toBeUndefined()
+    await run.ui.unmount()
+  })
+
+  test(`${mode} scene: e beside the cat shows a heart on it for 3 s`, async ($, on) => {
+    const run = await useSession($, on, mode)
+    const kitty = run.last.cat
+    if (kitty === undefined) throw new Error('no cat')
+    // The cat wins a tie with an item, so touching it is enough; an agent would win the tie, so none is near.
+    await run.stand({ x: kitty.x, y: kitty.y, w: CAT_FOOT.w, h: CAT_FOOT.h }, 0, [], Object.values(run.last.motion ?? {}).map(m => ({ x: m.x, y: m.y, w: 5, h: 5 })))
+    await run.press('e')
+
+    expect(run.last.catPetUntil ?? 0).toBeGreaterThan(0)
+    if (mode === 'image') expect(run.figure('cat')?.emote).toBe('♥')
+    else expect(run.last.inspect?.text).toBe('You pet the cat.')
+    await run.clock.advance(3500)
+    if (mode === 'image') expect(run.figure('cat')?.emote).toBeUndefined()
+    await run.ui.unmount()
+  })
+
+  test(`${mode} scene: the hint shows beside an item and is gone after walking away`, async ($, on) => {
+    const run = await useSession($, on, mode)
+    await besideItem(run, 'coffee')
+    await run.clock.advance(TICK_MS * 2)
+
+    expect(run.last.hintLine).toBe('e: coffee machine')
+    if (mode === 'image') expect(run.scene().caption).toBe('e: coffee machine')
+    await run.standClear()
+    await run.clock.advance(TICK_MS * 2)
+
+    expect(run.last.hintLine).toBeNull()
+    if (mode === 'image') expect(run.scene().caption).toBeUndefined()
+    await run.ui.unmount()
+  })
+}
 
 test('a subagent TodoWrite does not reach the whiteboard', async ($, on) => {
   const run = await useSession($, on)
