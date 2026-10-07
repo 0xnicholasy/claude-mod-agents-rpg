@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 20/22 done
+Progress: 20/31 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -64,6 +64,13 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 
 Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows, so those rows are the noisier ones): idle static 5/4/8, idle typing 7/12/11, walking 16/30/44 (608/928/2040). Over D13 only at 2040x748 walking (44 > 40); idle static was 4-13 depending on load, never a frame. Changes, in the order D13 tells: (1) CDP `Page.captureScreenshot` with `optimizeForSpeed`: at 2040x748 walking 43.5 -> 38 (2 runs each, 20 s), PNG 96 -> 165 KB; at 928x391 30 -> 30 with PNG 71 -> 96 KB, so it is on only above `FAST_PX` = 1,000,000 viewport pixels (CDP without the flag = Playwright, 43 vs 43). (2) Not needed: clip to the view (the box is the Image size, so a clip would change the frame size) and a lower busy cap (walking already gives about 7 fps, one frame per 150 ms tile step, under the 12 fps cap). Two idle fixes that were not on the list but cut idle CPU about in half (static 11-13 -> 6-7 at the same load): `render.mjs` asks the page `sceneBusy()` only after a state push, while a frame is owed or while the last shot was busy (was every 50 ms poll), and `office.html` redraws on `requestAnimationFrame` only while busy (setScene and resize call `frame()` themselves). Final constants: `BUSY_FRAME_MS` 83 (12 fps cap) unchanged, `POLL_MS` 50 unchanged, `FAST_PX` 1,000,000. Budget at 120x40 (928x391 is the 120x40 pane's Image box): idle 11 (< 15), walking 32 (< 40); a static scene wrote no frame for 30 s. | confirmed T18; GHOSTTY walking smoothness check pending (owner)
 - D23 Pane resize in both axes (T19, 2026-10-07). T02 tmux probe: a height-only resize DID re-render the pane (render count 2 -> 3, body rows 6 -> 11 at 80x24 -> 80x40), although the d.ts doc says `viewport.rows` changes re-draw nothing; the owner's Ghostty probe showed body 82x20 at viewport 86x40, so height follows there too. Decision: no workaround is needed, a height-only resize re-renders and the render takes the box from `bodyRowsFor(placement, scroll.bodyRows, viewport.rows)`; the d.ts doc is wrong for the terminal (known limit if a future build honours it: the tick reads the `viewport` atom, which only a render writes, so a skipped render would leave the old box until the next one). Path: render -> `writeViewport` -> tick reads `viewport` -> `pixelsFor` -> `state.json` `size` (columns*8 x rows*17, each axis capped at 2048) -> renderer `setViewportSize` -> next frame. Two fixes: (1) the write key is now `writeKeyOf(size, sceneText)` so a resize can never wait for the 2 s heartbeat; this is a guard only, because `sceneOf` already carries `world` and `camera` sized to the box and every tested resize (a one-row change included) changed the scene text, so no office test can tell the guard from the scene change and `bridge.test.ts` pins the key and `shouldWrite` instead; (2) below MIN_COLUMNS x MIN_ROWS the render draws only the v2 size line (Image unmounted) and the tick sends no new scene, so the renderer gets no new seq and writes no frame (pause = the renderer is alive but idle); the tick rewrites the last scene with the same seq and a fresh heartbeat every 2 s (`holdRenderer`), because without it the D7 watchdog would end the renderer after 10 s, count as a crash and fall to text after 3 exits; the hold mark has an empty key, so the first write after the pane is big enough again is a new seq and a new frame (the Image remounts with the placeholder). | confirmed T19 by tests (state size per box, pause plus heartbeat plus resume) and the direct run in the Log; GHOSTTY height-only drag pending (owner)
+- D24 One `e`, nearest wins (interactions, 2026-10-07, assumed). Targets: own agents within INSPECT_RANGE 2 (`nearest` in inspect.ts); the cat and items within footprint gap <= 1. Smallest gap wins. Ties: agent > cat > item, then table order, then lower x. `E` unchanged. An agent target keeps the v2 inspect path exactly.
+- D25 Item geometry (interactions, 2026-10-07, assumed): from scene.ts `propsOf` (exported), px -> cells via CELL_PX. Desks come from team anchors. No collision. The text fallback uses the same items undrawn; art-only outcomes show as a caption line.
+- D26 Peek panes (interactions, 2026-10-07, assumed): desk, whiteboard and rack open the existing `office-peek` pane, only from the `ui.input` hook (a plugin-initiated open waits undrawn below 144 cols, register.tsx ~1546). The `peek` atom becomes `{ source: 'agent'|'board'|'rack', agentId?, label, lines }`.
+- D27 Whiteboard source (interactions, 2026-10-07, assumed, confirm by T25): the todo-list `plan` atom via `read($, { plugin: 'todo-list', key: 'plan' })` (d.ts 3286-3300, 8787-8790; contract todo-list types/index.d.ts:46-62). If undefined, an own `board` atom mirrored from successful TodoWrite/TaskCreate/TaskUpdate `tool.call`s (`result.newTodos ?? e.todos`, d.ts 15839-15887). The render reads the source live. Own session only.
+- D28 Server rack lines (interactions, 2026-10-07, assumed, confirm by T25): own roster agents with tool names (D16 privacy); running/idle counts from `$.agent.list()` (d.ts 3080-3087, AgentInfo.status 159-167); context % and cost from a `session.measure` hook (d.ts 4265, 10554-10580) into a `usage` atom (context.percent?/window 10409-10434; cost?.usd 10439-10444, 11182-11185). No background shell tasks (no live API).
+- D29 Fun props (interactions, 2026-10-07, assumed): local, never published to presence (presence.ts:442 picks fields). Coffee = mug for MUG_MS 8 s; sofa = sit until any WASD/[/]/jump; water cooler = one of 8 fixed lines by seed as player chat for CHAT_MS; cat = heart emote on the cat for 3 s. An empty desk says `Empty desk.`; a remote agent's desk says `<Session N>'s desk` and has no peek.
+- D30 Caption order (interactions, 2026-10-07, assumed): chat draft > inspect/action line > hint. Hint `e: coffee machine` (item), `e: inspect <label>` (agent). The text fallback shows it on the overlay/strip row like inspect.
 
 ## Todos
 
@@ -392,6 +399,120 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - done when: every command in the README runs as written, and the owner reads the Image office section
 - verify: run each README command; `rtk proxy npm run check`; owner review
 
+### T25 Spike plan and activity data
+- status: todo
+- needs: none
+- size: S
+- scope: In a scratch plugin (not committed), check: (a) `read($, { plugin: 'todo-list', key: 'plan' } as const)` typechecks with the todo-list contract vendored at `vendor/todo-list/index.d.ts`, passes validate, returns the plan with todo-list loaded and undefined (no throw) without it, and a render reading it redraws on a plan change; (b) `$.session.usage()` and `session.measure` values (context.percent, cost.usd) in LIVE before and after one prompt; (c) `$.agent.list()` statuses while a subagent runs.
+- files: scratch only, under the session scratchpad; results go into this file's Decisions/Log
+- done when: D27 and D28 are confirmed or amended with quoted values; if (a) fails, D27 drops to the own `board` mirror
+- verify: LIVE with `--plugin-dir` for both mods, log excerpt in the Log
+
+### T26 Interactables table and item geometry
+- status: todo
+- needs: none
+- size: S
+- scope: New `hooks/items.ts` (pure): `ItemKind` = desk|whiteboard|coffee|sofa|cooler|rack; `ITEMS: Record<ItemKind, { label; sprites: SpriteName[]; foot: Footprint }>`; `itemsOf(map): Item[]` (`{ id, kind, label, rect, room?, anchor? }`) from the exported `propsOf` plus one desk per team anchor. The only edit to scene.ts is exporting `propsOf`.
+- files: `hooks/items.ts`, `hooks/items.test.ts`, `hooks/scene.ts` (export `propsOf` only)
+- done when:
+  - tests show every interactable prop yields one item (2 racks, 2 coolers);
+  - desk count equals the team anchors;
+  - each rect lies inside its room or the corridor;
+  - moving a room moves its items;
+  - dropping a sprite from `ITEMS` fails a test.
+- verify: `rtk proxy npm run check`; a mutation check that breaks one rule and fails a key test
+
+### T27 Nearest-target resolution and hint
+- status: todo
+- needs: T26
+- size: S
+- scope: New `hooks/use.ts` (pure): `targetOf({ player, foot, agents, motion, items, cat })` -> Target (agent|cat|item) per D24; `deskOwner(desk, motion, roster)` (the agent resting at the anchor or whose path ends there); `hintOf(target, roster)` per D30.
+- files: `hooks/use.ts`, `hooks/use.test.ts`
+- done when:
+  - tests show agent gap 2 vs item gap 1 -> item;
+  - equal gap -> agent > cat > item;
+  - an item at gap 2 is out of range;
+  - mid and small footprints resolve;
+  - desk owner by rest and by path end;
+  - exact hint strings;
+  - changing the tie order fails a test.
+- verify: `rtk proxy npm run check`; a mutation check that swaps the tie order and fails a test
+
+### T28 Action outcomes and pane lines
+- status: todo
+- needs: T27
+- size: M
+- scope: In `hooks/use.ts`: `outcomeOf(target, ctx, now, seed)` -> inspect|peek|board|rack|act('mug'|'sit')|say|pet|line; `COOLER_LINES` (8) with a seeded pick; `boardLines(plan|todos)` with `[x]`/`[>]`/`[ ]` and indent, capped at PEEK_MAX, else `No plan yet.`; `rackLines({ roster, agentList, usage })` with own tools only; `settleAct(player, now, moved)` (the mug expires, a move clears sit).
+- files: `hooks/use.ts`, `hooks/use.test.ts`
+- done when:
+  - tests show each kind's outcome;
+  - an empty desk gives `Empty desk.`;
+  - a remote desk gives no peek;
+  - board tree order holds and the cap is 10;
+  - rack lines never hold a remote tool or a tool argument;
+  - a missing cost or percent prints `-`;
+  - the mug ends at now >= until;
+  - a step clears sit.
+- verify: `rtk proxy npm run check`; a mutation check that lets a remote tool into the rack and fails a test
+
+### T29 Scene fields for actions, pet, hint
+- status: todo
+- needs: T28
+- size: S
+- scope: `SceneInput` gains `act`, `catPetUntil` and `hint`. The player figure gets `holding: 'mug'` or `pose: 'seated'` with y on the sofa foot line; the cat gets the emote U+2665 while `catPetUntil` > now; `captionOf` follows D30; `sceneKey` changes with each.
+- files: `hooks/scene.ts`, `hooks/scene.test.ts`
+- done when: tests show each field changes the figure, the caption and `sceneKey` as described
+- verify: `rtk proxy npm run check`
+
+### T30 Page art for mug, sofa sit, cat heart
+- status: todo
+- needs: T29, T22, T23, T24
+- size: S
+- scope: `office.html` draws the mug sprite at the player's hand while holding, a sitting player with the sofa over the legs, and the emote above the cat. Add `scripts/fixtures/state-interact.json` (real `sceneOf` output).
+- files: `renderer/office.html`, `scripts/fixtures/state-interact.json`
+- done when: `npm run smoke:renderer` passes on the fixture and the PNG (read back) shows the three drawings; GHOSTTY (owner) at 80x24 and 120x40
+- verify: `rtk proxy npm run check`; `SMOKE_FRAME_OUT=<png> npm run smoke:renderer -- <fixture>`; GHOSTTY (owner)
+
+### T31 Wire e routing, desk, whiteboard, rack panes
+- status: todo
+- needs: T25, T28, T22, T23, T24
+- size: M
+- scope: In `ui.input`, a pending `pad.inspect` runs `targetOf`; an agent target goes to `inspectTick` unchanged; other targets are consumed and applied. `peek` atom per D26; `office-peek` titles `Peek: <label>`, `Whiteboard`, `Server rack`. The board render reads the D27 source live (plus the board mirror hooks if T25 needs them). A new `session.measure` hook writes the `usage` atom; `$.agent.list()` is read on a rack press.
+- files: `hooks/register.tsx`, `types/index.d.ts`, `tsconfig.json` (vendored todo-list contract if kept), `hooks/office.test.ts`
+- done when:
+  - an office test shows `e` at a desk peeks its owner;
+  - `e` at the whiteboard lists a TodoWrite's items and redraws after a second TodoWrite;
+  - `e` at the rack shows own tools and context %;
+  - `e` next to an agent inspects as before;
+  - GHOSTTY (owner): the panes open beside the office.
+- verify: `rtk proxy npm run check`; GHOSTTY (owner)
+
+### T32 Wire fun props and the hint
+- status: todo
+- needs: T29, T31
+- size: M
+- scope: Outcomes write `player.act` (coffee, sofa), player chat (cooler) and `catPetUntil`. The tick runs `settleAct` and `hintOf` every tick into `sceneOf` and the text overlay/strip.
+- files: `hooks/register.tsx`, `types/index.d.ts`, `hooks/office.test.ts`
+- done when:
+  - office tests in both modes show the mug lasts 8 s;
+  - the sofa sits and then `d` stands;
+  - the cooler chats;
+  - the cat shows a heart;
+  - the hint shows near an item and is gone when walking away;
+  - the presence record has no new field;
+  - LIVE text mode shows the hint;
+  - GHOSTTY (owner): full tour.
+- verify: `rtk proxy npm run check`; LIVE text; GHOSTTY (owner)
+
+### T33 README: interacting with the office
+- status: todo
+- needs: T32
+- size: S
+- scope: A "Things to use" section: the `e` rules, each item's effect, own-session-only data, text-mode limits. Log that this breaks "README only in T21".
+- files: `README.md`
+- done when: every command and key the section names works as written, and the owner reads it
+- verify: run each key in LIVE; `rtk proxy npm run check`
+
 ### TZZ Cleanup and land
 - status: todo
 - needs: every other todo
@@ -399,6 +520,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - done when: skill removed from the branch, spike folder removed, TODO.md archived, landing PR into feat/agents-office-v2 open and approved by the owner
 
 ## Backlog
+- Draw the top 3 plan items on the whiteboard sprite (from T25-T33 plan).
 - Walk cycles: generate a walk sheet with GPT /image (4 frames x 4 facings x 8 people), slice it with `npm run sprites`, and switch the page from bob to frames.
 - Floor and wall tile sheets to replace the CSS gradients.
 - Page-local pets (corgi, mascot) with collision against props.
@@ -427,3 +549,4 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 2026-10-07 T18 #82 measured idle/walking CPU, fps and PNG size with a scratch driver against render.mjs on the owner's Mac at 608x187, 928x391 and 2040x748 (table in D22): before the change only 2040x748 walking was over D13 (44% vs 40%); the screenshot now goes through CDP `Page.captureScreenshot` (`optimizeForSpeed` above 1,000,000 viewport pixels, 2040x748 walking 44 -> 32), the renderer stops asking the idle page for `sceneBusy` every 50 ms and the page stops redrawing on every animation frame while idle (idle static 11-13 -> 6-7); final: idle 6-11%, walking 28-32%, static scene 0 frames in 30 s, 7 fps walking; `npm run smoke:renderer` passes; GHOSTTY walking smoothness pending (owner)
 2026-10-07 T19 #83 resize follows in both axes: render -> viewport atom -> tick -> `size` in state.json (columns*8 x rows*17) -> renderer viewport; D23 records the T02 finding (height-only resize re-renders in tmux and Ghostty) so no workaround exists; `writeKeyOf` guards a resize against waiting for the heartbeat (the scene text already changes with the box); below 60x11 the size line shows, no new seq is sent (no frames) and `holdRenderer` keeps the heartbeat so the renderer lives. LIVEIMG tmux resize frames were replaced by a direct render.mjs run because tmux denies blits, so the Image/renderer loop stops there (D20) and no resized frame is ever written in a tmux session; the state-size half is covered by office tests (box -> state.json size) and the PNG half by a scratch driver that feeds render.mjs `size` 608x187 -> 928x391 -> 560x187 with the state-busy fixture: `file` gave PNG 608 x 187, 928 x 391, 560 x 187, and 4 s of same-seq heartbeat rewrites produced 0 frames; renderer exited 0 on SIGTERM with no process left. GHOSTTY height-only drag pending (owner)
 2026-10-07 T21 #84 README gains the Chromium install step and `--no-chromium`, `/office scene auto|image|text`, an "Image office" section with the fallback reasons, image-office requirements, v3 known limits and the develop commands; `docs/images/office-image-120x40.png` is a 928x391 frame from real `sceneOf` output (one team room with 3 agents, a Test Lab agent, the corridor and 5 shared rooms) rendered by `SMOKE_FRAME_OUT=<png> npm run smoke:renderer -- <fixture>` (72 KB). WezTerm and iTerm2 are listed as untested and kitty as expected from the API docs only (no D-entry covers them). T02 stays `todo`: its Decisions record the tmux results (D20) and the height-only resize in Ghostty (D23), but no D-entry records Image-in-elements for Ghostty or the D18 Input check, and the Terminal.app probe was not run
+2026-10-07 T25-T33 planned: Decisions D24-D30 and nine interaction todos (desk peek, whiteboard, server rack, coffee, sofa, water cooler, cat pet, hint) added; D27 and D28 stay assumed until T25
