@@ -47,7 +47,10 @@
   // says whether something is still moving. SPRITE_TABLE is injected by render.mjs from renderer/sprite-table.json.
   const SPRITES = (window.SPRITE_TABLE && window.SPRITE_TABLE.sprites) || {}
   const TWEEN_MS = 100
+  // Camera ease: 25% of the remaining distance per 1/60 s, applied by elapsed time so frame pacing cannot change its speed.
   const EASE = 0.25
+  const EASE_STEP_MS = 1000 / 60
+  let camAt = 0
   const BOB_MS = 220
   const WORLD_Z = { floor: 3, wall: 4, base: 100 }
   const SEAT_LIFT = 4
@@ -229,9 +232,12 @@
   }
 
   // Camera: eases toward the model's camera rectangle, snaps on the first scene or when its size changes.
-  const placeCamera = () => {
+  const placeCamera = now => {
     const t = model.camera
     let easing = false
+    const dt = camAt === 0 ? EASE_STEP_MS : Math.max(0, now - camAt)
+    camAt = now
+    const k = 1 - Math.pow(1 - EASE, dt / EASE_STEP_MS)
     if (!camNow || camNow.w !== t.w || camNow.h !== t.h) camNow = { ...t }
     else {
       const dx = t.x - camNow.x
@@ -240,27 +246,27 @@
         camNow.x = t.x
         camNow.y = t.y
       } else {
-        camNow.x += dx * EASE
-        camNow.y += dy * EASE
+        camNow.x += dx * k
+        camNow.y += dy * k
         easing = true
       }
     }
     const raw = Math.min(innerWidth / t.w, innerHeight / t.h)
-    const k = raw >= 1 ? Math.floor(raw) : raw
-    const vw = Math.round(t.w * k)
-    const vh = Math.round(t.h * k)
+    const sc = raw >= 1 ? Math.floor(raw) : raw
+    const vw = Math.round(t.w * sc)
+    const vh = Math.round(t.h * sc)
     view.style.left = Math.round((innerWidth - vw) / 2) + 'px'
     view.style.top = Math.round((innerHeight - vh) / 2) + 'px'
     view.style.width = vw + 'px'
     view.style.height = vh + 'px'
-    world.style.transform = 'translate(' + Math.round(-camNow.x * k) + 'px,' + Math.round(-camNow.y * k) + 'px) scale(' + k + ')'
+    world.style.transform = 'translate(' + Math.round(-camNow.x * sc) + 'px,' + Math.round(-camNow.y * sc) + 'px) scale(' + sc + ')'
     return easing
   }
 
   let busy = false
   const frame = now => {
     if (!model) return
-    const easing = placeCamera()
+    const easing = placeCamera(now)
     const moving = placeFigures(now)
     busy = easing || moving || now < bubbleUntil
   }
