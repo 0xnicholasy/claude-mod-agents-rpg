@@ -111,7 +111,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `rtk proxy npm run check`; `npm run smoke:renderer`
 
 ### T06 Map the office to the scene model (rooms, props, camera)
-- status: done (#PRNUM, 2026-10-07)
+- status: done (#67, 2026-10-07)
 - needs: T05
 - size: M
 - scope: Create `hooks/scene.ts` with the `SceneModel` type and `sceneOf(input)`. Rooms come from `OfficeMap` (id, name, kind, x, y, w, h in world px; floor colour per kind from v2 D32), plus walls, doors and the night flag (`isNight(hourOf(now))`). Props follow per-kind furniture rules:
@@ -392,4 +392,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 2026-10-07 T03 #64 sprites, atlas, raw sheets and the slicer live in the repo; `npm run sprites` regenerates the 82 sprites and atlas.json byte-identical
 2026-10-07 T05 #66 sceneArt.ts holds the sprite scale/anchor/layer table, personVariant, tierPlate and CELL_PX; deviation: smoke-renderer.mjs does not exist yet, so the atlas-vs-table check is `npm run sprites:check` (scripts/sprites/check-table.mjs)
 2026-10-07 T01 #65 (a) reload, `return()` and `/exit` each ended node and Chromium (5 -> 0 processes in 3 s), `ui.close` alone did not (5 -> 5); (b) kill -9 left 5 processes for 15 s without the watchdog, 0 at t+1 s with ppid poll, stale heartbeat exit at 11 s; (c) 0 parse failures (`torn 0`) in 111 s at 10 writes/s of 20 KB; (d) `process.spawn` generator and `ui.blit` deny stubs work in `claude plugin test` (D19)
-2026-10-07 T06 #PRNUM scene.ts holds SceneModel and sceneOf (rooms, corridor, walls, doors, props, camera, night in world px = cells x CELL_PX); figures come in T07
+2026-10-07 T06 #67 scene.ts holds SceneModel and sceneOf (rooms, corridor, walls, doors, props, camera, night in world px = cells x CELL_PX); figures come in T07
