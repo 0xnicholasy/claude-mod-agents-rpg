@@ -81,7 +81,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: the pgrep lines and parse-failure count pasted into the Log; the stub recipe passes in a scratch `claude plugin test`
 
 ### T02 Spike detection, the Input over an Image, and height-only resize
-- status: done (#PR, 2026-10-07; owner verified in Ghostty 2026-10-07: pad Input over the Image does not break the picture (D18 confirmed), Image-in-elements=true, height-only resize re-renders (D23); Terminal.app probe not run: owner-skipped, the README already says Terminal.app is expected to fall back)
+- status: done (#87, 2026-10-07; owner verified in Ghostty 2026-10-07: pad Input over the Image does not break the picture (D18 confirmed), Image-in-elements=true, height-only resize re-renders (D23); Terminal.app probe not run: owner-skipped, the README already says Terminal.app is expected to fall back)
 - needs: none
 - size: S
 - scope: With the scratch plugin, record:
@@ -393,7 +393,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: run each README command; `rtk proxy npm run check`; owner review
 
 ### T22 Walk faster
-- status: done (#PR, 2026-10-07)
+- status: done (#87, 2026-10-07)
 - needs: none
 - size: S
 - scope: Owner feedback from Ghostty: the player walks too slowly. A held WASD key moves one tile per 100 ms tick (tween 100 ms); the first or a lone tap still moves one tile, and a tap that repeats the last step's direction within INTENT_MS moves RUN_TILES = 2 tiles (player.ts). The page tween stays 100 ms, so it is not longer than the tick. Held-key speed: 10 -> 20 tiles/s (same code for the image and text paths).
@@ -402,7 +402,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: `rtk proxy npm run check`
 
 ### T23 Cat faces the wrong way walking left
-- status: done (#PR, 2026-10-07)
+- status: done (#87, 2026-10-07)
 - needs: none
 - size: S
 - scope: The cat PNGs (cat-orange-walk, cat-orange-sit) are drawn facing LEFT (head and ears at the left edge), while office.html assumed right and mirrored the wrong facing. `scene.ts` now sets `mirror` on the cat figure (`catMirror`: mirrored only when facing right) and the page flips on `fig.mirror`.
@@ -411,7 +411,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: `rtk proxy npm run check`; a rendered frame
 
 ### T24 Widen the room doors
-- status: done (#PR, 2026-10-07)
+- status: done (#87, 2026-10-07)
 - needs: none
 - size: S
 - scope: Mid-layout doors were 5 cells (40 px) wide, one figure footprint. They are now 2x the footprint (10 cells, 80 px) where the room is at least 14 wide (`min(10, width - 4)`), with the doorStand where it was so signs and anchors do not move. The small layout keeps 3-cell doors.
@@ -420,7 +420,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: `rtk proxy npm run check`; a rendered frame
 
 ### T22b Stale handle error in the transcript
-- status: done (#PR, 2026-10-07)
+- status: done (#87, 2026-10-07)
 - needs: none
 - size: S
 - scope: `ui.input hook skipped: threw ... no handler is held under handle N` reached the transcript after a reload or pad remount. The pad Input's closures are held under a handle of the render that drew it; a key typed into a tree that a later render (or a reload) replaced reaches core after the handle is released, and `next(e)` throws. The pad's own closures do nothing, so the `ui.input` hook now answers `{ element, value }` itself instead of calling `next(e)`.
@@ -429,7 +429,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: `rtk proxy npm run check`; owner: reload plugins with the pane open, no leaked line
 
 ### T23b Procedural walk cycle
-- status: done (#PR, 2026-10-07)
+- status: done (#87, 2026-10-07)
 - needs: none
 - size: S
 - scope: Owner feedback: the walk looked like a ghost. `renderer/office.html` splits a walking person sprite into the body and a legs band (bottom 30%, two halves, two clipped copies) and alternates the legs per tween: stride pose (first half), passing pose with a 1 art px body bob (second half). Down/up: the legs take turns lifting a foot; left/right: the halves swing opposite ways. Real walk-cycle art stays in the Backlog.
@@ -459,8 +459,8 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - T04: wire `npm run sprites:check` into `smoke:renderer` (T05 used the script route instead of a smoke-renderer check).
 
 ## Log
-2026-10-07 T02 #PR closed from the owner's Ghostty run (D18 confirmed, Image-in-elements=true, height-only resize re-renders per D23); Terminal.app probe not run, owner-skipped.
-2026-10-07 T22-T24 #PR owner fixes: held-key walk 1 -> 2 tiles per 100 ms tick after the first (tween stays 100 ms); cat art faces left so the mirror is on right-facing; mid doors 5 -> 10 cells; ui.input hook answers itself (stale handle error); procedural walk cycle in the page.
+2026-10-07 T02 #87 closed from the owner's Ghostty run (D18 confirmed, Image-in-elements=true, height-only resize re-renders per D23); Terminal.app probe not run, owner-skipped.
+2026-10-07 T22-T24 #87 owner fixes: held-key walk 1 -> 2 tiles per 100 ms tick after the first (tween stays 100 ms); cat art faces left so the mirror is on right-facing; mid doors 5 -> 10 cells; ui.input hook answers itself (stale handle error); procedural walk cycle in the page.
 2026-10-07 T03 #64 sprites, atlas, raw sheets and the slicer live in the repo; `npm run sprites` regenerates the 82 sprites and atlas.json byte-identical
 2026-10-07 T05 #66 sceneArt.ts holds the sprite scale/anchor/layer table, personVariant, tierPlate and CELL_PX; deviation: smoke-renderer.mjs does not exist yet, so the atlas-vs-table check is `npm run sprites:check` (scripts/sprites/check-table.mjs)
 2026-10-07 T01 #65 (a) reload, `return()` and `/exit` each ended node and Chromium (5 -> 0 processes in 3 s), `ui.close` alone did not (5 -> 5); (b) kill -9 left 5 processes for 15 s without the watchdog, 0 at t+1 s with ppid poll, stale heartbeat exit at 11 s; (c) 0 parse failures (`torn 0`) in 111 s at 10 writes/s of 20 KB; (d) `process.spawn` generator and `ui.blit` deny stubs work in `claude plugin test` (D19)
