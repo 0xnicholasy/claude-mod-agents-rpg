@@ -40,6 +40,9 @@ try {
 let page
 try {
   page = await browser.newPage({ viewport: { width, height } })
+  await page.addInitScript(table => {
+    window.SPRITE_TABLE = table
+  }, JSON.parse(readFileSync(join(here, 'sprite-table.json'), 'utf8')))
   await page.goto(pathToFileURL(join(here, 'office.html')).href)
 } catch (err) {
   await browser.close().catch(() => {})
@@ -71,7 +74,7 @@ const pushState = async () => {
     const cur = page.viewportSize()
     if (cur === null || cur.width !== w || cur.height !== h) await page.setViewportSize({ width: w, height: h })
   }
-  await page.evaluate(s => window.setState(s), state.scene)
+  await page.evaluate(model => window.setScene(model), state.scene)
   lastState = text
 }
 

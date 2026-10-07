@@ -1,0 +1,582 @@
+{
+ "cell": {
+  "w": 8,
+  "h": 17
+ },
+ "sprites": {
+  "armchair": {
+   "w": 26,
+   "h": 29,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "backpack": {
+   "w": 31,
+   "h": 33,
+   "scale": 1,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "bookshelf": {
+   "w": 33,
+   "h": 38,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "wall"
+  },
+  "cat-bed": {
+   "w": 36,
+   "h": 23,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "floor"
+  },
+  "cat-black-sit": {
+   "w": 24,
+   "h": 24,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "cat-black-walk": {
+   "w": 30,
+   "h": 23,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "cat-orange-sit": {
+   "w": 24,
+   "h": 24,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "cat-orange-walk": {
+   "w": 31,
+   "h": 24,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "cat-tabby-sit": {
+   "w": 21,
+   "h": 25,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "cat-tabby-walk": {
+   "w": 35,
+   "h": 23,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "chair": {
+   "w": 22,
+   "h": 31,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "coffee-machine": {
+   "w": 36,
+   "h": 32,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "conference-table": {
+   "w": 52,
+   "h": 35,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "corgi-down": {
+   "w": 18,
+   "h": 24,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "corgi-left": {
+   "w": 29,
+   "h": 24,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "corgi-right": {
+   "w": 29,
+   "h": 24,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "corgi-sleep": {
+   "w": 35,
+   "h": 17,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "corgi-up": {
+   "w": 17,
+   "h": 24,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "desk-dual": {
+   "w": 49,
+   "h": 33,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "desk-monitor": {
+   "w": 43,
+   "h": 32,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "dog-bed": {
+   "w": 41,
+   "h": 25,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "floor"
+  },
+  "filing-cabinet": {
+   "w": 20,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "fridge": {
+   "w": 21,
+   "h": 35,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "headphones": {
+   "w": 30,
+   "h": 27,
+   "scale": 1,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "keyboard": {
+   "w": 40,
+   "h": 17,
+   "scale": 1,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "kitchen-counter": {
+   "w": 49,
+   "h": 31,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "lamp": {
+   "w": 26,
+   "h": 31,
+   "scale": 1,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "laptop-back": {
+   "w": 36,
+   "h": 21,
+   "scale": 0.7,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "laptop-closed": {
+   "w": 35,
+   "h": 16,
+   "scale": 0.7,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "laptop-front": {
+   "w": 35,
+   "h": 25,
+   "scale": 0.7,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "mascot-bounce": {
+   "w": 36,
+   "h": 26,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "mascot-down": {
+   "w": 24,
+   "h": 21,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "mascot-left": {
+   "w": 19,
+   "h": 21,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "mascot-right": {
+   "w": 20,
+   "h": 21,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "mascot-up": {
+   "w": 23,
+   "h": 20,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "monitor-terminal": {
+   "w": 36,
+   "h": 28,
+   "scale": 1,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "mouse": {
+   "w": 16,
+   "h": 17,
+   "scale": 1,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "mug": {
+   "w": 21,
+   "h": 21,
+   "scale": 0.8,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "person1-down": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person1-left": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person1-right": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person1-up": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person2-down": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person2-left": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person2-right": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person2-up": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person3-down": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person3-left": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person3-right": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person3-up": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person4-down": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person4-left": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person4-right": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person4-up": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person5-down": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person5-left": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person5-right": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person5-up": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person6-down": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person6-left": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person6-right": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person6-up": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person7-down": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person7-left": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person7-right": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person7-up": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person8-down": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person8-left": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person8-right": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "person8-up": {
+   "w": 24,
+   "h": 34,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "phone": {
+   "w": 14,
+   "h": 26,
+   "scale": 1,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "plant-small": {
+   "w": 16,
+   "h": 21,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "plant-tall": {
+   "w": 22,
+   "h": 35,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "printer": {
+   "w": 29,
+   "h": 31,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "reception-desk": {
+   "w": 67,
+   "h": 29,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "round-table": {
+   "w": 42,
+   "h": 35,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "server-rack": {
+   "w": 26,
+   "h": 38,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "sofa": {
+   "w": 50,
+   "h": 30,
+   "scale": 1.5,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "sticky-notes": {
+   "w": 27,
+   "h": 20,
+   "scale": 1,
+   "anchor": "foot",
+   "layer": "over"
+  },
+  "wall-clock": {
+   "w": 26,
+   "h": 26,
+   "scale": 1.5,
+   "anchor": "top",
+   "layer": "wall"
+  },
+  "water-cooler": {
+   "w": 15,
+   "h": 35,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "figure"
+  },
+  "whiteboard": {
+   "w": 41,
+   "h": 33,
+   "scale": 2,
+   "anchor": "foot",
+   "layer": "wall"
+  }
+ }
+}
