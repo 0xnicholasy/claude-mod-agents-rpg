@@ -2303,3 +2303,97 @@ test('image scene: m asks before nudging the agent beside the player and x asks 
   expect(calls.aborts).toEqual(['turn-9'])
   await ui.unmount()
 })
+
+// ---- Other sessions in the image scene (T17) ----------------------------------------------------------
+// Three remote presence records (listed out of order): `a` is named, `b` and `c` are anonymous. Player `a` has an
+// emote and a chat line. `dead` makes `b` a tombstone with a newer mtime, as a session that ended.
+const remoteImageSession = async ($: Engine, on: On) => {
+  const dir = '/home/u/.claude/agents-office/presence'
+  const clock = mock.clock(on)
+  const states: string[] = []
+  const dead = { b: false }
+  stubStore(on, { share: 'all', scene: 'image' })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', () => ({ value: {} }))
+  on('process.run', (_$, e) => {
+    const stdout = e.argv[0] === 'printenv' ? (e.argv[1] === 'HOME' ? '/home/u\n' : '') : ''
+
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('fs.write', (_$, e) => {
+    if (e.path === `${STATE_DIR}/state.json`) states.push(e.text)
+
+    return { value: undefined }
+  })
+  on('fs.list', () => ({
+    value: ['c', 'a', 'b'].map(id => ({ name: `${id}.json`, kind: 'file' as const, size: 1, mtimeMs: id === 'b' && dead.b ? 3000 : 900, isLink: false })),
+  }))
+  const named = { a: 'alpha (main)', b: '', c: '' } as const
+  const started = { a: 10, b: 20, c: 30 } as const
+  on('fs.read', (_$, e) => {
+    const id = e.path.slice(dir.length + 1, -'.json'.length) as 'a' | 'b' | 'c'
+    if (id === 'b' && dead.b) return { value: JSON.stringify({ v: 1, sessionId: 'b', heartbeatAt: 3000, gone: true }) }
+    const player =
+      id === 'a'
+        ? { room: `team:${id}`, rx: 4, ry: 4, facing: 'left', emote: '◆', emoteUntil: 60000, chat: 'hello from alpha', chatUntil: 60000 }
+        : id === 'c'
+          ? { room: `team:${id}`, rx: 4, ry: 4, facing: 'right' }
+          : null
+
+    return {
+      value: JSON.stringify({
+        v: 1,
+        sessionId: id,
+        startedAt: started[id],
+        heartbeatAt: 900,
+        share: named[id] === '' ? 'anon' : 'all',
+        team: { label: named[id], branch: '' },
+        agents: [{ id: 'main', label: named[id] === '' ? '' : 'main', tier: 'opus', role: 'lead', room: `team:${id}`, pose: 'type', status: 'working' }],
+        player,
+      }),
+    }
+  })
+  stubRenderer(on, 'ready\n')
+  await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
+  const wait = async (ms: number) => {
+    for (let left = ms; left > 0; left -= 1000) {
+      await clock.advance(Math.min(left, 1000))
+      await settle(5)
+    }
+  }
+  await wait(3000)
+  const scene = (): SceneModel => (JSON.parse(states.at(-1) ?? '{}') as { scene: SceneModel }).scene
+
+  return { ui, wait, scene, dead, states }
+}
+
+test('image scene: other sessions show as rooms in startedAt order with remote agents and players', async ($, on) => {
+  const { ui, scene } = await remoteImageSession($, on)
+  const rooms = scene().rooms.filter(r => r.kind === 'team')
+  expect(rooms.map(r => r.id)).toEqual(['team:t1', 'team:a', 'team:b', 'team:c'])
+  expect(rooms.map(r => r.name)).toEqual(['proj', 'alpha (main)', 'Session 3', 'Session 4'])
+  const remoteAgents = scene().figures.filter(f => f.remote && !f.player)
+  expect(remoteAgents.map(f => f.key).sort()).toEqual(['a:main', 'b:main', 'c:main'])
+  const guests = scene().figures.filter(f => f.remote && f.player).sort((x, y) => (x.key < y.key ? -1 : 1))
+  expect(guests.map(f => [f.key, f.plate])).toEqual([
+    ['player:a', 'alpha (main)'],
+    ['player:c', 'Session 4'],
+  ])
+  expect(guests[0]).toMatchObject({ emote: '♥', chat: 'hello from alpha' })
+  await ui.unmount()
+})
+
+test('image scene: a tombstoned session leaves the scene within 5 s', async ($, on) => {
+  const { ui, wait, scene, dead } = await remoteImageSession($, on)
+  expect(scene().rooms.some(r => r.id === 'team:b')).toBe(true)
+  dead.b = true
+  await wait(5000)
+  const rooms = scene().rooms.filter(r => r.kind === 'team')
+  expect(rooms.map(r => r.id)).toEqual(['team:t1', 'team:a', 'team:c'])
+  expect(scene().figures.some(f => f.key.startsWith('b:'))).toBe(false)
+  // The anonymous room after it is renumbered by room order.
+  expect(rooms.map(r => r.name)).toEqual(['proj', 'alpha (main)', 'Session 3'])
+  await ui.unmount()
+})
