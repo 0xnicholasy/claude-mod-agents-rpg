@@ -7,9 +7,11 @@
     "test": "claude plugin test .claude/skills/agents-office",
     "install:user": "sh scripts/install-user.sh",
     "uninstall:user": "sh scripts/uninstall-user.sh",
-    "check": "npm run validate && npm run typecheck && npm run test"
+    "check": "npm run validate && npm run typecheck && npm run test",
+    "sprites": "node scripts/sprites/slice.mjs"
   },
   "devDependencies": {
+    "pngjs": "^7.0.0",
     "typescript": "^5.9.3"
   }
 }
