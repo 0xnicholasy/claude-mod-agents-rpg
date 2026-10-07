@@ -200,33 +200,46 @@ export const boardLines = (nodes: readonly BoardNode[] | undefined): string[] =>
     kids.set(key, [...(kids.get(key) ?? []), node])
   }
   const lines: string[] = []
-  const seen = new Set<string>()
-  const walk = (parent: string | null, depth: number): void => {
-    for (const node of kids.get(parent) ?? []) {
-      if (seen.has(node.id) || lines.length >= PEEK_MAX) continue
-      seen.add(node.id)
-      lines.push(Array.from(`${'  '.repeat(depth)}${MARK[node.status] ?? '[ ]'} ${clean(node.title)}`).slice(0, PEEK_WIDTH).join(''))
-      walk(node.id, depth + 1)
-    }
+  const seen = new Set<BoardNode>()
+  const walk = (node: BoardNode, depth: number): void => {
+    if (seen.has(node) || lines.length >= PEEK_MAX) return
+    seen.add(node)
+    lines.push(Array.from(`${'  '.repeat(depth)}${MARK[node.status] ?? '[ ]'} ${clean(node.title)}`).slice(0, PEEK_WIDTH).join(''))
+    for (const child of kids.get(node.id) ?? []) walk(child, depth + 1)
   }
-  walk(null, 0)
+  for (const root of kids.get(null) ?? []) walk(root, 0)
+  // A parent cycle has no root above it: show what the walk did not reach, each as a root of its own.
+  for (const node of nodes) walk(node, 0)
 
-  // A parent cycle leaves no root to start from.
-  return lines.length === 0 ? [NO_PLAN] : lines
+  return lines
 }
 
 export type AgentListItem = { id: string; status: string }
 export type Usage = { percent?: number; usd?: number }
 
-// The server rack pane (D28): context and cost, running and idle counts, then each own agent's tool NAME. Only the
-// own roster and `status` of the agent list are read, so no remote tool, tool argument or prompt text can reach it.
+// A remote agent is keyed `sessionId:agentId` (presence.ts `remoteKey`); an own agent's id has no colon.
+export const isRemoteAgentId = (id: string): boolean => id.includes(':')
+
+const num = (value: number | undefined, show: (n: number) => string): string => (value === undefined || !Number.isFinite(value) ? '-' : show(value))
+const RACK_HEADER = 3
+
+// The server rack pane (D28): context and cost, running and idle counts, then each own agent's tool NAME, at most
+// PEEK_MAX lines. Only the own roster entries and the `status` of the agent list are read, so no remote tool, tool
+// argument or prompt text can reach it.
 export const rackLines = (input: { roster: Roster; agentList: readonly AgentListItem[]; usage?: Usage }): string[] => {
   const { roster, agentList, usage } = input
-  const percent = usage?.percent === undefined ? '-' : `${Math.round(usage.percent)}%`
-  const cost = usage?.usd === undefined ? '-' : `$${usage.usd.toFixed(2)}`
   const running = agentList.filter(a => a.status === 'running').length
   const idle = agentList.filter(a => a.status === 'idle').length
-  const rows = Object.values(roster).map(a => `${clean(a.label)}: ${a.tool === undefined ? '-' : clean(a.tool)}`)
+  const head = [
+    `context: ${num(usage?.percent, n => `${Math.round(n)}%`)}`,
+    `cost: ${num(usage?.usd, n => `$${n.toFixed(2)}`)}`,
+    `agents: ${running} running, ${idle} idle`,
+  ]
+  const rows = Object.values(roster)
+    .filter(a => !isRemoteAgentId(a.id))
+    .map(a => `${clean(a.label)}: ${a.tool === undefined ? '-' : clean(a.tool)}`)
+  const room = PEEK_MAX - RACK_HEADER
+  const shown = rows.length > room ? [...rows.slice(0, room - 1), `+${rows.length - room + 1} more`] : rows
 
-  return [`context: ${percent}`, `cost: ${cost}`, `agents: ${running} running, ${idle} idle`, ...rows].map(line => Array.from(line).slice(0, PEEK_WIDTH).join(''))
+  return [...head, ...shown].map(line => Array.from(line).slice(0, PEEK_WIDTH).join(''))
 }

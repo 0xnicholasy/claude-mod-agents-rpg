@@ -7,7 +7,7 @@ import type { Item, ItemKind } from './items'
 import { MID_FOOT, SMALL_FOOT } from './map'
 import { boardLines, COOLER_LINES, deskOwner, hintOf, MUG_MS, nodesOfTodos, NO_PLAN, outcomeOf, rackLines, rectGap, settleAct, targetOf } from './use'
 import type { Act, AgentListItem, BoardNode, Target, TargetInput, UseCtx } from './use'
-import { PEEK_MAX } from './inspect'
+import { PEEK_MAX, PEEK_WIDTH } from './inspect'
 
 const agent = (id: string, label = id): OfficeAgent => ({
   id,
@@ -206,7 +206,12 @@ test('boardLines caps at PEEK_MAX, says No plan yet, and survives a parent cycle
   expect(boardLines(many)[9]).toBe('[ ] step 9')
   expect(boardLines(undefined)).toEqual([NO_PLAN])
   expect(boardLines([])).toEqual(['No plan yet.'])
-  expect(boardLines([{ id: 'a', parentId: 'b', title: 'a', status: 'pending' }, { id: 'b', parentId: 'a', title: 'b', status: 'pending' }])).toEqual(['No plan yet.'])
+  // A parent cycle still shows, each node once; a cycle beside a valid root does not hide either.
+  const loop: BoardNode[] = [{ id: 'a', parentId: 'b', title: 'a', status: 'pending' }, { id: 'b', parentId: 'a', title: 'b', status: 'pending' }]
+  expect(boardLines(loop)).toEqual(['[ ] a', '  [ ] b'])
+  expect(boardLines([{ id: 'r', parentId: null, title: 'root', status: 'pending' }, ...loop])).toEqual(['[ ] root', '[ ] a', '  [ ] b'])
+  // A duplicate id never repeats a line.
+  expect(boardLines([{ id: 'd', parentId: null, title: 'd', status: 'pending' }, { id: 'd', parentId: 'd', title: 'd', status: 'pending' }])).toHaveLength(2)
   // A flat TodoWrite list becomes root nodes in order.
   expect(boardLines(nodesOfTodos([{ content: 'one', status: 'completed' }, { content: 'two', status: 'in_progress' }, { content: 'three', status: 'pending' }]))).toEqual(['[x] one', '[>] two', '[ ] three'])
 })
@@ -216,10 +221,29 @@ test('rackLines shows own tools and counts, never anything from the agent list b
   // An agent list entry may carry prompt text; only `id` and `status` are read.
   const leaky = { id: 'x', status: 'running', description: 'secret prompt text', tool: 'Bash --hidden-arg' }
   const list: AgentListItem[] = [{ id: 'a', status: 'running' }, { id: 'b', status: 'idle' }, { id: 'c', status: 'completed' }, leaky]
-  const lines = rackLines({ roster, agentList: list, usage: { percent: 7.4, usd: 0.4395 } })
-  expect(lines).toEqual(['context: 7%', 'cost: $0.44', 'agents: 2 running, 1 idle', 'main: Read', 'helper: -'])
+  const lines = rackLines({ roster, agentList: list, usage: { percent: 7.6, usd: 0.4395 } })
+  expect(lines).toEqual(['context: 8%', 'cost: $0.44', 'agents: 2 running, 1 idle', 'main: Read', 'helper: -'])
   expect(lines.join('\n')).not.toContain('secret')
   expect(lines.join('\n')).not.toContain('hidden-arg')
+})
+
+test('rackLines leaves out remote agents, caps its lines and prints a dash for a non-number', () => {
+  const roster: Roster = { 's2:x': { ...agent('s2:x', 'remote-dev'), tool: 'Bash' }, ...Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`a${i}`, { ...agent(`a${i}`, `own${i}`), tool: 'Read' }])) }
+  const lines = rackLines({ roster, agentList: [] })
+  expect(lines.join('\n')).not.toContain('remote-dev')
+  expect(lines).toHaveLength(PEEK_MAX)
+  expect(lines[9]).toBe('+3 more')
+  expect(lines[8]).toBe('own5: Read')
+  expect(rackLines({ roster: {}, agentList: [], usage: { percent: Number.NaN, usd: Number.POSITIVE_INFINITY } }).slice(0, 2)).toEqual(['context: -', 'cost: -'])
+})
+
+test('control characters and long text never reach the board or rack', () => {
+  const dirty = 'a\u001b[31mx\ny'
+  const board = boardLines([{ id: 'a', parentId: null, title: dirty, status: 'pending' }, { id: 'b', parentId: null, title: 'z'.repeat(300), status: 'pending' }])
+  expect(board[0]).toBe('[ ] a [31mx y')
+  expect(Array.from(board[1] ?? '').length).toBe(PEEK_WIDTH)
+  const rack = rackLines({ roster: { a: { ...agent('a', dirty), tool: dirty } }, agentList: [] })
+  expect(rack[3]).toBe('a [31mx y: a [31mx y')
 })
 
 test('rackLines prints a dash for a missing percent or cost', () => {
