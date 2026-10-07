@@ -7,7 +7,7 @@ import type { SceneInput } from './scene'
 import { placeMotion } from './frame'
 import type { Motion } from './frame'
 import type { OfficeAgent, Roster } from './agents'
-import { remotePlayersOf, remoteRoster } from './presence'
+import { orderedTeams, remotePlayersOf, remoteRoster } from './presence'
 import type { PresenceRecord, Remote } from './presence'
 import type { Player } from './player'
 import { MID_SEAT_W } from './midArt'
@@ -282,4 +282,56 @@ test('sceneKey is equal for equal models and differs when a figure moves', () =>
   const moved: Motion = { main: { x: (spot?.x ?? 0) + 1, y: spot?.y ?? 0, path: [], frame: 0 } }
   expect(sceneKey(sceneOf({ ...input, motion: moved }))).not.toBe(sceneKey(sceneOf(input)))
   expect(JSON.parse(JSON.stringify(sceneOf(input)))).toEqual(sceneOf(input))
+})
+
+test('3 remote records give their rooms in startedAt order with remote figures and Session N labels for anon ones', () => {
+  const player = (room: `team:${string}`, emote?: string) => ({
+    room,
+    rx: 3,
+    ry: 3,
+    facing: 'down' as const,
+    ...(emote === undefined ? {} : { emote, emoteUntil: at(12) + 2000, chat: 'hello', chatUntil: at(12) + 4000 }),
+  })
+  // Listed out of order on purpose: the rooms follow startedAt (own first), not the listing.
+  const remote: Remote = {
+    c: recordOf({ sessionId: 'c', startedAt: 30, team: { label: '', branch: '' }, agents: [{ id: 'a', label: 'c-dev', tier: 'sonnet', role: 'dev', room: 'team:c', pose: 'type', status: 'working' }], player: player('team:c') }),
+    a: recordOf({ sessionId: 'a', startedAt: 10, team: { label: 'alpha (main)', branch: 'main' }, agents: [{ id: 'a', label: 'a-dev', tier: 'opus', role: 'lead', room: 'team:a', pose: 'type', status: 'working' }], player: player('team:a', '◆') }),
+    b: recordOf({ sessionId: 'b', startedAt: 20, team: { label: '', branch: '' }, agents: [{ id: 'a', label: 'b-dev', tier: 'haiku', role: 'dev', room: 'team:b', pose: 'type', status: 'working' }], player: null }),
+  }
+  const map = buildOffice(100, 24, orderedTeams({ id: 'team:own', label: 'mine', startedAt: 0 }, remote), MID_FOOT)
+  const remoteAgents = remoteRoster(remote)
+  const scene = sceneOf({
+    map,
+    paneColumns: 100,
+    paneRows: 24,
+    ownId: 'team:own',
+    now: at(12),
+    remoteAgents,
+    motion: placeMotion(map, remoteAgents, {}),
+    others: remotePlayersOf(remote, map),
+  })
+  const teamRooms = scene.rooms.filter(r => r.kind === 'team')
+  expect(teamRooms.map(r => [r.id, r.name])).toEqual([
+    ['team:own', 'mine'],
+    ['team:a', 'alpha (main)'],
+    ['team:b', 'Session 3'],
+    ['team:c', 'Session 4'],
+  ])
+  expect(teamRooms.map(r => r.x)).toEqual([...teamRooms.map(r => r.x)].sort((x, y) => x - y))
+  const agents = scene.figures.filter(f => !f.player)
+  expect(agents.map(f => f.key).sort()).toEqual(['a:a', 'b:a', 'c:a'])
+  expect(agents.every(f => f.remote)).toBe(true)
+  // Each remote player stands in its own session's room, plated with the room's name, and keeps its emote and chat.
+  const guests = scene.figures.filter(f => f.player).sort((x, y) => (x.key < y.key ? -1 : 1))
+  expect(guests.map(f => [f.key, f.plate, f.remote])).toEqual([
+    ['player:a', 'alpha (main)', true],
+    ['player:c', 'Session 4', true],
+  ])
+  const inside = (id: string, f: { x: number; y: number }): boolean => {
+    const room = teamRooms.find(r => r.id === id)
+    return room !== undefined && f.x >= room.x && f.x <= room.x + room.w
+  }
+  expect(inside('team:a', guests[0] ?? { x: -1, y: 0 })).toBe(true)
+  expect(inside('team:c', guests[1] ?? { x: -1, y: 0 })).toBe(true)
+  expect(guests[0]).toMatchObject({ emote: '♥', chat: 'hello' })
 })
