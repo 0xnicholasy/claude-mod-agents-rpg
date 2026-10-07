@@ -10,6 +10,7 @@ import type { Bubble, Motion, RemotePlayer } from './frame'
 import { MID_SEAT_W } from './midArt'
 import { drawnFacing, drawnPose } from './motion'
 import type { Player } from './player'
+import type { Act } from './use'
 import { CELL_PX, personVariant, SEAT, SPRITE_NAMES, SPRITES, tierPlate } from './sceneArt'
 import type { SpriteLayer, SpriteName } from './sceneArt'
 import type { Facing } from './sprites'
@@ -39,6 +40,8 @@ export type SceneFigure = {
   remote: boolean
   player: boolean
   highlight: boolean
+  // The player holds a mug in hand while a coffee act is live (D29).
+  holding?: 'mug'
   bubble?: string
   emote?: string
   chat?: string
@@ -58,7 +61,7 @@ export type SceneModel = {
   camera: SceneRect
   night: boolean
   figures: SceneFigure[]
-  // The overlay line: the chat draft, else the inspect line while shown (D17).
+  // The overlay line: the chat draft, else the inspect or action line while shown, else the hint (D17, D30).
   caption?: string
 }
 export type SceneInput = {
@@ -81,6 +84,12 @@ export type SceneInput = {
   inspect?: { agentId: string; text: string; until: number } | null
   // The chat draft line (`chatLine(pad)`), which wins the caption over the inspect line.
   chatLine?: string
+  // The own player's use act (interactions D29): a mug in hand until `until`, or sitting on the sofa.
+  act?: Act | null
+  // The cat shows a heart emote while this is later than `now` (D29).
+  catPetUntil?: number
+  // The hint line (`hintOf`), the last caption (D30).
+  hint?: string
 }
 
 const px = (r: Rect): SceneRect => ({ x: r.x * CELL_PX.w, y: r.y * CELL_PX.h, w: r.w * CELL_PX.w, h: r.h * CELL_PX.h })
@@ -163,6 +172,15 @@ export const propsOf = (map: OfficeMap): SceneProp[] => {
 }
 
 export const PLAYER_VARIANT = 1
+// The sofa sprite is 50 px wide at scale 1.5 and the person 24 px at scale 2, so a seated person stays within this
+// many px of the sofa centre.
+const SOFA_SEAT_SLACK = 13
+
+// The sofa nearest to a point in world px (propsOf puts the sofa in the corridor), or undefined without one.
+const sofaNear = (map: OfficeMap, x: number, y: number): SceneProp | undefined =>
+  propsOf(map)
+    .filter(p => p.sprite === 'sofa')
+    .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0]
 export const PLATE_MAX = 16
 const PLAYER_PLATE = '#ffffff'
 
@@ -232,19 +250,33 @@ const figuresOf = (input: SceneInput): SceneFigure[] => {
     remote: boolean,
     say: { emote?: string; emoteUntil?: number; chat?: string; chatUntil?: number },
   ): Ranked => {
-    const y = footY(at.y, map.foot.h)
+    let y = footY(at.y, map.foot.h)
+    let x = footX(at.x, map.foot.w)
+    let z = y
+    let facing = at.facing
+    const act = !remote ? input.act : undefined
+    const holding = act?.kind === 'mug' && act.until > now
+    const sofa = act?.kind === 'sit' ? sofaNear(map, x, y) : undefined
+    // A sitting player is the front view on the sofa's foot line, in front of the sofa's back; the page draws the sofa
+    // seat again over the legs.
+    if (sofa !== undefined) {
+      x = Math.min(Math.max(x, sofa.x - SOFA_SEAT_SLACK), sofa.x + SOFA_SEAT_SLACK)
+      y = sofa.y
+      z = sofa.y
+      facing = 'down'
+    }
     const emote = say.emote !== undefined && (say.emoteUntil ?? 0) > now ? emoteArt(say.emote) : undefined
     const chat = say.chat !== undefined && (say.chatUntil ?? 0) > now ? say.chat : undefined
     return {
       rank: remote ? 2 : 3,
       figure: {
         key,
-        sprite: personSprite(variant, at.facing),
-        facing: at.facing,
-        pose: 'standing',
-        x: footX(at.x, map.foot.w),
+        sprite: personSprite(variant, facing),
+        facing,
+        pose: sofa === undefined ? 'standing' : 'seated',
+        x,
         y,
-        z: y,
+        z,
         plate: cut(plate, PLATE_MAX),
         plateColor: PLAYER_PLATE,
         tier: 'grey',
@@ -252,6 +284,7 @@ const figuresOf = (input: SceneInput): SceneFigure[] => {
         remote,
         player: true,
         highlight: false,
+        ...(holding && sofa === undefined ? { holding: 'mug' as const } : {}),
         ...(emote === undefined ? {} : { emote }),
         ...(chat === undefined ? {} : { chat }),
       },
@@ -284,6 +317,7 @@ const figuresOf = (input: SceneInput): SceneFigure[] => {
         remote: false,
         player: false,
         highlight: false,
+        ...((input.catPetUntil ?? 0) > now ? { emote: '\u2665' } : {}),
       },
     })
   }
@@ -296,7 +330,7 @@ const captionOf = (input: SceneInput): string | undefined => {
   const { inspect, now } = input
   if (inspect !== undefined && inspect !== null && inspect.until > now && inspect.text !== '') return inspect.text
 
-  return undefined
+  return input.hint !== undefined && input.hint !== '' ? input.hint : undefined
 }
 
 // A stable string for the whole model: callers skip a state.json write when it did not change.
