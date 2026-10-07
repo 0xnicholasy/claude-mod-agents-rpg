@@ -22,6 +22,7 @@ const statePath = flag('state') ?? join(here, 'state.json')
 
 const POLL_MS = 50
 const BUSY_FRAME_MS = 83 // 12 fps cap (D13)
+const FAST_PX = 1_000_000 // viewports above this use CDP optimizeForSpeed (T18)
 const STALE_MS = 10_000
 const WATCHDOG_MS = 1000
 const PREFIX = 'agents-office-'
@@ -110,6 +111,14 @@ try {
   await browser.close().catch(() => {})
   fail('page', err)
 }
+// Screenshots go straight through CDP. optimizeForSpeed trades PNG size for CPU (T18: at 2040x748 about 12% less CPU
+// and 70% bigger frames; at 928x391 no CPU gain), so it is only on for viewports over FAST_PX pixels.
+const cdp = await page.context().newCDPSession(page)
+const shoot = async () => {
+  const v = page.viewportSize()
+  const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', optimizeForSpeed: v !== null && v.width * v.height > FAST_PX })
+  return Buffer.from(data, 'base64')
+}
 process.stdout.write('ready\n')
 
 const startedAt = Date.now()
@@ -181,10 +190,15 @@ let lastShotAt = 0
 for (;;) {
   const t0 = Date.now()
   try {
-    if (await pushState()) pending = true
-    const busy = await page.evaluate(() => (typeof window.sceneBusy === 'function' ? window.sceneBusy() : false))
+    const pushed = await pushState()
+    if (pushed) pending = true
+    // An idle page is not asked every poll: only after a push, while a frame is owed, or while the last shot was busy (T18).
+    const busy =
+      pushed || pending || lastShotBusy
+        ? await page.evaluate(() => (typeof window.sceneBusy === 'function' ? window.sceneBusy() : false))
+        : false
     if ((pending || busy || lastShotBusy) && t0 - lastShotAt >= BUSY_FRAME_MS) {
-      const bytes = await page.screenshot({ type: 'png', omitBackground: false })
+      const bytes = await shoot()
       emit(bytes)
       pending = false
       lastShotBusy = busy
