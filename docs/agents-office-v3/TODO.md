@@ -190,7 +190,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `rtk proxy npm run check`
 
 ### T10 Make the page draw the scene model
-- status: done (#PR, 2026-10-07)
+- status: done (#72, 2026-10-07)
 - needs: T04, T07
 - size: M
 - scope: Rewrite `renderer/office.html` so `window.setScene(model)` draws a `SceneModel`:
@@ -397,4 +397,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 2026-10-07 T20 #70 install-user.sh runs `npm ci` when node_modules/playwright is missing, then `npx --no-install playwright install chromium` unless `--no-chromium`, after linking (a Chromium failure exits 1 but keeps the link); uninstall-user.sh leaves the browser cache and prints its path. Scratch run against temp CLAUDE_CONFIG_DIRs after `rm -rf node_modules`: fresh install linked, ran npm ci, `playwright install --dry-run chromium` lists chromium-1243 under ~/Library/Caches/ms-playwright; re-run printed 'nothing changed'; `--no-chromium` skipped npm ci and the download; foreign link refused; uninstall removed only this link; ~/.claude untouched; shellcheck clean; npm run check 326 pass
 2026-10-07 T07 #69 scene.ts maps figures (agents, remote agents, players, cat) with sprite, pose, plate, bubble/emote/chat (until > now), highlight, plus caption and sceneKey; SceneInput.player is now a Player (was Point)
 2026-10-07 T08 #71 bridge.ts holds splitLines, parseLine, newestFrame, stateText, shouldWrite, clampCells and pixelsFor; render.mjs prints dir, ready, frame, fps and `error <code>` lines and reads the D5 state shape (keeps the last scene on torn JSON or a wrong `v`); smoke prints `dir -> ready -> frame`; D6 confirmed unchanged
-2026-10-07 T10 #PR office.html draws a SceneModel (rooms, walls, doors, signs, props, y-sorted figures, plates, bubbles, highlight, caption, night tint, eased camera, 100 ms step tween, `sceneBusy()`); sprite scale/anchor reach the page through `renderer/sprite-table.json`, written from sceneArt.ts by `npm run sprites:table` and checked by `smoke:renderer`; `smoke:renderer` takes a fixture path and `SMOKE_FRAME_OUT`; state-busy.json is real `sceneOf` output
+2026-10-07 T10 #72 office.html draws a SceneModel (rooms, walls, doors, signs, props, y-sorted figures, plates, bubbles, highlight, caption, night tint, eased camera, 100 ms step tween, `sceneBusy()`); sprite scale/anchor reach the page through `renderer/sprite-table.json`, written from sceneArt.ts by `npm run sprites:table` and checked by `smoke:renderer`; `smoke:renderer` takes a fixture path and `SMOKE_FRAME_OUT`; state-busy.json is real `sceneOf` output
