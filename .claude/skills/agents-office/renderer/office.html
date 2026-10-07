@@ -276,10 +276,13 @@
     const easing = placeCamera(now)
     const moving = placeFigures(now)
     busy = easing || moving || now < bubbleUntil
+    // Idle frames stop, so forget the clock: the next ease starts with one step, not the whole idle gap (T18).
+    if (!busy) camAt = 0
   }
+  // An idle scene is not redrawn every animation frame: setScene and resize call frame() themselves (T18).
   const loop = now => {
     requestAnimationFrame(loop)
-    frame(now)
+    if (busy) frame(now)
   }
   requestAnimationFrame(loop)
   addEventListener('resize', () => frame(performance.now()))
