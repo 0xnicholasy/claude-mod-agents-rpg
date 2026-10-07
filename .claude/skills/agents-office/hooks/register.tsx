@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, ProcessSpawnResult, Register } from 'claude-code'
 import { activityFor } from './activity'
 import { expire, markTool, migrateRoster, onActivity, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
@@ -10,6 +10,8 @@ import type { Cat } from './cat'
 import { cropFrame, focusOf, overlaySpan, viewFor } from './camera'
 import { buildFrame, hourOf, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
+import { clampCells, newestFrame, parseLine, pixelsFor, shouldWrite, splitLines, stateText } from './bridge'
+import type { WriteMark } from './bridge'
 import { arrived, clean, interrupted, interruptFailed, nudged, nudgeFailed, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
 import { canStand, MID_FOOT, MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
@@ -18,7 +20,9 @@ import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest, peekLines } from './inspect'
 import { chatLine, CONFIRM_OPTIONS, INITIAL_PAD, isYes, NUDGE_TEXT, onPadInput, onPadSubmit } from './pad'
 import {
+  asScene,
   asShare,
+  DEFAULT_SCENE,
   DEFAULT_SHARE,
   envValue,
   mergeRemote,
@@ -32,6 +36,7 @@ import {
   remoteRoster,
   remotePlayersOf,
   routeRemote,
+  SCENE_USAGE,
   SHARE_USAGE,
   signature,
   toPresencePlayer,
@@ -39,11 +44,14 @@ import {
   toTombstone,
   writeDue,
 } from './presence'
-import type { Parsed, Remote, ShareMode } from './presence'
+import type { Parsed, Remote, SceneMode, ShareMode } from './presence'
 import type { PadState } from './pad'
 import { padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
+import { initialLife, next as nextLife } from './rendererLife'
+import type { Life, LifeEvent } from './rendererLife'
+import { sceneKey, sceneOf } from './scene'
 import { baseName, branchOf, teamLabel } from './team'
 import { hashKey } from './sprites'
 import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timing'
@@ -51,6 +59,8 @@ import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timin
 const PANE = 'office'
 const PAD_KEY = 'pad-input'
 const PEEK_PANE = 'office-peek'
+// The Image's key inside the office pane (D6): the renderer's frames are blitted to it.
+const SCENE_KEY = 'scene'
 // Body rows the peek pane asks for: up to 10 message lines and a little room (D25).
 const PEEK_ROWS = 12
 const opened = atom({ plugin: 'agents-office', key: 'opened' } as const, false)
@@ -104,6 +114,14 @@ const identity = atom({ plugin: 'agents-office', key: 'identity' } as const, nul
 
 // The share preference (D19), mirrored from `$.store` key `share`.
 const share = atom({ plugin: 'agents-office', key: 'share' } as const, DEFAULT_SHARE as ShareMode)
+
+// The scene preference and what the pane draws (D10), `want` mirrored from `$.store` key `scene`. T12 draws the image
+// scene only when `want` is `image`; `auto` is stored and behaves as `text` until T13 adds the probe.
+type SceneState = { want: SceneMode; effective: 'probe' | 'image' | 'text'; reason?: string }
+const scene = atom({ plugin: 'agents-office', key: 'scene' } as const, { want: DEFAULT_SCENE, effective: 'text' } as SceneState)
+
+// The renderer child's life (D12), driven by the pure `rendererLife` machine.
+const renderer = atom({ plugin: 'agents-office', key: 'renderer' } as const, initialLife as Life)
 
 // The publisher's bookkeeping (D18): the record text last written (without its heartbeat), when, and whether
 // the tombstone is out. No file paths or other text live here.
@@ -277,6 +295,12 @@ const resolveIdentity = async ($: EngineInterface): Promise<void> => {
 const loadShare = async ($: EngineInterface): Promise<void> => {
   const stored = await $.store.get('share')
   await update($, share, () => asShare(stored))
+}
+
+// Loads the stored scene preference into the atom (D10). `image` is forced; every other mode draws the v2 text office.
+const loadScene = async ($: EngineInterface): Promise<void> => {
+  const want = asScene(await $.store.get('scene'))
+  await update($, scene, () => ({ want, effective: want === 'image' ? 'image' : 'text' }))
 }
 
 // Writes the tombstone once (D18); a no-op without a presence file path or when it is already out.
@@ -734,6 +758,263 @@ const confirmTick = async ($: EngineInterface, now: number, at: Player | null | 
   )
 }
 
+// ---- The renderer child (T12, D5, D6, D12) ---------------------------------------------------------
+type ChildStream = ReturnType<EngineInterface['process']['spawn']>
+
+// The running renderer's handle and the writer's bookkeeping, not drawn state (D12): one per session, like the
+// timer handles. `child` is the stream whose `return()` ends the node process; `stateDir` is the private dir this
+// loop made and removes; `seq` and `mark` pace the `state.json` writes (D7). `whenClosed` settles when a stop is
+// asked, so the read loop never waits on an idle child to notice it (a queued `return()` would wait too).
+type RendererLoop = {
+  closed: boolean
+  child?: ChildStream
+  stateDir?: string
+  seq: number
+  mark?: WriteMark
+  whenClosed: Promise<undefined>
+  close: () => void
+}
+let rendererLoop: RendererLoop | undefined
+
+const OUTPUT_TAIL = 4000
+const STATE_DIR_TEMPLATE = 'agents-office-state.XXXXXX'
+const STATE_DIR_MARK = 'agents-office-state.'
+const STATE_FILE = 'state.json'
+
+// One debug line per renderer event that ends or stops a loop, so a stop always has a reason in the log.
+const rendererLog = ($: EngineInterface, message: string): void => {
+  try {
+    $.ui.log(`agents-office: renderer ${message}`, { to: 'debug' })
+  } catch {
+    // Logging must never throw out of a hook.
+  }
+}
+
+// Ends the child: `$.ui.close` alone does not stop it, only `return()` on its stream does (D12). Safe to call twice.
+// `return()` is not awaited: behind a pending `next()` of an idle child it may not settle until the child writes, and
+// the loop must still reach its cleanup (the renderer's own watchdog ends a child that return() never reached).
+const endChild = ($: EngineInterface, loop: RendererLoop): void => {
+  const child = loop.child
+  if (child === undefined) return
+  loop.child = undefined
+  const ended: ProcessSpawnResult = { code: null, signal: null }
+  child.return(ended).catch(error => rendererLog($, `return threw ${String(error)}`))
+}
+
+// Asks the running loop to end (the pane closed, or the scene changed); the loop ends the child and logs its exit.
+const stopRenderer = ($: EngineInterface, why: string): void => {
+  const loop = rendererLoop
+  if (loop === undefined) return
+  rendererLog($, `stop requested by ${why}`)
+  loop.close()
+}
+
+// Runs a command by `$.process.spawn` until it ends and returns its stdout and exit code.
+const spawnOut = async ($: EngineInterface, argv: readonly string[]): Promise<{ stdout: string; code: number | null }> => {
+  let stdout = ''
+  const stream = $.process.spawn({ argv })
+  for (;;) {
+    const step = await stream.next()
+    if (step.done === true) return { stdout, code: step.value.code }
+    if (step.value.stream === 'stdout') stdout += step.value.text
+  }
+}
+
+// Feeds one event to the `renderer` atom and returns the life it produced.
+const lifeEvent = async ($: EngineInterface, event: LifeEvent): Promise<Life> => {
+  const now = await $.clock.now()
+  let after: Life = initialLife
+  await update($, renderer, cur => {
+    after = nextLife(cur, event, now)
+
+    return after
+  })
+
+  return after
+}
+
+// Switches the pane to the v2 text office with the reason; a scene already switched elsewhere is left alone.
+const fallToText = async ($: EngineInterface, reason: string): Promise<void> => {
+  await update($, scene, (cur): SceneState => (cur.effective === 'image' ? { ...cur, effective: 'text', reason } : cur))
+}
+
+// The same refusal handling as the v2 Raster blit: a changed viewport is a stale frame and a "mounted" deny means
+// nothing is drawn yet, so both only log and the next frame retries; the same size with any other deny is final.
+const isFinalDeny = async ($: EngineInterface, deny: string, size: { columns: number; rows: number }): Promise<boolean> => {
+  const latest = await read($, viewport)
+  const sameSize = latest.columns === size.columns && latest.rows === size.rows
+
+  return sameSize && !/mounted/i.test(deny)
+}
+
+// One renderer from start to end: makes the private state dir, spawns node, turns its stdout into Image blits and
+// life events, and always ends the child and removes the dir it made. Leaving the read loop by any path runs `return()`
+// and logs why the loop ended.
+const runRenderer = async ($: EngineInterface, loop: RendererLoop): Promise<void> => {
+  const script = `${$.plugin.root}/renderer/render.mjs`
+  let stdout = ''
+  let stderr = ''
+  let denied: string | undefined
+  let outcome: LifeEvent = { kind: 'closed' }
+  let ending = 'ended'
+  try {
+    const current = await read($, renderer)
+    if (current.status !== 'backoff') await lifeEvent($, { kind: 'closed' })
+    const started = await lifeEvent($, current.status === 'backoff' ? { kind: 'retry-due' } : { kind: 'want-start' })
+    if (started.status !== 'starting') {
+      ending = `not started (life ${started.status})`
+      return
+    }
+    const made = await spawnOut($, ['mktemp', '-d', '-t', STATE_DIR_TEMPLATE])
+    const dir = made.stdout.trim()
+    if (made.code !== 0 || !dir.startsWith('/')) throw new Error(`mktemp failed with code ${String(made.code)}`)
+    loop.stateDir = dir
+    // The renderer names its temp dir after the session; keep only characters safe in a path.
+    const session = (await $.session.id()).replace(/[^A-Za-z0-9-]/g, '')
+    if (loop.closed) {
+      ending = 'closed before spawn'
+      return
+    }
+    const child = $.process.spawn({ argv: ['node', script, `--session=${session}`, `--state=${dir}/${STATE_FILE}`] })
+    loop.child = child
+    if (loop.closed) {
+      ending = 'closed at spawn'
+      endChild($, loop)
+      return
+    }
+    let carry = ''
+    let rendererDir: string | undefined
+    for (;;) {
+      const step = await Promise.race([child.next(), loop.whenClosed])
+      if (step === undefined || loop.closed) {
+        ending = 'closed while reading'
+        break
+      }
+      if (step.done === true) {
+        ending = `child ended (code ${String(step.value.code)}, signal ${String(step.value.signal)})`
+        outcome = { kind: 'exit', code: step.value.code, signal: step.value.signal, stderr, stdout }
+        break
+      }
+      const piece = step.value
+      if (piece.stream === 'stderr') {
+        stderr = (stderr + piece.text).slice(-OUTPUT_TAIL)
+        continue
+      }
+      stdout = (stdout + piece.text).slice(-OUTPUT_TAIL)
+      const split = splitLines(carry, piece.text)
+      carry = split.carry
+      const lines = split.lines.flatMap(text => {
+        const parsed = parseLine(text)
+
+        return parsed === undefined ? [] : [parsed]
+      })
+      for (const line of lines) {
+        if (line.kind === 'dir') {
+          rendererDir = line.path
+          logOnce($, 'renderer', `dir ${line.path}`)
+        } else if (line.kind === 'ready') {
+          await lifeEvent($, { kind: 'ready', ...(rendererDir === undefined ? {} : { dir: rendererDir }) })
+          rendererLog($, 'ready')
+        }
+      }
+      // Only the newest frame of a piece is blitted; the older ones are already overwritten on disk (D6).
+      const latest = newestFrame(lines)
+      if (latest === undefined) continue
+      const sized = await read($, viewport)
+      let deny: string | undefined
+      try {
+        const result = await $.ui.blit({ requestId: PANE, key: SCENE_KEY, source: { file: latest.path, format: 'png', generation: latest.n } })
+        deny = result.deny
+      } catch (error) {
+        deny = String(error)
+      }
+      if (deny === undefined) continue
+      if (await isFinalDeny($, deny, sized)) {
+        denied = deny
+        ending = `blit denied (${deny})`
+        break
+      }
+      logOnce($, 'renderer', `blit refused, retrying on the next frame (${deny})`)
+    }
+  } catch (error) {
+    ending = `threw ${String(error)}`
+    outcome = { kind: 'spawn-failed', error: String(error) }
+  } finally {
+    endChild($, loop)
+    const dir = loop.stateDir
+    loop.stateDir = undefined
+    if (dir !== undefined && dir.startsWith('/') && baseName(dir).startsWith(STATE_DIR_MARK)) {
+      await spawnOut($, ['rm', '-rf', '--', dir]).catch(error => rendererLog($, `cleanup threw ${String(error)}`))
+    }
+    rendererLog($, `loop ended: ${ending}`)
+  }
+  const life = await lifeEvent($, outcome)
+  // A loop stopped from outside is stale: the scene it served is already decided elsewhere, so it never falls to text.
+  if (loop.closed) return
+  if (denied !== undefined) await fallToText($, `The terminal could not draw the image scene (${denied}).`)
+  else if (life.status === 'failed') await fallToText($, life.reason ?? 'The renderer failed.')
+}
+
+// Starts the one renderer of this session when none runs.
+const startRenderer = ($: EngineInterface): void => {
+  if (rendererLoop !== undefined) return
+  let settle: (value: undefined) => void = () => undefined
+  const whenClosed = new Promise<undefined>(resolve => {
+    settle = resolve
+  })
+  const loop: RendererLoop = {
+    closed: false,
+    seq: 0,
+    whenClosed,
+    close: () => {
+      loop.closed = true
+      settle(undefined)
+    },
+  }
+  rendererLoop = loop
+  runRenderer($, loop)
+    .catch(error => logOnce($, 'renderer', `loop threw ${String(error)}`))
+    .finally(() => {
+      if (rendererLoop === loop) rendererLoop = undefined
+    })
+}
+
+// Starts the renderer when the image scene is wanted and the pane is drawn (the tick only gets here with a map).
+// A failed life shows the text office; a backoff waits for its retry time.
+const ensureRenderer = async ($: EngineInterface, now: number): Promise<void> => {
+  if (rendererLoop !== undefined) return
+  const life = await read($, renderer)
+  if (life.status === 'failed') {
+    await fallToText($, life.reason ?? 'The renderer failed.')
+    return
+  }
+  if (life.status === 'backoff' && (life.retryAt ?? 0) > now) return
+  startRenderer($)
+}
+
+// The image-mode half of the tick: builds the scene model and writes `state.json` when it changed or the heartbeat
+// is due (D7). The Raster blit is skipped.
+const imageTick = async (
+  $: EngineInterface,
+  input: Parameters<typeof sceneOf>[0],
+  size: { columns: number; rows: number },
+): Promise<void> => {
+  await ensureRenderer($, input.now)
+  const loop = rendererLoop
+  if (loop === undefined || loop.closed || loop.stateDir === undefined) return
+  const model = sceneOf(input)
+  const key = sceneKey(model)
+  if (!shouldWrite(loop.mark, key, input.now)) return
+  loop.seq += 1
+  loop.mark = { key, at: input.now }
+  try {
+    await $.fs.write(`${loop.stateDir}/${STATE_FILE}`, stateText({ seq: loop.seq, heartbeatAt: input.now, size: pixelsFor(size), scene: model }))
+  } catch (error) {
+    loop.mark = undefined
+    throw error
+  }
+}
+
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
   await guard($, 'team', undefined, async () => ensureTeam($, undefined, false))
@@ -791,6 +1072,35 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const noStrip = (await read($, viewport)).strip === 0
   const ownId = (await read($, team))?.id ?? ''
   const focus = focusOf(map, walker, ownId)
+  if ((await read($, scene)).effective === 'image') {
+    // The image scene is fed to the renderer instead of the Raster; a later switch back to text blits afresh.
+    lastFrameCells = null
+    const typed = chatLine(await read($, pad))
+    await guard($, 'scene', undefined, async () =>
+      imageTick(
+        $,
+        {
+          map,
+          paneColumns: size.columns,
+          paneRows: size.rows,
+          player: walker,
+          ownId,
+          now,
+          agents: after.agents,
+          remoteAgents: await remoteAgentsOf($),
+          motion: after.motion,
+          bubbles: after.bubbles,
+          others: remotePlayersOf(await read($, remote), map),
+          cat: kitty,
+          inspect: await read($, inspect),
+          chatLine: typed,
+        },
+        size,
+      ),
+    )
+
+    return
+  }
   const span = overlaySpan(map, size.columns, size.rows, focus)
   const frame = buildFrame({
     map,
@@ -932,6 +1242,7 @@ export const register: Register = on => {
     await guard($, 'session.start branch', undefined, async () => labelTeam($, e.cwd))
     // The share mode loads before the dir resolves, so a publisher that waits for `dir` never sees the default.
     await guard($, 'session.start share', undefined, async () => loadShare($))
+    await guard($, 'session.start scene', undefined, async () => loadScene($))
     await guard($, 'session.start presence', undefined, async () => resolveIdentity($))
     await guard($, 'session.start presence cleanup', undefined, async () => cleanPresence($))
     await guard($, 'session.start presence timer', undefined, async () => {
@@ -1039,6 +1350,8 @@ export const register: Register = on => {
   on('ui.close', async ($, e, next) => {
     const result = await next(e)
     if (e.id === PANE) {
+      // Closing the pane does not stop the child: the loop must end and call `return()` on its stream (D12).
+      stopRenderer($, 'ui.close')
       await guard($, 'ui.close', undefined, async () => {
         await update($, viewport, () => ({ columns: 0, rows: 0 }))
       })
@@ -1050,12 +1363,22 @@ export const register: Register = on => {
   on('command.run', { command: 'office' }, async ($, e) =>
     guard($, 'command.run', { text: 'Office pane failed to open.' }, async () => {
       const parsed = parseOfficeArgs(e.args)
-      if (parsed.kind === 'usage') return { text: SHARE_USAGE }
+      if (parsed.kind === 'usage') return { text: parsed.topic === 'scene' ? SCENE_USAGE : SHARE_USAGE }
       if (parsed.kind === 'share') {
         await $.store.set('share', parsed.mode)
         await update($, share, () => parsed.mode)
 
         return { text: `Office sharing: ${parsed.mode}` }
+      }
+      if (parsed.kind === 'scene') {
+        await $.store.set('scene', parsed.mode)
+        // T12: only `image` draws the image scene; `auto` waits for the probe (T13) and draws text.
+        await update($, scene, () => ({ want: parsed.mode, effective: parsed.mode === 'image' ? 'image' : 'text' }))
+        // A new request clears an earlier crash count; a mode without the image scene ends a running renderer.
+        await update($, renderer, cur => (cur.status === 'failed' ? initialLife : cur))
+        if (parsed.mode !== 'image') stopRenderer($, `/office scene ${parsed.mode}`)
+
+        return { text: `Office scene: ${parsed.mode}` }
       }
       const wasOpened = await read($, opened)
       await openOffice($)
@@ -1138,7 +1461,7 @@ export const register: Register = on => {
           )
         }
 
-        const { Raster, Input } = $.ui.resolve(e)
+        const { Raster, Input, Image } = $.ui.resolve(e)
         const bodyRows = bodyRowsFor(e.props.placement, e.props.scroll.bodyRows, e.viewport?.rows)
         const { columns, rows, strip: stripCount, foot } = rasterSize(e.props.bodyColumns, bodyRows)
         // Drawing is pure: a state write inside the hook is denied. A timer closure
@@ -1152,6 +1475,37 @@ export const register: Register = on => {
               <Text>
                 {`Office needs a ${MIN_COLUMNS}x${MIN_ROWS} pane, this one is ${e.props.bodyColumns}x${bodyRows}. Widen or heighten the terminal.`}
               </Text>
+            </Box>
+          )
+        }
+        if ((await read($, scene)).effective === 'image') {
+          // The image scene (T12, D18): the Image is mounted from the first render, with the placeholder until the
+          // first frame is blitted to its key; the pad Input sits over its bottom-left cell like over the Raster.
+          const drawn = await read($, scene)
+          const rowsOfLog = await read($, log)
+          const recent = stripCount > 0 ? rowsOfLog.slice(-stripCount) : []
+          const imageStrip = Array.from({ length: stripCount }, (_, i) => recent[i] ?? ' ')
+          const imagePad = await read($, pad)
+
+          return (
+            <Box flexDirection="column">
+              <Box>
+                <Image
+                  key={SCENE_KEY}
+                  source={{ file: `${$.plugin.root}/renderer/placeholder.png`, format: 'png', generation: 0 }}
+                  columns={clampCells(columns)}
+                  rows={clampCells(rows)}
+                  alt={`Agents Office image scene (mode: ${drawn.want})`}
+                />
+                <Box position="absolute" bottom={0} left={0} width={2}>
+                  <Input key={PAD_KEY} value={imagePad.clear} submitLabel="" onSubmit={() => undefined} />
+                </Box>
+              </Box>
+              {imageStrip.map((line, i) => (
+                <Text key={`log-${i}`} dimColor wrap="truncate-end">
+                  {line}
+                </Text>
+              ))}
             </Box>
           )
         }
