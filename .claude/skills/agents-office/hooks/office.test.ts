@@ -6,6 +6,7 @@ import { findPath } from './path'
 import { NUDGE_TEXT } from './pad'
 import { STRIP_ROWS, TICK_MS } from './timing'
 import type { OfficeMap } from './map'
+import type { SceneFigure, SceneModel } from './scene'
 const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], MID_FOOT)
 
 const paneProps = {
@@ -2114,5 +2115,191 @@ test('3 renderer crashes give the text office with the crash reason', async ($, 
   expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(3)
   expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
   expect((logs[logs.length - 1] ?? []).some(line => line.includes('crashed 3 times'))).toBe(true)
+  await ui.unmount()
+})
+
+// ---- Every pad key against the image scene (T16) -----------------------------------------------------
+// A session in image mode with main plus one spawned subagent `a1` (label `general-purpose`). `scene()` is the
+// scene of the newest state.json write; `calls` collects the dialogs, sends, aborts and opened panes.
+const padSession = async ($: Engine, on: On, answer = 'Yes') => {
+  const clock = mock.clock(on)
+  const states: string[] = []
+  const calls = { asks: [] as string[], sends: [] as Array<{ to: unknown; text: string }>, aborts: [] as string[], opened: [] as string[] }
+  stubStore(on)
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('ui.open', (_$, e) => {
+    calls.opened.push(`${e.id}|${e.title ?? ''}`)
+
+    return { value: { isPlaced: true } }
+  })
+  on('ui.blit', () => ({ value: {} }))
+  on('session.messages', () => ({ value: { deny: 'no transcript' } }))
+  on('fs.write', (_$, e) => {
+    if (e.path === `${STATE_DIR}/state.json`) states.push(e.text)
+
+    return { value: undefined }
+  })
+  on('tool.call', (_$, e) => {
+    if (e.tool !== 'AskUserQuestion') return { result: 'stub' }
+    const question = e.questions[0]?.question ?? ''
+    calls.asks.push(question)
+
+    return { result: { questions: e.questions.map(q => ({ ...q, options: q.options })), answers: { [question]: answer } } }
+  })
+  on('session.send', (_$, e) => {
+    calls.sends.push({ to: e.to, text: e.text })
+
+    return { isDelivered: true }
+  })
+  on('turn.abort', (_$, e) => {
+    calls.aborts.push(e.turnId)
+
+    return { value: undefined }
+  })
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: 'done' }))
+  stubRenderer(on, 'ready\n')
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(runOffice('scene image'))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
+  const wait = async (ms: number) => {
+    // Steps of one second, so every tick in between writes its state.
+    for (let left = ms; left > 0; left -= 1000) {
+      await clock.advance(Math.min(left, 1000))
+      await settle(5)
+    }
+  }
+  await wait(1000)
+  await $.agent.spawn(spawnArgs)
+  await wait(6000)
+  const scene = (): SceneModel => (JSON.parse(states.at(-1) ?? '{}') as { scene: SceneModel }).scene
+  const you = (): SceneFigure => {
+    const figure = scene().figures.find(f => f.key === 'player')
+    if (figure === undefined) throw new Error('no player figure in the scene')
+
+    return figure
+  }
+
+  return { ui, clock, wait, scene, you, calls, states }
+}
+
+// From the first desk, beside main: `]` then `[` walks the player out of its room and back (as the inspect test does).
+const toDesk = async ($: Engine, wait: (ms: number) => Promise<void>) => {
+  await pressKey($, ']')
+  await wait(JUMP_MS)
+  await pressKey($, '[')
+  await wait(JUMP_MS)
+}
+
+test('image scene: wasd steps the player one tile per tick and turns it', async ($, on) => {
+  const { ui, wait, you } = await padSession($, on)
+  const before = you()
+  await pressKey($, 'dddd')
+  await wait(1000)
+  const right = you()
+  expect(right.x - before.x).toBe(4 * 8)
+  expect(right.facing).toBe('right')
+  expect(right.sprite).toBe('person1-right')
+  await pressKey($, 'aa')
+  await wait(1000)
+  expect(you().x - right.x).toBe(-2 * 8)
+  expect(you().facing).toBe('left')
+  await ui.unmount()
+})
+
+test('image scene: ] and [ jump the player between rooms and the camera follows', async ($, on) => {
+  const { ui, wait, you, scene } = await padSession($, on)
+  const home = { you: you(), camera: scene().camera }
+  await pressKey($, ']')
+  await wait(JUMP_MS)
+  const away = { you: you(), camera: scene().camera }
+  expect({ x: away.you.x, y: away.you.y }).not.toEqual({ x: home.you.x, y: home.you.y })
+  const view = (f: SceneFigure) => ({ left: f.x - away.camera.x, top: f.y - away.camera.y })
+  // Wherever the camera is, the player stays inside the camera window.
+  expect(view(away.you).left).toBeGreaterThanOrEqual(0)
+  expect(view(away.you).left).toBeLessThanOrEqual(away.camera.w)
+  expect(view(away.you).top).toBeGreaterThanOrEqual(0)
+  expect(view(away.you).top).toBeLessThanOrEqual(away.camera.h)
+  await pressKey($, '[')
+  await wait(JUMP_MS)
+  expect({ x: you().x, y: you().y }).not.toEqual({ x: away.you.x, y: away.you.y })
+  expect(you().x).toBeGreaterThanOrEqual(scene().camera.x)
+  expect(you().x).toBeLessThanOrEqual(scene().camera.x + scene().camera.w)
+  await ui.unmount()
+})
+
+test('image scene: keys 1 to 4 show an emote above the player that ends after 3 s', async ($, on) => {
+  const { ui, wait, you } = await padSession($, on)
+  const shown: Array<string | undefined> = []
+  for (const key of ['1', '2', '3', '4']) {
+    await pressKey($, key)
+    await wait(1000)
+    shown.push(you().emote)
+    await wait(3000)
+    expect(you().emote).toBeUndefined()
+  }
+  expect(shown).toEqual(['!', '?', '\u2665', '\u266a'])
+  await ui.unmount()
+})
+
+test('image scene: e highlights the nearest agent and writes the inspect line as the caption for 6 s', async ($, on) => {
+  const { ui, wait, scene } = await padSession($, on)
+  await toDesk($, wait)
+  expect(scene().caption).toBeUndefined()
+  await pressKey($, 'e')
+  await wait(1000)
+  expect(scene().figures.filter(f => f.highlight).map(f => f.key)).toEqual(['main'])
+  expect(scene().caption).toMatch(/^main \| working \| \w+ \| .+ \| \d+s$/)
+  await wait(6000)
+  expect(scene().caption).toBeUndefined()
+  expect(scene().figures.some(f => f.highlight)).toBe(false)
+  await ui.unmount()
+})
+
+test('image scene: E opens the peek pane titled for the agent and the scene is unchanged', async ($, on) => {
+  const { ui, wait, calls, you } = await padSession($, on)
+  await toDesk($, wait)
+  const at = { x: you().x, y: you().y }
+  await pressKey($, 'E')
+  await wait(1000)
+  expect(calls.opened.filter(o => o.startsWith('office-peek'))).toEqual(['office-peek|Peek: main'])
+  expect({ x: you().x, y: you().y }).toEqual(at)
+  await ui.unmount()
+})
+
+test('image scene: t shows the draft as the caption, Enter turns it into a chat bubble and the player stays', async ($, on) => {
+  const { ui, wait, you, scene } = await padSession($, on)
+  const before = you()
+  await pressKey($, 't')
+  await pressKey($, 'twasd hi')
+  await wait(1000)
+  expect(scene().caption).toBe('Say: wasd hi_')
+  expect(you().chat).toBeUndefined()
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'twasd hi', kind: 'submit' })
+  await wait(1000)
+  expect(you().chat).toBe('wasd hi')
+  expect(scene().caption).toBeUndefined()
+  expect({ x: you().x, y: you().y }).toEqual({ x: before.x, y: before.y })
+  await wait(5000)
+  expect(you().chat).toBeUndefined()
+  await ui.unmount()
+})
+
+test('image scene: m asks before nudging the agent beside the player and x asks before interrupting main', async ($, on) => {
+  const { ui, wait, calls } = await padSession($, on)
+  await toDesk($, wait)
+  await pressKey($, 'ddddd')
+  await wait(1000)
+  await pressKey($, 'm')
+  await wait(1000)
+  expect(calls.asks).toEqual(['Nudge general-purpose?'])
+  expect(calls.sends).toEqual([{ to: 'a1', text: NUDGE_TEXT }])
+  await $.turn.start({ text: 'go', turnId: 'turn-9' })
+  await pressKey($, 'x')
+  await wait(1000)
+  expect(calls.asks).toEqual(['Nudge general-purpose?', 'Interrupt main?'])
+  expect(calls.aborts).toEqual(['turn-9'])
   await ui.unmount()
 })

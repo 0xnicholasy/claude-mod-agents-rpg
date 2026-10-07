@@ -195,6 +195,16 @@ test('a remote agent is drawn with remote true and no tool text', () => {
   expect(figs[0]?.bubble).toBe(undefined)
 })
 
+test('the pad glyphs for the heart and the note become the real symbols, other emotes stay', () => {
+  const now = at(12)
+  const emoteOf = (glyph: string): string | undefined =>
+    sceneOf({ ...inputOf(), now, player: { ...playerAt({ x: 10, y: 3 }), emote: glyph, emoteUntil: now + 1000 } }).figures.find(f => f.player)?.emote
+  expect(emoteOf('\u25c6')).toBe('\u2665')
+  expect(emoteOf('~')).toBe('\u266a')
+  expect(emoteOf('!')).toBe('!')
+  expect(emoteOf('?')).toBe('?')
+})
+
 test('an expired emote, chat or bubble is absent and a live one is present', () => {
   const now = at(12)
   const agent = agentOf()
