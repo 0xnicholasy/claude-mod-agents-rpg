@@ -1,11 +1,15 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { itemsOf } from './items'
+import type { Item } from './items'
+import { mapFor } from './loop'
+import { rectGap } from './use'
 import { buildOffice, canStand, MID_FOOT } from './map'
 import { findPath } from './path'
 import { NUDGE_TEXT } from './pad'
 import { STRIP_ROWS, TICK_MS } from './timing'
-import type { OfficeMap } from './map'
+import type { OfficeMap, Rect } from './map'
 import type { SceneFigure, SceneModel } from './scene'
 const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], MID_FOOT)
 
@@ -2471,4 +2475,178 @@ test('image scene: a tombstoned session leaves the scene within 5 s', async ($, 
   // The anonymous room after it is renumbered by room order.
   expect(rooms.map(r => r.name)).toEqual(['proj', 'alpha (main)', 'Session 3'])
   await ui.unmount()
+})
+
+// ---- Using the office with e (T31) -------------------------------------------------------------------------
+type Written = {
+  player?: { x: number; y: number; path: unknown[] }
+  motion?: Record<string, { x: number; y: number; path: Array<{ x: number; y: number }> }>
+  viewport?: { columns: number; rows: number }
+  team?: { id: `team:${string}`; label: string }
+  inspect?: { text: string } | null
+}
+
+// A text-scene session with the pane mounted. A test cannot write atoms, so `state.set` keeps the newest value of each
+// and rewrites the player's position while `pin` is set (any key that moves the player then makes the write). `opened`
+// records the pane opens as `id|title`.
+const useSession = async ($: Engine, on: On) => {
+  const clock = mock.clock(on)
+  const opened: string[] = []
+  const last: Written = {}
+  const pin: { at?: { x: number; y: number } } = {}
+  on('state.set', ($$, e, next) => {
+    // StateWrite types `value` as the union of every atom; each key is read as its own shape.
+    const value = e.value as never
+    if (e.key === 'player' && pin.at !== undefined && value !== null) {
+      const pinned = { ...(value as object), x: pin.at.x, y: pin.at.y, path: [] }
+      last.player = pinned as Written['player']
+
+      return next({ ...e, value: pinned as never })
+    }
+    if (e.key === 'player' || e.key === 'motion' || e.key === 'viewport' || e.key === 'team' || e.key === 'inspect') (last as Record<string, unknown>)[e.key] = value
+
+    return next(e)
+  })
+  stubSession(on)
+  on('store.get', (_$, e) => ({ value: e.key === 'scene' ? 'text' : undefined }))
+  on('ui.open', (_$, e) => {
+    opened.push(`${e.id}|${e.title ?? ''}`)
+
+    return { value: { isPlaced: true } }
+  })
+  on('ui.blit', () => ({ value: {} }))
+  on('agent.list', () => ({ value: [{ id: 'main', status: 'running' }, { id: 'done1', status: 'completed' }] as never }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('session.messages', () => ({ value: { deny: 'no transcript' } }))
+  on('tool.call', () => ({ result: 'stub' }))
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(23))
+  await clock.advance(TICK_MS * 4)
+  const mapOf = (): OfficeMap => {
+    const size = last.viewport
+    const own = last.team
+    const map = size === undefined ? undefined : mapFor(size.columns, size.rows, own === undefined ? [] : [{ id: own.id, label: own.label }])
+    if (map === undefined) throw new Error('no map')
+
+    return map
+  }
+  const items = (): Item[] => itemsOf(mapOf())
+  const press = async (key: string): Promise<void> => {
+    await pressKey($, key)
+    await clock.advance(TICK_MS * 2)
+  }
+  // Puts the player on the first standable cell that is `gap` cells from `rect` and farther than that from every `apart` item and at least 3 from every agent rectangle in `agents` (a `d` makes the write the pin rewrites;
+  // the step snaps a player off a cell it cannot stand on, so the cell must be a real one).
+  const stand = async (rect: Rect, gap: number, apart: Rect[] = [], agents: Rect[] = []): Promise<void> => {
+    const map = mapOf()
+    for (let y = rect.y - gap - map.foot.h; y <= rect.y + rect.h + gap; y++) {
+      for (let x = rect.x - gap - map.foot.w; x <= rect.x + rect.w + gap; x++) {
+        const body = { x, y, w: map.foot.w, h: map.foot.h }
+        if (!canStand(map, x, y) || rectGap(body, rect) !== gap || apart.some(other => rectGap(body, other) <= gap) || agents.some(other => rectGap(body, other) <= 2)) continue
+        pin.at = { x, y }
+        await press('d')
+
+        return
+      }
+    }
+    throw new Error('no standable cell at that gap')
+  }
+  const peekTexts = async (): Promise<string[]> => {
+    const pane = await $.ui.mount({ ...paneAt(23), requestId: 'office-peek' })
+    const texts = (await pane.findAll({ type: 'Text' })).map(t => String(t.text))
+    await pane.unmount()
+
+    return texts
+  }
+
+  return { clock, ui, opened, last, items, press, stand, peekTexts }
+}
+
+test('e at the whiteboard lists a TodoWrite and the pane redraws after a second TodoWrite', async ($, on) => {
+  const run = await useSession($, on)
+  const board = run.items().find(i => i.kind === 'whiteboard')
+  if (board === undefined) throw new Error('no whiteboard')
+  await run.stand(board.rect, 1)
+  await $.tool.call({ tool: 'TodoWrite', todos: [{ content: 'write tests', status: 'in_progress', activeForm: 'Writing tests' }, { content: 'ship', status: 'pending', activeForm: 'Shipping' }] })
+  await run.press('e')
+
+  expect(run.opened.filter(o => o.startsWith('office-peek'))).toEqual(['office-peek|Whiteboard'])
+  const pane = await $.ui.mount({ ...paneAt(23), requestId: 'office-peek' })
+  const lines = async () => (await pane.findAll({ type: 'Text' })).map(t => String(t.text))
+  expect(await lines()).toEqual(['[>] write tests', '[ ] ship'])
+  await $.tool.call({ tool: 'TodoWrite', todos: [{ content: 'write tests', status: 'completed', activeForm: 'Writing tests' }, { content: 'ship', status: 'in_progress', activeForm: 'Shipping' }] })
+  await run.clock.advance(TICK_MS)
+  expect(await lines()).toEqual(['[x] write tests', '[>] ship'])
+  await pane.unmount()
+  await run.ui.unmount()
+})
+
+test('e at the server rack shows own tools, the context percent and the running count', async ($, on) => {
+  const run = await useSession($, on)
+  const rack = run.items().find(i => i.kind === 'rack')
+  if (rack === undefined) throw new Error('no rack')
+  await run.stand(rack.rect, 1)
+  await $.tool.call({ tool: 'Read', file_path: 'x' })
+  await $.session.measure({ context: { window: 1000000, tokens: 70000, percent: 7 }, rateLimits: [], cost: { usd: 0.383951 }, changed: ['context', 'cost'] })
+  await run.press('e')
+
+  expect(run.opened.filter(o => o.startsWith('office-peek'))).toEqual(['office-peek|Server rack'])
+  expect(await run.peekTexts()).toEqual(['context: 7%', 'cost: $0.38', 'agents: 1 running, 0 idle', 'main: Read'])
+  await run.ui.unmount()
+})
+
+test('e at a desk peeks the agent heading for it', async ($, on) => {
+  const run = await useSession($, on)
+  // A new agent walks in from the door to the desk it will own: first along the corridor, then up and back along the desk row.
+  await $.agent.spawn(spawnArgs)
+  await run.clock.advance(TICK_MS)
+  const anchor = run.last.motion?.a1?.path.at(-1)
+  const desk = run.items().find(i => i.kind === 'desk' && i.anchor?.x === anchor?.x && i.anchor?.y === anchor?.y)
+  if (desk === undefined) throw new Error('a1 has no desk')
+  // Wait until a1 is far from its desk (it still owns it: the last tile of its path), then stand beside the desk alone.
+  await run.clock.advance(TICK_MS * 28)
+  const far = run.last.motion?.a1
+  if (far === undefined || rectGap({ x: far.x, y: far.y, w: 5, h: 5 }, desk.rect) < 10) throw new Error('a1 is not away from its desk')
+  await run.stand(desk.rect, 1, run.items().filter(i => i.id !== desk.id).map(i => i.rect), [{ x: far.x, y: far.y, w: 5, h: 5 }, { ...(run.last.motion?.main ?? { x: 0, y: 0 }), w: 5, h: 5 }])
+  await run.press('e')
+
+  expect(run.opened.filter(o => o.startsWith('office-peek'))).toEqual(['office-peek|Peek: general-purpose'])
+  await run.ui.unmount()
+})
+
+test('e next to an agent inspects it and opens no peek pane', async ($, on) => {
+  const run = await useSession($, on)
+  const at = run.last.motion?.main
+  if (at === undefined) throw new Error('main is not seated')
+  await run.stand({ x: at.x, y: at.y, w: 5, h: 5 }, 0)
+  await run.press('e')
+
+  expect(run.opened.filter(o => o.startsWith('office-peek'))).toEqual([])
+  expect(run.last.inspect?.text).toMatch(/^main \| /)
+  await run.ui.unmount()
+})
+
+test('e at the coffee machine is consumed: no inspect line and no pane', async ($, on) => {
+  const run = await useSession($, on)
+  const coffee = run.items().find(i => i.kind === 'coffee')
+  if (coffee === undefined) throw new Error('no coffee machine')
+  await run.stand(coffee.rect, 1)
+  await run.press('e')
+
+  expect(run.last.inspect).toBeUndefined()
+  expect(run.opened.filter(o => o.startsWith('office-peek'))).toEqual([])
+  await run.ui.unmount()
+})
+
+test('a subagent TodoWrite does not reach the whiteboard', async ($, on) => {
+  const run = await useSession($, on)
+  const board = run.items().find(i => i.kind === 'whiteboard')
+  if (board === undefined) throw new Error('no whiteboard')
+  await run.stand(board.rect, 1)
+  await $.tool.call({ tool: 'TodoWrite', agentId: 'a1', todos: [{ content: 'sub task', status: 'pending', activeForm: 'Sub task' }] } as never)
+  await run.press('e')
+
+  expect(await run.peekTexts()).toEqual(['No plan yet.'])
+  await run.ui.unmount()
 })

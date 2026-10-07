@@ -18,6 +18,7 @@ import { canStand, MID_FOOT, MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { Footprint, OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest, peekLines } from './inspect'
+import { itemsOf } from './items'
 import { chatLine, CONFIRM_OPTIONS, INITIAL_PAD, isYes, NUDGE_TEXT, onPadInput, onPadSubmit } from './pad'
 import {
   asScene,
@@ -55,6 +56,8 @@ import { sceneKey, sceneOf } from './scene'
 import type { SceneModel } from './scene'
 import { baseName, branchOf, teamLabel } from './team'
 import { hashKey } from './sprites'
+import { boardLines, nodesOfTodos, outcomeOf, rackLines, targetOf as useTargetOf } from './use'
+import type { BoardNode, Outcome } from './use'
 import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timing'
 
 const PANE = 'office'
@@ -98,9 +101,20 @@ const cat = atom({ plugin: 'agents-office', key: 'cat' } as const, null as Cat |
 type Inspect = { agentId: string; text: string; until: number }
 const inspect = atom({ plugin: 'agents-office', key: 'inspect' } as const, null as Inspect | null)
 
-// The peek pane's content (D25): the nearest own agent's last text messages, or one `Nothing to show` line.
-type Peek = { agentId: string; label: string; lines: string[] }
+// The peek pane's content (D25, D26): an own agent's last text messages (`agent`, from `E` or a desk), the plan (`board`,
+// drawn live from its source, so `lines` is only the first draw) or the server rack (`rack`); one `Nothing to show` line
+// when an agent has no text.
+type Peek = { source: 'agent' | 'board' | 'rack'; agentId?: string; label: string; lines: string[] }
 const peek = atom({ plugin: 'agents-office', key: 'peek' } as const, null as Peek | null)
+
+// The newest context fill and cost from `session.measure` (D28); a field is absent until the first response reports it.
+type Usage = { percent?: number; usd?: number }
+const usage = atom({ plugin: 'agents-office', key: 'usage' } as const, {} as Usage)
+
+// The plan as TodoWrite / TaskCreate / TaskUpdate left it (D27): the whiteboard falls back to it only when the todo-list
+// plugin's `plan` is undefined. `id` is the task id of a TaskCreate.
+type BoardItem = { id?: string; content: string; status: string }
+const board = atom({ plugin: 'agents-office', key: 'board' } as const, [] as BoardItem[])
 
 // The id of the main turn that is running (`turn.start`), null between turns; `x` aborts it after a Yes (D25).
 const turnRef = atom({ plugin: 'agents-office', key: 'turn' } as const, null as string | null)
@@ -657,18 +671,120 @@ const peekTick = async ($: EngineInterface, now: number, at: Player | null | und
     await update($, inspect, () => ({ agentId: '', text: 'Nobody within 2 tiles.', until: now + INSPECT_MS }))
     return
   }
-  const label = clean(target.label)
+  await openAgentPeek($, target.id, target.label)
+}
+
+// Writes the `peek` atom and opens `office-peek` (no focus, so the pad keeps the keys). Only called from the ui.input hook.
+const openPeek = async ($: EngineInterface, shown: Peek, title: string): Promise<void> => {
+  await update($, peek, () => shown)
+  const opened = await $.ui.open({ id: PEEK_PANE, title, rows: PEEK_ROWS })
+  if ('reason' in opened && opened.reason !== undefined) logOnce($, 'peek open', String(opened.reason))
+}
+
+const openAgentPeek = async ($: EngineInterface, agentId: string, rawLabel: string): Promise<void> => {
+  const label = clean(rawLabel)
   let lines: string[] = []
   try {
-    const rows = target.id === 'main' ? await $.session.messages() : await $.session.messages({ agentId: target.id })
+    const rows = agentId === 'main' ? await $.session.messages() : await $.session.messages({ agentId })
     if (Array.isArray(rows)) lines = peekLines(rows)
   } catch (error) {
     $.ui.log(`agents-office: peek messages threw ${String(error)}`, { to: 'debug' })
   }
   if (lines.length === 0) lines = [`Nothing to show for ${label}.`]
-  await update($, peek, () => ({ agentId: target.id, label, lines }))
-  const opened = await $.ui.open({ id: PEEK_PANE, title: `Peek: ${label}`, rows: PEEK_ROWS })
-  if ('reason' in opened && opened.reason !== undefined) logOnce($, 'peek open', String(opened.reason))
+  await openPeek($, { source: 'agent', agentId, label, lines }, `Peek: ${label}`)
+}
+
+// Keeps the `board` mirror in step with a successful TodoWrite (the whole list, `newTodos` first), TaskCreate (one more
+// pending item, its id from the result) or TaskUpdate (a status change, `deleted` removes it).
+const mirrorBoard = async (
+  $: EngineInterface,
+  e: { tool: string; todos?: unknown; subject?: unknown; taskId?: unknown; status?: unknown },
+  output: unknown,
+): Promise<void> => {
+  if (e.tool === 'TodoWrite') {
+    // The tool result and input are typed per tool, which the generic hook input is not; these reads are checked at runtime.
+    const result = output as { newTodos?: BoardItem[] } | undefined
+    const source = Array.isArray(result?.newTodos) ? result.newTodos : Array.isArray(e.todos) ? (e.todos as BoardItem[]) : undefined
+    if (source === undefined) return
+    await update($, board, () => source.map(t => ({ content: String(t.content), status: String(t.status) })))
+  } else if (e.tool === 'TaskCreate') {
+    const id = (output as { task?: { id?: unknown } } | undefined)?.task?.id
+    if (typeof e.subject !== 'string') return
+    const item: BoardItem = { ...(typeof id === 'string' ? { id } : {}), content: e.subject, status: 'pending' }
+    await update($, board, cur => [...cur, item])
+  } else if (e.tool === 'TaskUpdate' && typeof e.taskId === 'string') {
+    const taskId = e.taskId
+    const status = typeof e.status === 'string' ? e.status : undefined
+    const subject = typeof e.subject === 'string' ? e.subject : undefined
+    await update($, board, cur =>
+      status === 'deleted'
+        ? cur.filter(t => t.id !== taskId)
+        : cur.map(t => (t.id === taskId ? { ...t, ...(status === undefined ? {} : { status }), ...(subject === undefined ? {} : { content: subject }) } : t)),
+    )
+  }
+}
+
+// The plan the whiteboard draws (D27): the todo-list plugin's `plan` nodes, or this plugin's own mirror when that read is
+// undefined (todo-list absent or no plan yet). Read live by the peek pane, so a change redraws it.
+const boardNodes = async ($: EngineInterface): Promise<BoardNode[]> => {
+  const plan = await read($, { plugin: 'todo-list', key: 'plan' } as const)
+  if (plan !== undefined) return plan.nodes.map(n => ({ id: n.id, parentId: n.parentId, title: n.title, status: n.status }))
+
+  return nodesOfTodos((await read($, board)).map(t => ({ content: t.content, status: t.status })))
+}
+
+// `e` on a desk, whiteboard or rack (D24, D26), called from the ui.input hook: a pending `pad.inspect` runs `targetOf`.
+// An agent target (and nothing in reach) is left for `inspectTick`, so the v2 inspect path is untouched; any other target
+// is consumed here. A coffee machine, sofa, water cooler or the cat are consumed without effect until their todo lands.
+const useTick = async ($: EngineInterface, now: number, at: Player | null | undefined): Promise<void> => {
+  const pending = (await read($, pad)).inspect
+  if (pending === undefined || at === null || at === undefined) return
+  const size = await read($, viewport)
+  const map = await mapAt($, size.columns, size.rows)
+  if (map === undefined) return
+  const roster = await read($, agents)
+  const moving = await read($, motion)
+  const target = useTargetOf({ player: at, foot: map.foot, agents: roster, motion: moving, items: itemsOf(map), cat: (await read($, cat)) ?? undefined })
+  if (target === undefined || target.kind === 'agent') return
+  const ownId = (await read($, team))?.id
+  if (ownId === undefined) return
+  // One update claims the press, so two hooks that saw it pending cannot both act on it.
+  let claimed = false
+  await update($, pad, cur => {
+    if (cur.inspect?.at !== pending.at) return cur
+    claimed = true
+
+    return { ...cur, inspect: undefined }
+  })
+  if (!claimed || now - pending.at > INSPECT_PRESS_MS) return
+  const roomNames = Object.fromEntries(map.rooms.map(room => [room.id, room.name]))
+  const outcome: Outcome = outcomeOf(target, { ownId, roster, motion: moving, roomNames }, now, hashKey(ownId))
+  switch (outcome.kind) {
+    case 'peek':
+      await openAgentPeek($, outcome.agentId, outcome.label)
+      return
+    case 'board':
+      await openPeek($, { source: 'board', label: 'Whiteboard', lines: boardLines(await boardNodes($)) }, 'Whiteboard')
+      return
+    case 'rack': {
+      let list: Array<{ id: string; status: string }> = []
+      try {
+        list = (await $.agent.list()).map(a => ({ id: a.id, status: a.status }))
+      } catch (error) {
+        $.ui.log(`agents-office: agent list threw ${String(error)}`, { to: 'debug' })
+      }
+      await openPeek($, { source: 'rack', label: 'Server rack', lines: rackLines({ roster, agentList: list, usage: await read($, usage) }) }, 'Server rack')
+      return
+    }
+    case 'line':
+      await update($, inspect, () => ({ agentId: '', text: clean(outcome.text), until: now + INSPECT_MS }))
+      return
+    case 'inspect':
+    case 'act':
+    case 'say':
+    case 'pet':
+      return
+  }
 }
 
 // Asks `question` with No first; `act` runs only when the answer is exactly Yes. A dismissed dialog rejects and a
@@ -1453,6 +1569,20 @@ export const register: Register = on => {
       if (assignTarget(current, map, id, room) === current) return
       await update($, motion, cur => assignTarget(cur, map, id, room))
     })
+    const result = await next(e)
+    // The whiteboard's own copy of the plan (D27), kept from a main-agent call that went through (a subagent's list is not the session's plan); the todo-list `plan` wins when set.
+    if (e.agentId === undefined && result.deny === undefined && result.isError !== true) await guard($, 'tool.call board', undefined, async () => mirrorBoard($, e, result.result))
+
+    return result
+  })
+
+  // The context fill and cost the server rack shows (D28). A field a measure leaves out keeps its last value, and stays absent until a first response reports it.
+  on('session.measure', async ($, e, next) => {
+    await guard($, 'session.measure', undefined, async () => {
+      const percent = e.context.percent
+      const usd = e.cost?.usd
+      await update($, usage, cur => (cur.percent === (percent ?? cur.percent) && cur.usd === (usd ?? cur.usd) ? cur : { percent: percent ?? cur.percent, usd: usd ?? cur.usd }))
+    })
 
     return next(e)
   })
@@ -1546,6 +1676,8 @@ export const register: Register = on => {
       // The peek pane opens here, not in the tick: an open the plugin makes on its own waits undrawn below 144
       // columns, while one answering a key press is placed at any width (d.ts PaneOpenArgs).
       if ((await read($, pad)).peek !== undefined) await peekTick($, now, await read($, player), await footOf($))
+      // `e` at a desk, whiteboard or rack opens the same pane, so it is answered here too (T31).
+      await useTick($, now, await read($, player))
     })
     await guard($, 'ui.input confirm', undefined, async () => {
       await confirmTick($, await $.clock.now(), await read($, player), await footOf($))
@@ -1570,7 +1702,8 @@ export const register: Register = on => {
       async () => {
         const { Box, Text } = $.ui.resolve(e)
         const shown = await read($, peek)
-        const lines = shown?.lines ?? ['Nothing to show.']
+        // The whiteboard is drawn from its source on every render, so a plan change redraws it (D27).
+        const lines = shown?.source === 'board' ? boardLines(await boardNodes($)) : (shown?.lines ?? ['Nothing to show.'])
 
         return (
           <Box flexDirection="column">

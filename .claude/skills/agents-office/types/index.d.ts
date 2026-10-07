@@ -78,7 +78,9 @@ declare module 'claude-code' {
         seed: number
       } | null
       inspect: { agentId: string; text: string; until: number } | null
-      peek: { agentId: string; label: string; lines: string[] } | null
+      peek: { source: 'agent' | 'board' | 'rack'; agentId?: string; label: string; lines: string[] } | null
+      usage: { percent?: number; usd?: number }
+      board: Array<{ id?: string; content: string; status: string }>
       turn: string | null
       asking: boolean
       identity: { sessionId: string; startedAt: number; dir?: string } | null
