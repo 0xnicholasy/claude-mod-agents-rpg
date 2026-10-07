@@ -4,7 +4,7 @@
 // heartbeat (> 10 s) or a changed parent pid, cleanup on SIGTERM/SIGINT.
 import { mkdtempSync, writeSync, chmodSync, rmSync, writeFileSync, renameSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // Captured first: if the parent dies while Chromium starts, a later read would already be the reparented pid.
@@ -32,6 +32,9 @@ chmodSync(outDir, 0o700)
 writeFileSync(join(outDir, 'pid'), String(process.pid))
 process.stdout.write(`dir ${outDir}\n`)
 process.on('exit', () => rmSync(outDir, { recursive: true, force: true }))
+// The plugin's private state dir is removed here too, in case the plugin cannot (only a dir it made: `mktemp` names).
+const stateDir = dirname(statePath)
+if (basename(stateDir).startsWith('agents-office-state.')) process.on('exit', () => rmSync(stateDir, { recursive: true, force: true }))
 
 // Remove sibling dirs whose pid file names a dead process. A dir without a readable pid file is left alone.
 const alive = pid => {

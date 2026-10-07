@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 11/22 done
+Progress: 12/22 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -46,6 +46,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - D17 Overlays: the inspect line, the chat draft (`Say: ..._`) and a renderer reason are drawn inside the scene as a caption bar at the view's bottom. Speech bubbles, emotes and chat bubbles are HTML bubbles above figures. Log strip rows (when the body has any) stay as Text under the Image. (planner, 2026-10-07) | caption bar and HTML bubbles confirmed T10 (the caption sits at the bottom of the camera window, not scaled with the world; tags draw above every figure); log strip and renderer reason assumed, confirm by T15
 - D18 In image mode the pad Input sits like v2 (`position="absolute" bottom={0} left={0}` over the Image's bottom-left) if T02 shows it draws over an Image without breaking the picture. Otherwise it goes on its own row under the Image, which then gets bodyRows - 1. (planner, 2026-10-07) | assumed, confirm by T02
 - D19 Test stubs work in `claude plugin test`: `on('process.spawn', async function* () { yield { stream: 'stdout' as const, text: 'ready\n' }; return { value: { code: 0, signal: null } } })` and `on('ui.blit', (_$, e) => ({ deny: 'x' }))` (`({ value: {} })` allows). End the spawn hook with `{ value }`, because a bare `{ code, signal }` return logs "returned neither { value } nor { deny }" (yielded chunks still arrive). Stub every other call the code makes (`clock.every`, `ui.open`, `ui.log`, `command.register`): an unstubbed one is refused ("no implementation for clock.every") and the test fails. Ran `claude plugin test` on the scratch imgspike: the stub test passed, and the one failure was an old test broken by a `$.clock.every` I added. (T01, 2026-10-07) | confirmed T01
+- D20 T12 proceeds without the owner's Ghostty half of T02. tmux facts (T02, 2026-10-07): the probe blit is denied with "the Image draws its alt here: the terminal draws no placeholder images (env: inside tmux or screen)"; `'Image' in $.ui.resolve(e)` is true in tmux, so it is not a detection signal alone; a height-only pane resize re-renders the pane in tmux (bodyRows updates); ui.render must not write state (write via $.clock.after(0)); the Image must be mounted from the first render (placeholder file source) or blits are denied. D18 (pad Input absolute bottom-left over the Image, like v2) is ASSUMED until the owner checks it in Ghostty; if it breaks the picture, move the Input to its own row under the Image. | assumed, confirm by T02 owner check, T13
 
 ## Todos
 
@@ -225,7 +226,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `npm run smoke:renderer` (cases a-c); `rtk proxy npm run check`
 
 ### T12 Wire the image scene behind `/office scene image`
-- status: todo
+- status: done (#76, 2026-10-07)
 - needs: T02, T09, T11
 - size: M
 - scope:
@@ -400,3 +401,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 2026-10-07 T09 #74 rendererLife.ts holds `next`, `classify` and `initialLife`; `renderer` and `scene` atoms declared inline; 3 exits in 60 s -> failed, no-node/no-playwright/no-chromium fail at once, `closed` -> off (a `failed` state stays failed), `classify` also reads render.mjs `error <code>` lines; backoff 1 s then 2 s (the 4 s step is unreachable while the 3rd exit within 60 s fails); the `renderer` atom gains `retryAt`
 2026-10-07 T10 #72 office.html draws a SceneModel (rooms, walls, doors, signs, props, y-sorted figures, plates, bubbles, highlight, caption, night tint, eased camera, 100 ms step tween, `sceneBusy()`); sprite scale/anchor reach the page through `renderer/sprite-table.json`, written from sceneArt.ts by `npm run sprites:table` and checked by `smoke:renderer`; `smoke:renderer` takes a fixture path and `SMOKE_FRAME_OUT`; state-busy.json is real `sceneOf` output
 2026-10-07 T11 #75 render.mjs paces frames (a frame only on a new seq or while sceneBusy, plus one settling frame, at most every 83 ms), follows `size` with setViewportSize, makes `agents-office-<session>-` (0700) with a `pid` file and sweeps siblings whose pid is dead, exits 0 on a heartbeat older than 10 s or a ppid change (1 s check), closes the browser and removes the dir on SIGTERM/SIGINT, and has `--once`, `--session=`; office.html camera ease is now time-based (25% per 1/60 s of elapsed time). Smoke: pass a: static fixture gave 1 frame, then none for 3 s; pass b: stale heartbeat (written 5 s old) exited 0 after 5348 ms, dir gone; pass c: exit 1, "error no-chromium browserType.launch: Executable doesn't exist at /nonexistent/chromium_headless_shell-1243/..." (T08's `/executable doesn't exist/i` matches, no change needed); also --once and the dead/live sibling sweep pass
+2026-10-07 T12 #76 /office scene image|auto|text (default text, auto behaves as text until T13); image mode mounts the keyed Image from the first render, writes state.json (heartbeat 2 s) and spawns render.mjs --session --state via $.process.spawn behind a mktemp 0700 state dir; the loop calls return() on the stream on every exit, logs one 'renderer loop ended: <reason>' line per exit, and a same-size blit deny falls back to text (tmux always does, about 70 ms after ready, after a frame was written). LIVE default text: v2 office draws, no render.mjs spawned. LIVEIMG in tmux: frame-0.png shows the team room with main and you; 0 render.mjs/headless_shell after stop, no agents-office* temp dirs left. GHOSTTY owner check PENDING: run `cd W && claude --plugin-dir .claude/skills/agents-office` in Ghostty (not tmux), `/office scene image`, confirm the image office shows with the pad Input at the bottom-left not breaking the picture

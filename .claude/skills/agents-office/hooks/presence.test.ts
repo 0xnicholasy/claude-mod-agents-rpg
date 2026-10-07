@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { OfficeAgent, Roster } from './agents'
-import { asShare, placeRemotePlayer, remotePlayersOf, toPresencePlayer, envValue, MAX_RECORD_BYTES, mergeRemote, parseOfficeArgs, parseRecord, planReads, presenceDir, presencePath, signature, toRecord, toTombstone, writeDue } from './presence'
+import { asScene, asShare, placeRemotePlayer, remotePlayersOf, toPresencePlayer, envValue, MAX_RECORD_BYTES, mergeRemote, parseOfficeArgs, parseRecord, planReads, presenceDir, presencePath, signature, toRecord, toTombstone, writeDue } from './presence'
 import { buildOffice, canStand as canStandAt, MID_FOOT } from './map'
 import type { OfficeMap } from './map'
 import type { Parsed, PresenceRecord } from './presence'
@@ -30,6 +30,21 @@ test('office arguments split into open, share and usage', () => {
   expect(parseOfficeArgs('share bogus')).toEqual({ kind: 'usage' })
   expect(parseOfficeArgs('share')).toEqual({ kind: 'usage' })
   expect(parseOfficeArgs('hello')).toEqual({ kind: 'usage' })
+})
+
+test('the scene mode falls back to text', () => {
+  expect(asScene('image')).toBe('image')
+  expect(asScene('bogus')).toBe('text')
+  expect(asScene(undefined)).toBe('text')
+})
+
+test('/office scene takes auto, image or text and anything else is the scene usage', () => {
+  expect(parseOfficeArgs('scene image')).toEqual({ kind: 'scene', mode: 'image' })
+  expect(parseOfficeArgs(' Scene AUTO ')).toEqual({ kind: 'scene', mode: 'auto' })
+  expect(parseOfficeArgs('scene text')).toEqual({ kind: 'scene', mode: 'text' })
+  expect(parseOfficeArgs('scene bogus')).toEqual({ kind: 'usage', topic: 'scene' })
+  expect(parseOfficeArgs('scene')).toEqual({ kind: 'usage', topic: 'scene' })
+  expect(parseOfficeArgs('scene image extra')).toEqual({ kind: 'usage', topic: 'scene' })
 })
 
 const agentAt = (id: string, over: Partial<OfficeAgent> = {}): OfficeAgent => ({

@@ -14,6 +14,14 @@ const SHARE_MODES: readonly ShareMode[] = ['all', 'anon', 'off']
 export const DEFAULT_SHARE: ShareMode = 'all'
 export const SHARE_USAGE = 'Usage: /office share all|anon|off'
 
+// The scene preference (D10), kept in `$.store` key `scene`: `text` is the v2 office, `image` the image scene,
+// `auto` probes. Until T13 only `image` draws the image scene; `auto` is stored and behaves as `text`.
+export type SceneMode = 'auto' | 'image' | 'text'
+
+const SCENE_MODES: readonly SceneMode[] = ['auto', 'image', 'text']
+export const DEFAULT_SCENE: SceneMode = 'text'
+export const SCENE_USAGE = 'Usage: /office scene auto|image|text'
+
 // `<CLAUDE_CONFIG_DIR>/agents-office/presence`, else `<HOME>/.claude/agents-office/presence`; undefined when both are empty.
 export const presenceDir = (config: string, home: string): string | undefined => {
   const base = config.trim()
@@ -30,14 +38,25 @@ export const envValue = (stdout: string, ok: boolean): string => (ok ? stdout.re
 // A stored value back to a mode. `unknown` because `$.store.get` returns `unknown` (D19).
 export const asShare = (value: unknown): ShareMode => SHARE_MODES.find(mode => mode === value) ?? DEFAULT_SHARE
 
-export type OfficeArgs = { kind: 'open' } | { kind: 'share'; mode: ShareMode } | { kind: 'usage' }
+// A stored value back to a scene mode. `unknown` because `$.store.get` returns `unknown` (D19).
+export const asScene = (value: unknown): SceneMode => SCENE_MODES.find(mode => mode === value) ?? DEFAULT_SCENE
 
-// Splits the `/office` arguments: none opens the pane, `share <mode>` sets the preference, anything else is usage.
+export type OfficeArgs =
+  | { kind: 'open' }
+  | { kind: 'share'; mode: ShareMode }
+  | { kind: 'scene'; mode: SceneMode }
+  | { kind: 'usage'; topic?: 'scene' }
+
+// Splits the `/office` arguments: none opens the pane, `share <mode>` and `scene <mode>` set a preference, anything else is usage.
 export const parseOfficeArgs = (args: string | undefined): OfficeArgs => {
   const words = (args ?? '').trim().toLowerCase().split(/\s+/).filter(word => word !== '')
   if (words.length === 0) return { kind: 'open' }
   const mode = SHARE_MODES.find(candidate => candidate === words[1])
   if (words[0] === 'share' && words.length === 2 && mode !== undefined) return { kind: 'share', mode }
+  if (words[0] === 'scene') {
+    const scene = SCENE_MODES.find(candidate => candidate === words[1])
+    return words.length === 2 && scene !== undefined ? { kind: 'scene', mode: scene } : { kind: 'usage', topic: 'scene' }
+  }
 
   return { kind: 'usage' }
 }

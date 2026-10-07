@@ -1770,3 +1770,188 @@ test('a resize between pane sizes keeps the mid footprint and does not reseat th
   expect(writes.viewport).toMatchObject({ columns: 62, foot: MID_FOOT })
   await ui.unmount()
 })
+
+// ---- The image scene (T12) ----------------------------------------------------------------------------
+const STATE_DIR = '/tmp/agents-office-state.t1'
+
+// Stubs the renderer's three spawns by argv: `mktemp` (the state dir), `node` (render.mjs, which prints `lines` and
+// then stays alive, setting `returned` once its stream is closed) and `rm` (the cleanup). Records every argv.
+// `idle` makes the child print `lines` once and then write nothing, like a renderer showing a static scene.
+const stubRenderer = (on: On, lines: string, idle = false): { spawned: string[][]; state: { returned: boolean } } => {
+  const spawned: string[][] = []
+  const state = { returned: false }
+  on('process.spawn', async function* (_$, e) {
+    spawned.push([...e.argv])
+    if (e.argv[0] === 'mktemp') {
+      yield { stream: 'stdout' as const, text: `${STATE_DIR}\n` }
+    } else if (e.argv[0] === 'node') {
+      try {
+        yield { stream: 'stdout' as const, text: lines }
+        if (idle) await new Promise<void>(() => undefined)
+        for (;;) {
+          await new Promise<void>(resolve => setTimeout(() => resolve(), 20))
+          yield { stream: 'stdout' as const, text: 'fps 1\n' }
+        }
+      } finally {
+        state.returned = true
+      }
+    }
+
+    return { value: { code: 0, signal: null } }
+  })
+
+  return { spawned, state }
+}
+
+// The tsconfig carries no DOM or node types, but the test runtime has the timer (the stub streams wait on real time).
+declare function setTimeout(handler: () => void, ms: number): number
+
+const settle = (ms = 80): Promise<void> => new Promise(resolve => setTimeout(() => resolve(), ms))
+
+type SceneBlit = { key: string; file?: string; format?: string; generation?: number }
+
+// A session over a drawn pane with the image scene wanted: the tick starts the renderer once the pane has a map.
+const imageSession = async ($: Engine, on: On, lines: string, opts: { deny?: string; idle?: boolean } = {}) => {
+  const clock = mock.clock(on)
+  const blits: SceneBlit[] = []
+  const writes: Array<{ path: string; text: string }> = []
+  stubStore(on)
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.blit', (_$, e) => {
+    blits.push('source' in e && 'file' in e.source ? { key: e.key, file: e.source.file, format: e.source.format, generation: e.source.generation } : { key: e.key })
+
+    return { value: opts.deny === undefined ? {} : { deny: opts.deny } }
+  })
+  on('fs.write', (_$, e) => {
+    writes.push({ path: e.path, text: e.text })
+
+    return { value: undefined }
+  })
+  const renderer = stubRenderer(on, lines, opts.idle === true)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(runOffice('scene image'))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
+  for (let i = 0; i < 4; i++) {
+    await clock.advance(TICK_MS)
+    await settle()
+  }
+
+  return { ui, clock, blits, writes, ...renderer }
+}
+
+test('/office scene image spawns one renderer on the state file in a private temp dir', async ($, on) => {
+  const { ui, spawned } = await imageSession($, on, 'dir /tmp/frames\nready\n')
+
+  const nodes = spawned.filter(argv => argv[0] === 'node')
+  expect(spawned[0]).toEqual(['mktemp', '-d', '-t', 'agents-office-state.XXXXXX'])
+  expect(nodes).toHaveLength(1)
+  expect(nodes[0]?.[1]?.endsWith('/renderer/render.mjs')).toBe(true)
+  expect(nodes[0]?.[2]).toMatch(/^--session=[A-Za-z0-9-]+$/)
+  expect(nodes[0]?.[3]).toBe(`--state=${STATE_DIR}/state.json`)
+  await ui.unmount()
+})
+
+test('a frame line from the renderer becomes one Image blit with that generation', async ($, on) => {
+  const { ui, blits } = await imageSession($, on, 'dir /tmp/frames\nready\nframe 3 /x/frame-1.png\n')
+
+  const images = blits.filter(b => b.key === 'scene')
+  expect(images).toHaveLength(1)
+  expect(images[0]).toEqual({ key: 'scene', file: '/x/frame-1.png', format: 'png', generation: 3 })
+  expect(blits.filter(b => b.key === 'office')).toHaveLength(0)
+  await ui.unmount()
+})
+
+test('in image mode the tick writes the scene to state.json and the pane draws the keyed Image', async ($, on) => {
+  const { ui, writes } = await imageSession($, on, 'ready\n')
+
+  const state = writes.filter(w => w.path === `${STATE_DIR}/state.json`)
+  expect(state.length).toBeGreaterThan(0)
+  expect(JSON.parse(state[0]?.text ?? '{}')).toMatchObject({ v: 1, seq: 1, size: { w: 76 * 8, h: 23 * 17 } })
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toMatchObject({ props: { columns: 76, rows: 23 } })
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+  await ui.unmount()
+})
+
+// The test engine cannot raise `ui.close` (its `$.ui` has no close), so the loop is ended by the other caller of
+// `stopRenderer`, `/office scene text`; the `ui.close` hook calls the same function.
+test('ending the scene ends the renderer loop, closes its stream and removes the state dir', async ($, on) => {
+  const { ui, spawned, state } = await imageSession($, on, 'ready\n')
+  expect(state.returned).toBe(false)
+
+  await $.command.run(runOffice('scene text'))
+  await settle(200)
+
+  expect(state.returned).toBe(true)
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([['rm', '-rf', '--', STATE_DIR]])
+  await ui.unmount()
+})
+
+test('a blit deny at the same size ends the renderer and shows the text office', async ($, on) => {
+  const { ui, spawned, state } = await imageSession($, on, 'ready\nframe 1 /x/frame-0.png\n', { deny: 'the Image draws its alt here' })
+  await settle(200)
+
+  expect(state.returned).toBe(true)
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([['rm', '-rf', '--', STATE_DIR]])
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a blit deny that says the pane is not mounted keeps the renderer running', async ($, on) => {
+  const { ui, spawned, state } = await imageSession($, on, 'ready\nframe 1 /x/frame-0.png\n', { deny: 'the pane is not mounted' })
+  await settle(200)
+
+  expect(state.returned).toBe(false)
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([])
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a stop ends a renderer that is writing nothing', async ($, on) => {
+  const { ui, spawned } = await imageSession($, on, 'ready\n', { idle: true })
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([])
+
+  await $.command.run(runOffice('scene text'))
+  await settle(200)
+
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([['rm', '-rf', '--', STATE_DIR]])
+  await ui.unmount()
+})
+
+test('with the default text scene the v2 Raster frame is blitted and nothing is spawned', async ($, on) => {
+  const clock = mock.clock(on)
+  const keys: string[] = []
+  stubStore(on)
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', (_$, e) => {
+    keys.push(e.key)
+
+    return { value: {} }
+  })
+  const { spawned } = stubRenderer(on, 'ready\n')
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
+  await clock.advance(TICK_MS * 3)
+  await settle()
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(keys).toContain('office')
+  expect(keys).not.toContain('scene')
+  expect(spawned).toEqual([])
+  await ui.unmount()
+})
+
+test('/office scene stores the mode, answers with text and rejects other values', async ($, on) => {
+  const kept = stubStore(on)
+  const auto = await $.command.run(runOffice('scene auto'))
+  expect(auto).toMatchObject({ text: 'Office scene: auto' })
+  expect(kept.get('scene')).toBe('auto')
+
+  const bad = await $.command.run(runOffice('scene bogus'))
+  expect(bad).toMatchObject({ text: 'Usage: /office scene auto|image|text' })
+  expect(kept.get('scene')).toBe('auto')
+})
