@@ -98,7 +98,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `npx playwright install chromium && npm run smoke:renderer`; `rtk proxy npm run check`
 
 ### T05 Put the sprite scale and anchor table in one place
-- status: done (#PR, 2026-10-07)
+- status: done (#66, 2026-10-07)
 - needs: T03
 - size: S
 - scope:
@@ -389,4 +389,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 
 ## Log
 2026-10-07 T03 #64 sprites, atlas, raw sheets and the slicer live in the repo; `npm run sprites` regenerates the 82 sprites and atlas.json byte-identical
-2026-10-07 T05 #PR sceneArt.ts holds the sprite scale/anchor/layer table, personVariant, tierPlate and CELL_PX; deviation: smoke-renderer.mjs does not exist yet, so the atlas-vs-table check is `npm run sprites:check` (scripts/sprites/check-table.mjs)
+2026-10-07 T05 #66 sceneArt.ts holds the sprite scale/anchor/layer table, personVariant, tierPlate and CELL_PX; deviation: smoke-renderer.mjs does not exist yet, so the atlas-vs-table check is `npm run sprites:check` (scripts/sprites/check-table.mjs)
