@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 9/22 done
+Progress: 10/22 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -43,7 +43,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - D14 `render.mjs` and `office.html` stay outside tsc. tsconfig has `lib: es2023` and `types: []`, and adding DOM and node types would leak into the hooks. Logic that can be pure lives in TS: `scene.ts`, `sceneArt.ts`, `bridge.ts`, `rendererLife.ts`. The page is a thin drawer of the scene model. (planner, 2026-10-07) | assumed
 - D15 Assets. Generated sprites and `atlas.json` go to `.claude/skills/agents-office/renderer/sprites/`. The raw sheets go to `assets/sprites/raw/` (outside the mod folder, so the user-wide link does not ship them). `slice.mjs` and `lib.mjs` go to `scripts/sprites/`. pngjs becomes a devDependency, and `npm run sprites` regenerates. (planner, 2026-10-07) | assumed, confirm by T03
 - D16 `playwright` is a `dependencies` entry of the repo-root package.json. Node resolves imports from the real path of `render.mjs`, so the user-wide symlink install still finds `<checkout>/node_modules/playwright`. (planner, 2026-10-07) | assumed, confirm by T04, T20
-- D17 Overlays: the inspect line, the chat draft (`Say: ..._`) and a renderer reason are drawn inside the scene as a caption bar at the view's bottom. Speech bubbles, emotes and chat bubbles are HTML bubbles above figures. Log strip rows (when the body has any) stay as Text under the Image. (planner, 2026-10-07) | assumed, confirm by T06, T15
+- D17 Overlays: the inspect line, the chat draft (`Say: ..._`) and a renderer reason are drawn inside the scene as a caption bar at the view's bottom. Speech bubbles, emotes and chat bubbles are HTML bubbles above figures. Log strip rows (when the body has any) stay as Text under the Image. (planner, 2026-10-07) | caption bar and HTML bubbles confirmed T10 (the caption sits at the bottom of the camera window, not scaled with the world; tags draw above every figure); log strip and renderer reason assumed, confirm by T15
 - D18 In image mode the pad Input sits like v2 (`position="absolute" bottom={0} left={0}` over the Image's bottom-left) if T02 shows it draws over an Image without breaking the picture. Otherwise it goes on its own row under the Image, which then gets bodyRows - 1. (planner, 2026-10-07) | assumed, confirm by T02
 - D19 Test stubs work in `claude plugin test`: `on('process.spawn', async function* () { yield { stream: 'stdout' as const, text: 'ready\n' }; return { value: { code: 0, signal: null } } })` and `on('ui.blit', (_$, e) => ({ deny: 'x' }))` (`({ value: {} })` allows). End the spawn hook with `{ value }`, because a bare `{ code, signal }` return logs "returned neither { value } nor { deny }" (yielded chunks still arrive). Stub every other call the code makes (`clock.every`, `ui.open`, `ui.log`, `command.register`): an unstubbed one is refused ("no implementation for clock.every") and the test fails. Ran `claude plugin test` on the scratch imgspike: the stub test passed, and the one failure was an old test broken by a `$.clock.every` I added. (T01, 2026-10-07) | confirmed T01
 
@@ -190,7 +190,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `rtk proxy npm run check`
 
 ### T10 Make the page draw the scene model
-- status: todo
+- status: done (#72, 2026-10-07)
 - needs: T04, T07
 - size: M
 - scope: Rewrite `renderer/office.html` so `window.setScene(model)` draws a `SceneModel`:
@@ -398,3 +398,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 2026-10-07 T07 #69 scene.ts maps figures (agents, remote agents, players, cat) with sprite, pose, plate, bubble/emote/chat (until > now), highlight, plus caption and sceneKey; SceneInput.player is now a Player (was Point)
 2026-10-07 T08 #71 bridge.ts holds splitLines, parseLine, newestFrame, stateText, shouldWrite, clampCells and pixelsFor; render.mjs prints dir, ready, frame, fps and `error <code>` lines and reads the D5 state shape (keeps the last scene on torn JSON or a wrong `v`); smoke prints `dir -> ready -> frame`; D6 confirmed unchanged
 2026-10-07 T09 #73 rendererLife.ts holds `next`, `classify` and `initialLife`; `renderer` and `scene` atoms declared inline; 3 exits in 60 s -> failed, no-node/no-playwright/no-chromium fail at once, `closed` -> off (a `failed` state stays failed), `classify` also reads render.mjs `error <code>` lines; backoff 1 s then 2 s (the 4 s step is unreachable while the 3rd exit within 60 s fails); the `renderer` atom gains `retryAt`
+2026-10-07 T10 #72 office.html draws a SceneModel (rooms, walls, doors, signs, props, y-sorted figures, plates, bubbles, highlight, caption, night tint, eased camera, 100 ms step tween, `sceneBusy()`); sprite scale/anchor reach the page through `renderer/sprite-table.json`, written from sceneArt.ts by `npm run sprites:table` and checked by `smoke:renderer`; `smoke:renderer` takes a fixture path and `SMOKE_FRAME_OUT`; state-busy.json is real `sceneOf` output
