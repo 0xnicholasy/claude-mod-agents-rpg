@@ -17,6 +17,11 @@ if (block === null) {
   process.exit(1)
 }
 const rows = [...block[1].matchAll(/^ {2}'([^']+)': \{ scale: ([\d.]+), anchor: '(\w+)', layer: '(\w+)' \},?$/gm)]
+const keyed = [...block[1].matchAll(/^ {2}'[^']+':/gm)].length
+if (keyed !== rows.length) {
+  console.error(`sprites:table: ${keyed} table entries but only ${rows.length} match the one-line format of hooks/sceneArt.ts`)
+  process.exit(1)
+}
 const sprites = {}
 for (const [, name, scale, anchor, layer] of rows) {
   const size = atlas[name]

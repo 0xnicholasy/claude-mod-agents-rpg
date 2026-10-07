@@ -13,13 +13,13 @@
     repeating-linear-gradient(90deg, rgba(0,0,0,.06) 0 1px, transparent 1px 16px); }
   .wall { background: #5c6370; box-shadow: inset 0 -4px 0 #454b57; z-index: 1; }
   .door { background: #8a6d46; box-shadow: inset 0 0 0 2px #6b5436; z-index: 2; }
-  .sign { z-index: 3000; padding: 1px 5px; background: #1c1e26; color: #f0aa28; border: 1px solid #8a6a2a;
+  .sign { z-index: 900000; padding: 1px 5px; background: #1c1e26; color: #f0aa28; border: 1px solid #8a6a2a;
     font: bold 9px "Courier New", monospace; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; image-rendering: auto; }
   .spr { image-rendering: pixelated; }
   .fig.dim { opacity: .6; }
   .fig.hl { filter: drop-shadow(2px 0 0 #ffd54f) drop-shadow(-2px 0 0 #ffd54f) drop-shadow(0 2px 0 #ffd54f) drop-shadow(0 -2px 0 #ffd54f); }
   /* Tags (plates, bubbles, emotes) sit above every figure, so a near figure never hides a name. */
-  .tag { z-index: 4000; display: flex; flex-direction: column; align-items: center; gap: 2px; pointer-events: none;
+  .tag { z-index: 900001; display: flex; flex-direction: column; align-items: center; gap: 2px; pointer-events: none;
     font: bold 9px "Courier New", monospace; image-rendering: auto; }
   .plate { padding: 0 3px; border: 1px solid rgba(0,0,0,.65); white-space: nowrap; line-height: 11px; }
   .bub { position: relative; max-width: 132px; padding: 2px 5px; background: #f4f1e6; color: #1c1e26; border: 2px solid #1c1e26;
@@ -51,6 +51,8 @@
   const BOB_MS = 220
   const WORLD_Z = { floor: 3, wall: 4, base: 100 }
   const SEAT_LIFT = 4
+  // Depth = foot y x 1024, leaving room for a seated lift and the model order of figures on the same foot line.
+  const zOf = y => (WORLD_Z.base + Math.round(y)) * 1024
   const view = document.getElementById('view')
   const world = document.getElementById('world')
   const night = document.getElementById('night')
@@ -106,8 +108,8 @@
       staticEls.push(e)
       world.insertBefore(e, figLayerStart)
     }
-    add(rect('floor', m.corridor, { background: hex(m.corridor.floor) }))
-    for (const r of m.rooms) add(rect('floor', r, { background: hex(r.floor) }))
+    add(rect('floor', m.corridor, { backgroundColor: hex(m.corridor.floor) }))
+    for (const r of m.rooms) add(rect('floor', r, { backgroundColor: hex(r.floor) }))
     for (const w of m.walls) add(rect('wall', w))
     for (const d of m.doors) add(rect('door', d))
     for (const r of m.rooms) {
@@ -119,7 +121,7 @@
       add(e)
     }
     for (const p of m.props) {
-      const z = p.layer === 'floor' ? WORLD_Z.floor : p.layer === 'wall' ? WORLD_Z.wall : WORLD_Z.base + p.y
+      const z = p.layer === 'floor' ? WORLD_Z.floor : p.layer === 'wall' ? WORLD_Z.wall : zOf(p.y)
       add(spriteEl(p.sprite, p.x, p.y, z))
     }
   }
@@ -203,7 +205,7 @@
   const placeFigures = now => {
     let moving = false
     for (const f of figs.values()) {
-      const p = f.t0 === 0 ? 1 : Math.min(1, (now - f.t0) / TWEEN_MS)
+      const p = f.t0 === 0 ? 1 : Math.max(0, Math.min(1, (now - f.t0) / TWEEN_MS))
       if (p < 1) moving = true
       f.x = f.fromX + (f.tx - f.fromX) * p
       f.y = f.fromY + (f.ty - f.fromY) * p
@@ -217,7 +219,8 @@
       f.img.style.top = b.top + 'px'
       f.img.style.width = b.w + 'px'
       f.img.style.height = b.h + 'px'
-      f.img.style.zIndex = WORLD_Z.base + Math.round(f.fig.z) + (seated ? 1 : 0)
+      // The model's array order breaks ties on equal depth (cat, agents, other players, own player).
+      f.img.style.zIndex = zOf(f.fig.z) + (seated ? 1 : 0) + f.order
       f.tag.style.left = f.x + 'px'
       f.tag.style.top = b.top - 2 + 'px'
       f.tag.style.transform = 'translate(-50%, -100%)'
@@ -262,8 +265,8 @@
     busy = easing || moving || now < bubbleUntil
   }
   const loop = now => {
-    frame(now)
     requestAnimationFrame(loop)
+    frame(now)
   }
   requestAnimationFrame(loop)
   addEventListener('resize', () => frame(performance.now()))
