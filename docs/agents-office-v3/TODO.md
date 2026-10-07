@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 7/22 done
+Progress: 8/22 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -32,7 +32,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - D3 The v2 text office stays as the automatic fallback. When Image cannot draw (tmux, Terminal.app, a surface that draws the alt), or node or Chromium is missing or crashes, the pane draws the v2 5x5 text figures. Both paths stay maintained. (owner, 2026-10-07)
 - D4 The whole scene is one image, not sprites over text. The art comes from GPT /image; more sheets (floor/wall tiles, walk cycles) can be generated later. (owner, before 2026-10-07)
 - D5 Bridge: the plugin writes `<dir>/state.json` with `$.fs.write` (d.ts 3143-3149), and the renderer polls it every 50 ms. Stdin JSON lines are ruled out: `ProcessSpawnRequest.input` is written once and then stdin is closed (d.ts 7771-7775). `$.fs.write` does not document atomic writes, so a renderer that cannot parse the text keeps the last scene. The file is `{ v: 1, seq, heartbeatAt, size: { w, h }, scene }`. (planner, 2026-10-07) T01: `$.fs.write` of a 20 KB JSON at 10 writes/s for 111 s (about 1100 writes, 2595 renderer reads at 20 Hz) gave 0 parse failures, so no torn read was seen. Atomicity is still undocumented, so keep the keep-last-scene guard. | confirmed T01
-- D6 Renderer to plugin: stdout lines `dir <abs>`, `ready`, `frame <n> <abs>`, `error <code> <text>`, `fps <x>`. Frames ping-pong between `frame-0.png` and `frame-1.png`, each written to `.tmp` and renamed (as in the spike). The plugin blits only the newest frame of each stdout piece, with `generation: n`. Error codes: `no-playwright`, `no-chromium`, `launch`, `page`. (planner, 2026-10-07) | assumed, confirm by T08
+- D6 Renderer to plugin: stdout lines `dir <abs>`, `ready`, `frame <n> <abs>`, `error <code> <text>`, `fps <x>`. Frames ping-pong between `frame-0.png` and `frame-1.png`, each written to `.tmp` and renamed (as in the spike). The plugin blits only the newest frame of each stdout piece, with `generation: n`. Error codes: `no-playwright`, `no-chromium`, `launch`, `page`. (planner, 2026-10-07) | confirmed T08
 - D7 Temp dir and watchdog. The renderer makes `mkdtemp(<os.tmpdir()>/agents-office-<sessionId>-)` (0700), prints it as `dir`, writes `pid` into it, and removes it on SIGTERM/SIGINT. At start it removes sibling `agents-office-*` dirs whose `pid` is not alive. The renderer exits on its own when `state.json`'s `heartbeatAt` is more than 10 s old or `process.ppid` changes. The plugin rewrites the heartbeat at least every 2 s. This covers paths where nobody sends SIGTERM (kill -9, crash). (planner, 2026-10-07) T01: after kill -9 of claude, node (ppid 1) and its 4 Chromium processes stayed alive for the whole 15 s watched (5 processes), so the watchdog is needed. With a 1 s `process.ppid` poll node closed Chromium within 1 s (0 processes at t+1 s). With claude frozen by SIGSTOP (ppid unchanged), the stale-heartbeat check ended it 11 s after renderer start. Test caveat: if the pane's only process dies, tmux sends SIGHUP to the whole group and hides the orphan, so run claude under `sh -c 'claude ...; sleep 120'` and kill -9 the claude pid. | watchdog confirmed T01; temp dir, pid file and sweep assumed, confirm by T14
 - D8 Geometry: the image scene draws the v2 `OfficeMap` (same `buildOffice`, BFS, motion, player tiles, `viewFor`/`focusOf` camera) in world pixels, with `CELL_PX = { w: 8, h: 17 }` from the spike's box.ts. Every atom and rule stays shared by both paths. The page tweens each tile step and eases the camera. The renderer viewport is the Image box in pixels: columns x 8 by rows x 17, each axis capped at 2048. (planner, 2026-10-07) | assumed, confirm by T15
 - D9 Figure looks: person variant = FNV-1a hash of the figure key (the v2 D6 key) mod 8 -> `person1`..`person8`. Tier = nameplate colour (the v2 D6 shirt colours). Status: done/leaving draws at 60% opacity, idle draws no work prop. The player is a fixed variant with the plate `you`. Facing picks the `-down/-left/-right/-up` sprite. (planner, 2026-10-07) | assumed, confirm by T06, T15
@@ -152,7 +152,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `rtk proxy npm run check`
 
 ### T08 Write the bridge protocol as a pure module
-- status: todo
+- status: done (#71, 2026-10-07)
 - needs: T01, T04
 - size: S
 - scope: Create `hooks/bridge.ts`:
@@ -396,3 +396,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 2026-10-07 T06 #67 scene.ts holds SceneModel and sceneOf (rooms, corridor, walls, doors, props, camera, night in world px = cells x CELL_PX); figures come in T07
 2026-10-07 T20 #70 install-user.sh runs `npm ci` when node_modules/playwright is missing, then `npx --no-install playwright install chromium` unless `--no-chromium`, after linking (a Chromium failure exits 1 but keeps the link); uninstall-user.sh leaves the browser cache and prints its path. Scratch run against temp CLAUDE_CONFIG_DIRs after `rm -rf node_modules`: fresh install linked, ran npm ci, `playwright install --dry-run chromium` lists chromium-1243 under ~/Library/Caches/ms-playwright; re-run printed 'nothing changed'; `--no-chromium` skipped npm ci and the download; foreign link refused; uninstall removed only this link; ~/.claude untouched; shellcheck clean; npm run check 326 pass
 2026-10-07 T07 #69 scene.ts maps figures (agents, remote agents, players, cat) with sprite, pose, plate, bubble/emote/chat (until > now), highlight, plus caption and sceneKey; SceneInput.player is now a Player (was Point)
+2026-10-07 T08 #71 bridge.ts holds splitLines, parseLine, newestFrame, stateText, shouldWrite, clampCells and pixelsFor; render.mjs prints dir, ready, frame, fps and `error <code>` lines and reads the D5 state shape (keeps the last scene on torn JSON or a wrong `v`); smoke prints `dir -> ready -> frame`; D6 confirmed unchanged

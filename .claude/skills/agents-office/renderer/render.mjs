@@ -1,5 +1,4 @@
 // Usage: node render.mjs [width] [height] [--seconds=N] [--paced=0] [--state=<path>]
-import { chromium } from 'playwright'
 import { mkdtempSync, chmodSync, rmSync, writeFileSync, renameSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -20,9 +19,33 @@ process.stdout.write(`dir ${outDir}\n`)
 process.on('exit', () => rmSync(outDir, { recursive: true, force: true }))
 const statePath = flag('state') ?? join(here, 'state.json')
 
-const browser = await chromium.launch()
-const page = await browser.newPage({ viewport: { width, height } })
-await page.goto(pathToFileURL(join(here, 'office.html')).href)
+const fail = (code, err) => {
+  const text = (err instanceof Error ? err.message : String(err)).split('\n')[0]
+  process.stdout.write(`error ${code} ${text}\n`)
+  process.exit(1)
+}
+
+let chromium
+try {
+  ;({ chromium } = await import('playwright'))
+} catch (err) {
+  fail('no-playwright', err)
+}
+let browser
+try {
+  browser = await chromium.launch()
+} catch (err) {
+  fail(/executable doesn't exist/i.test(String(err)) ? 'no-chromium' : 'launch', err)
+}
+let page
+try {
+  page = await browser.newPage({ viewport: { width, height } })
+  await page.goto(pathToFileURL(join(here, 'office.html')).href)
+} catch (err) {
+  await browser.close().catch(() => {})
+  fail('page', err)
+}
+process.stdout.write('ready\n')
 
 let n = 0
 let lastState = ''
@@ -40,14 +63,16 @@ const pushState = async () => {
   } catch {
     return // torn or partial write: keep the last scene and retry next poll
   }
-  lastState = text
+  // D5 shape: { v: 1, seq, heartbeatAt, size: { w, h }, scene }. Anything else keeps the last scene.
+  if (state === null || typeof state !== 'object' || state.v !== 1) return
   // The plugin writes the pixel size of the pane box as size: { w, h }; follow it.
   const { w, h } = state.size ?? {}
   if (Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0) {
     const cur = page.viewportSize()
     if (cur === null || cur.width !== w || cur.height !== h) await page.setViewportSize({ width: w, height: h })
   }
-  await page.evaluate(s => window.setState(s), state)
+  await page.evaluate(s => window.setState(s), state.scene)
+  lastState = text
 }
 
 const emit = bytes => {
@@ -87,7 +112,8 @@ for (;;) {
   } catch (err) {
     // SIGTERM closes the browser mid-frame; that is a normal stop, not an error.
     if (closing) await new Promise(() => {})
-    throw err
+    await browser.close().catch(() => {})
+    fail('page', err)
   }
   emit(bytes)
   if (done()) break
