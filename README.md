@@ -76,14 +76,33 @@ These work once the pad has focus.
 | `W` `A` `S` `D` (either case) | Walk your character one tile. A tap moves exactly one tile; holding a key moves one tile per tick. Walls block you; agents do not. |
 | `[` and `]` | Walk to the previous or next room, team rooms first and then the shared rooms, wrapping at both ends. |
 | `1` `2` `3` `4` | Emote for 3 seconds: `!`, `?`, a heart and a note. The pane cannot draw the heart or the note glyph, so `3` shows a diamond and `4` shows `~`. |
-| `e` | Inspect the nearest agent within 2 tiles: label, status, tool, room and elapsed time, shown for 6 seconds. It shows your own session's agents, with the last 60 characters of their latest text; a remote agent is never inspected. |
+| `e` | Use the nearest thing within reach: inspect an agent within 2 tiles (label, status, tool, room and elapsed time, shown for 6 seconds; your own session's agents only, with the last 60 characters of their latest text), or use the cat or a prop. See "Things to use". |
 | `Shift+E` | Peek: opens a second pane with the last 10 text messages of the nearest agent of your own session. |
 | `t` | Chat. What you type until Enter becomes a speech bubble of up to 40 characters above your character for 5 seconds. An empty line cancels. In chat mode every key, WASD and digits included, is text. |
 | `m` | Nudge the nearest agent of your own session that is not main. A No/Yes dialog comes first; Yes sends the fixed text "Nudge from the office: please post a short status update." |
 | `x` | Interrupt the main session's running turn, after a No/Yes dialog. |
 | `Escape` | Returns focus to the prompt. It does not cancel a chat draft; send an empty line to do that. |
 
-Inspect, peek and nudge only ever target agents of your own session, never a remote one.
+Inspect, peek and nudge only ever target agents of your own session, never a remote one. The whiteboard and the rack also show your own session only.
+
+## Things to use
+
+`e` uses one thing: the nearest one in reach. An own-session agent is in reach within 2 tiles. The cat and the props are in reach within 1 cell of your character's footprint. The smallest gap wins. On equal gaps an agent beats the cat and the cat beats a prop; between props the order is desk, whiteboard, coffee machine, sofa, water cooler, server rack, and then the one further left. A remote session's agent is never a target; its desk and props are.
+
+| Thing | What `e` does |
+| --- | --- |
+| Agent | Inspect it, as described in "Controls". |
+| Desk | In your own team room: opens a peek pane `Peek: <label>` with the last 10 text messages of the agent whose desk it is, when that agent is not itself the nearer target. An agent sitting at its desk is as near as the desk and wins the tie, so `e` inspects it instead; the peek comes up for an agent that is still walking to the desk. An empty desk says `Empty desk.`. Another session's desk says `<its name>'s desk` (`Session N` when it shares anonymously) and opens nothing. |
+| Whiteboard | Opens a pane `Whiteboard` with your plan, at most 10 lines: `[x]` done, `[>]` in progress, `[ ]` to do, indented under their parent. It reads the todo-list mod's plan; when that mod is not loaded or has no plan yet, it mirrors the main session's own TodoWrite, TaskCreate and TaskUpdate calls (a subagent's calls are not shown). It redraws when the plan changes. `No plan yet.` when there is none. |
+| Server rack | Opens a pane `Server rack` with the context fill, the cost, how many agents are running and idle, then each of your own agents with the name of its current tool. A value that has not been reported yet (before the first response) shows `-`. It is a snapshot of your own session taken when you press `e`; it does not refresh. Remote agents and tool arguments never appear. |
+| Coffee machine | Your character holds a mug for 8 seconds. |
+| Sofa | Your character sits on it until you press a movement key (`W` `A` `S` `D`), `[` or `]`. |
+| Water cooler | A fixed line (one of 8) shows as a speech bubble over your character for 5 seconds. It is an ordinary chat bubble, so other sessions see it like one you typed. |
+| Cat | A heart shows over the cat for 3 seconds. |
+
+While something is in reach, a hint names it: `e: coffee machine`, `e: inspect <label>`, `e: pet the cat`. It disappears when you walk away. When several lines compete, your chat draft is shown first, then an inspect or action line, then the hint.
+
+Text office limits: it draws no mug, no sitting pose and no heart. Instead a line appears: `You hold a mug of coffee.` (8 seconds), `You sit on the sofa.` (6 seconds, although you stay seated until you move) and `You pet the cat.` (3 seconds). The hint is drawn on the overlay row of the map; when the pane has a log strip it replaces the strip's newest row while it shows. The peek panes open beside the office only when `e` or `Shift+E` is pressed, never by themselves, and none of them refresh except the whiteboard.
 
 ## Rooms
 
