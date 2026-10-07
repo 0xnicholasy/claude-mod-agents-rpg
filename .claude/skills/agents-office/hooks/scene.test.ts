@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { focusOf, viewFor } from './camera'
 import { buildOffice, MID_FOOT } from './map'
 import type { TeamSpec } from './map'
-import { catMirror, PLAYER_VARIANT, sceneKey, sceneOf } from './scene'
+import { catMirror, PLAYER_VARIANT, propsOf, sceneKey, sceneOf } from './scene'
 import type { SceneInput } from './scene'
 import { placeMotion } from './frame'
 import type { Motion } from './frame'
@@ -344,4 +344,54 @@ test('the cat art faces left, so only a right-facing cat is drawn mirrored', () 
     sceneOf({ ...input, cat: { x: 30, y: 4, facing, frame: 0, path: [{ x: 29, y: 4 }], restUntil: 0, seed: 1 } }).figures.find(f => f.key === 'cat')
   expect(catFigure('left')).toMatchObject({ sprite: 'cat-orange-walk', mirror: false })
   expect(catFigure('right')).toMatchObject({ sprite: 'cat-orange-walk', mirror: true })
+})
+
+const sofaOf = (input: SceneInput) => propsOf(input.map).filter(p => p.sprite === 'sofa')[0]
+
+test('a live mug act puts holding mug on the player and an expired one does not', () => {
+  const base = inputOf({ player: playerAt({ x: 10, y: 8 }) })
+  const live = sceneOf({ ...base, act: { kind: 'mug', until: at(12) + 1 } })
+  expect(live.figures.find(f => f.player)).toMatchObject({ holding: 'mug', pose: 'standing' })
+  const expired = sceneOf({ ...base, act: { kind: 'mug', until: at(12) } })
+  expect(expired.figures.find(f => f.player)?.holding).toBe(undefined)
+  expect(sceneKey(live)).not.toBe(sceneKey(sceneOf(base)))
+  expect(sceneKey(expired)).toBe(sceneKey(sceneOf(base)))
+})
+
+test('a sit act seats the player on the sofa foot line, facing down', () => {
+  const base = inputOf({ player: { ...playerAt({ x: 10, y: 8 }), facing: 'left' } })
+  const sofa = sofaOf(base)
+  expect(sofa === undefined).toBe(false)
+  const sat = sceneOf({ ...base, act: { kind: 'sit' } })
+  const me = sat.figures.find(f => f.player)
+  expect(me).toMatchObject({ pose: 'seated', y: sofa?.y, z: sofa?.y, facing: 'down', sprite: `person${PLAYER_VARIANT}-down` })
+  expect(Math.abs((me?.x ?? 0) - (sofa?.x ?? 0)) <= 13).toBe(true)
+  expect(me?.holding).toBe(undefined)
+  expect(sceneKey(sat)).not.toBe(sceneKey(sceneOf(base)))
+})
+
+test('a remote player never takes the own act', () => {
+  const other = { id: 'o1', label: 'other', x: 10, y: 8, facing: 'down' as const, frame: 0 }
+  const scene = sceneOf(inputOf({ others: [other], act: { kind: 'mug', until: at(12) + 5000 } }))
+  expect(scene.figures.find(f => f.key === 'player:o1')?.holding).toBe(undefined)
+})
+
+test('the cat shows a heart while catPetUntil is later than now', () => {
+  const cat = { x: 30, y: 4, facing: 'left' as const, frame: 0, path: [], restUntil: 0, seed: 1 }
+  const petted = sceneOf(inputOf({ cat, catPetUntil: at(12) + 1 }))
+  expect(petted.figures.find(f => f.key === 'cat')?.emote).toBe('\u2665')
+  const over = sceneOf(inputOf({ cat, catPetUntil: at(12) }))
+  expect(over.figures.find(f => f.key === 'cat')?.emote).toBe(undefined)
+  expect(sceneKey(petted)).not.toBe(sceneKey(over))
+})
+
+test('the caption order is chat draft, then inspect or action line, then hint', () => {
+  const inspect = { agentId: '', text: 'Empty desk.', until: at(12) + 500 }
+  const hint = 'e: coffee machine'
+  expect(sceneOf(inputOf({ chatLine: 'Say: hi_', inspect, hint })).caption).toBe('Say: hi_')
+  expect(sceneOf(inputOf({ inspect, hint })).caption).toBe('Empty desk.')
+  expect(sceneOf(inputOf({ inspect: { ...inspect, until: at(12) }, hint })).caption).toBe(hint)
+  expect(sceneOf(inputOf({ hint })).caption).toBe(hint)
+  expect(sceneOf(inputOf({ hint: '' })).caption).toBe(undefined)
+  expect(sceneKey(sceneOf(inputOf({ hint })))).not.toBe(sceneKey(sceneOf(inputOf())))
 })
