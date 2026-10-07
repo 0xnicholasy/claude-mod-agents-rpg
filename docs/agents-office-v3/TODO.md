@@ -75,7 +75,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: LIVE capture plus `<scratch>/ao.log` excerpt for tmux; GHOSTTY and Terminal.app results reported by the owner and quoted in the Log
 
 ### T03 Move the sprites, the atlas and the slicer into the repo
-- status: done (#PR, 2026-10-07)
+- status: done (#64, 2026-10-07)
 - needs: none
 - size: S
 - scope: Copy `SPIKE/v3-assets/sprites/*.png` and `atlas.json` to `.claude/skills/agents-office/renderer/sprites/`. Copy `characters-raw.png`, `furniture-raw.png` and `pets-gear-raw.png` to `assets/sprites/raw/`. Copy `slice.mjs` and `lib.mjs` to `scripts/sprites/`, with input and output paths as arguments defaulting to those folders. Add pngjs as a devDependency and `"sprites": "node scripts/sprites/slice.mjs"`. Record the known art issues in the Backlog: laptop-back/closed near duplicates, corgi-sleep zzz, no walk cycles.
@@ -387,4 +387,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - A remote player walked tile by tile instead of jumping on each presence write (from v2 D46).
 
 ## Log
-2026-10-07 T03 #PR sprites, atlas, raw sheets and the slicer live in the repo; `npm run sprites` regenerates the 82 sprites and atlas.json byte-identical
+2026-10-07 T03 #64 sprites, atlas, raw sheets and the slicer live in the repo; `npm run sprites` regenerates the 82 sprites and atlas.json byte-identical
