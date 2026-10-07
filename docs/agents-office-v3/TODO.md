@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 6/22 done
+Progress: 7/22 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -132,7 +132,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 - verify: `rtk proxy npm run check`
 
 ### T07 Map figures, player, bubbles, inspect and status into the scene
-- status: todo
+- status: done (#69, 2026-10-07)
 - needs: T06
 - size: M
 - scope: Extend `sceneOf` with figures for own and remote agents (`remoteRoster`), the player, remote players (`remotePlayersOf`) and the cat atom. Each figure carries:
@@ -395,3 +395,4 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 2026-10-07 T04 #68 playwright is a dependency; render.mjs, office.html and placeholder.png live in the mod renderer dir (screencast removed, `--state=` flag and `size: { w, h }` read added); `npm run smoke:renderer` prints `ok 608x368` and leaves no render.mjs or headless_shell behind
 2026-10-07 T06 #67 scene.ts holds SceneModel and sceneOf (rooms, corridor, walls, doors, props, camera, night in world px = cells x CELL_PX); figures come in T07
 2026-10-07 T20 #PRNUM install-user.sh runs `npm ci` when node_modules/playwright is missing, then `npx --no-install playwright install chromium` unless `--no-chromium`, after linking (a Chromium failure exits 1 but keeps the link); uninstall-user.sh leaves the browser cache and prints its path. Scratch run against temp CLAUDE_CONFIG_DIRs after `rm -rf node_modules`: fresh install linked, ran npm ci, `playwright install --dry-run chromium` lists chromium-1243 under ~/Library/Caches/ms-playwright; re-run printed 'nothing changed'; `--no-chromium` skipped npm ci and the download; foreign link refused; uninstall removed only this link; ~/.claude untouched; shellcheck clean; npm run check 326 pass
+2026-10-07 T07 #69 scene.ts maps figures (agents, remote agents, players, cat) with sprite, pose, plate, bubble/emote/chat (until > now), highlight, plus caption and sceneKey; SceneInput.player is now a Player (was Point)
