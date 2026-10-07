@@ -2,7 +2,7 @@
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
 Status: ACTIVE
-Progress: 33/36 done
+Progress: 34/36 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -533,7 +533,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: `rtk proxy npm run check`; GHOSTTY (owner)
 
 ### T32 Wire fun props and the hint
-- status: todo
+- status: done (#PR, 2026-10-08; GHOSTTY owner check pending)
 - needs: T29, T31
 - size: M
 - scope: Outcomes write `player.act` (coffee, sofa), player chat (cooler) and `catPetUntil`. The tick runs `settleAct` and `hintOf` every tick into `sceneOf` and the text overlay/strip.
@@ -565,6 +565,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - done when: skill removed from the branch, spike folder removed, TODO.md archived, landing PR into feat/agents-office-v2 open and approved by the owner
 
 ## Backlog
+- The hint (D30) replaces the newest strip row in text mode whenever a target is in reach (the player starts at its desk, so `e: desk` is nearly always there); consider showing it only on a blank strip row or on the map overlay.
 - Make the server rack pane live (agent list and usage are read once, on the press).
 - Whiteboard markers for `blocked` and `skipped` plan nodes (T28 draws both as `[ ]`).
 - Draw the top 3 plan items on the whiteboard sprite (from T25-T33 plan).
@@ -606,3 +607,4 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 2026-10-07 T29 #91 `SceneInput` gains `act` (the use.ts `Act`), `catPetUntil` and `hint`; the own player figure gets `holding: 'mug'` while a mug act has `until > now`, or `pose: 'seated'`, facing down, on the nearest sofa prop's foot line (x clamped 13 px around the sofa centre, `z` = the sofa foot line, so the figure sorts over the sofa and the page draws the seat again over the legs in T30); the cat gets the emote U+2665 while `catPetUntil > now`; `captionOf` is chat draft, then inspect or action line, then hint; `sceneKey` is the model JSON so each changes it; 5 tests; mutation check: leaving the seated y at the player's own y failed the sit test; review (sonnet): no Medium+, low notes: the sofa is picked without a distance cap and the 13 px slack is sized for the small sprite
 2026-10-07 T30 #92 office.html draws the mug sprite at the hand (HAND_X by facing, 12 px above the foot line) while `holding` is mug, skips the stride cycle while holding or seated, redraws the lower half of the sofa over a seated player's legs and draws that player 6 px higher so the shoes stay behind the seat; the heart needed no page change (the cat's emote goes through the generic tag); fixtures `state-interact.json` (mug in the corridor, cat heart, hint caption) and `state-interact-sit.json` (sofa sit, cat heart) are `sceneOf` output with 100x32 cells; read back as PNG at 800x544; mutation check: ignoring `holding` and the seated overlay changed the frame exactly at the mug and the sofa seat; review (sonnet): no Medium+; note one full `check` run showed 3 failures once under load (a concurrent reviewer agent) and passed twice after
 2026-10-07 T31 #93 `e` routing in the ui.input hook (`useTick`): an agent target or nothing in reach is left to `inspectTick` (v2 path unchanged); a desk peeks its owner (`Peek: <label>`), the whiteboard opens `Whiteboard` (drawn live from the todo-list `plan` read, else the own `board` mirror of main-agent TodoWrite/TaskCreate/TaskUpdate), the rack opens `Server rack` (`usage` atom from `session.measure`, `$.agent.list()` read on the press); coffee, sofa, cooler and cat presses are consumed as no-ops until T32; the press is claimed with one update so two hooks cannot both act. `peek` atom gains `source`; todo-list contract vendored at vendor/todo-list/index.d.ts. 5 office tests (desk owner away on a path ending at the desk, whiteboard redraw after a second TodoWrite, rack tools and context %, agent inspect with no pane, coffee consumed) plus a subagent-TodoWrite test; mutation check: making the board render non-live failed the whiteboard test; review (sonnet) found 4 Medium (subagent TodoWrite mirrored, press claim race and consume before ownId check, TaskUpdate subject ignored, session.measure wiping the cost), all fixed. The rack pane is a snapshot from the press (not live); the desk peek only happens while the owner is away because a resting owner at gap equal to the desk wins as an agent target. GHOSTTY pending (owner)
+2026-10-08 T32 #PR `e` outcomes wired in `useTick`: coffee writes `player.act` mug (MUG_MS 8 s), sofa `act` sit, cooler writes the player's own chat (a COOLER_LINES entry, CHAT_MS) and the cat sets the new `catPetUntil` atom (PET_MS 3 s); the tick (`stepPlayerTick`) settles the act from the atom's own current value (a hook's write between its read and write is kept) and clears sit on a tapped key, a room jump or a changed tile; `hintTick` writes the new `hintLine` atom each tick (only on change) from `targetOf` + `hintOf`, read by `sceneOf` (`act`, `catPetUntil`, `hint`), the text overlay and the strip's last row. In the text scene the mug, sit and heart (art-only) are an action line `You hold a mug of coffee.` / `You sit on the sofa.` / `You pet the cat.` in the `inspect` atom; the image scene writes none. Presence keeps its field pick (a test proves a player with `act` publishes only room, rx, ry, facing). The player atom type gained `act`, `emoteUntil`, `chatUntil`. Office tests run in both modes (`useSession` takes a mode); the 25-row strip test and two image caption tests now expect the hint. LIVE (tmux -L aot32, text scene): `e: desk` at spawn, `e: inspect main`, `e: water cooler` after `]`, `e: pet the cat` after `[`, then `e` gave `You pet the cat.`.
