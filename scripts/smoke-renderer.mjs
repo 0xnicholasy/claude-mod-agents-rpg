@@ -31,16 +31,38 @@ const stop = () =>
     child.kill('SIGTERM')
   })
 
+// Resolves with the first frame path once `dir`, `ready`, `frame` have arrived in that order.
 const firstFrame = () =>
   new Promise((resolve, reject) => {
     let buf = ''
+    const seen = []
     const timer = setTimeout(() => reject(new Error(`no frame within ${TIMEOUT_MS / 1000} s`)), TIMEOUT_MS)
     child.stdout.on('data', chunk => {
       buf += chunk
-      const m = /^frame \d+ (.+)\n/m.exec(buf)
-      if (m) {
-        clearTimeout(timer)
-        resolve(m[1])
+      let cut
+      while ((cut = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, cut)
+        buf = buf.slice(cut + 1)
+        const word = line.split(' ')[0]
+        if (word === 'error') {
+          clearTimeout(timer)
+          reject(new Error(`renderer reported: ${line}`))
+          return
+        }
+        if (word === 'dir' || word === 'ready' || word === 'frame') {
+          if (!seen.includes(word)) seen.push(word)
+        }
+        const m = /^frame \d+ (.+)$/.exec(line)
+        if (m) {
+          clearTimeout(timer)
+          if (seen.join(',') !== 'dir,ready,frame') {
+            reject(new Error(`protocol order was ${seen.join(',')}, want dir,ready,frame`))
+            return
+          }
+          console.log(`protocol ${seen.join(' -> ')}`)
+          resolve(m[1])
+          return
+        }
       }
     })
     child.once('error', err => {
