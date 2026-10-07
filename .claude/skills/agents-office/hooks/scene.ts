@@ -26,6 +26,8 @@ export type SceneFigure = {
   key: string
   sprite: SpriteName
   facing: Facing
+  // True when the page draws the sprite flipped left-right. Only the cat sets it (see catMirror).
+  mirror?: boolean
   pose: 'seated' | 'standing'
   x: number
   y: number
@@ -41,6 +43,11 @@ export type SceneFigure = {
   emote?: string
   chat?: string
 }
+// The cat PNGs (cat-orange-walk, cat-orange-sit) are drawn facing left: head and ears at the left edge, tail at the right.
+// A cat facing right is that art flipped left-right.
+export const CAT_ART_FACING: Facing = 'left'
+export const catMirror = (facing: Facing): boolean => facing !== CAT_ART_FACING
+
 export type SceneModel = {
   world: { w: number; h: number }
   rooms: SceneRoom[]
@@ -265,6 +272,7 @@ const figuresOf = (input: SceneInput): SceneFigure[] => {
         key: 'cat',
         sprite: spriteOf(`cat-orange-${cat.path.length > 0 ? 'walk' : 'sit'}`),
         facing: cat.facing,
+        mirror: catMirror(cat.facing),
         pose: 'standing',
         x: footX(cat.x, CAT_FOOT.w),
         y,

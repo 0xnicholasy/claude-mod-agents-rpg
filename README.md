@@ -51,7 +51,7 @@ With `auto` or `image`, the pane shows one picture instead of text cells. A smal
 ![The office at 120x40 in the image office: the team room with three agents at their desks, the corridor and the five shared rooms](docs/images/office-image-120x40.png)
 
 - The picture is sized to the pane: 8 pixels per column and 17 per row, each side capped at 2048 pixels. Resizing the pane in either direction resizes the picture. Below 60x11 the pane shows the size line and the renderer pauses.
-- People are drawn from 8 looks picked by a hash of the figure's key. The nameplate colour is the model tier. A seated agent shows its back at its desk. Figures bob while they move; there are no walk cycles.
+- People are drawn from 8 looks picked by a hash of the figure's key. The nameplate colour is the model tier. A seated agent shows its back at its desk. Figures stride while they move: the legs alternate in a procedural two-pose walk cycle (no walk art yet).
 - Speech bubbles, emotes and chat lines are drawn above the figures. The inspect line, your chat draft and any fallback reason appear in a bar at the bottom of the picture.
 - Load: the renderer draws at most 12 frames a second while something moves and no frame at all while nothing changes. Measured on one Mac at 120x40: about 6 to 11% of one core while idle and about 30% while walking (node plus Chromium).
 - The scene description holds only what the text office shows (labels, rooms, poses, status, bubbles, chat). It sits in a private temp directory (mode 0700) that is deleted when the renderer exits. Nothing new is published to the presence files.
@@ -171,7 +171,7 @@ Each Claude Code session writes one small JSON file, and every pane reads the fi
 ## Known limits
 
 - tmux and Terminal.app cannot draw the image office and ssh may not; they get the text office with the reason shown (see "Fallback to the text office"). The Terminal.app probe has not been run, so that is from the design, not a measurement.
-- In the image office, figures bob while they move (there are no walk cycles), and the cat and any other pets have no collision with props or people.
+- In the image office, the walk cycle is procedural (legs only, no walk art), and the cat and any other pets have no collision with props or people.
 - A pane resize in height alone re-draws the pane in Ghostty and tmux, although the Claude Code API docs say it does not. If a future build follows the docs, the picture would keep its old height until the next width change or redraw.
 - Image office: a remote figure is placed from presence data, so mixed pane sizes across sessions place figures approximately, like in the text office.
 - Panes are not pixel-identical, and a remote figure's position is approximate when the two panes have different sizes (see "Shared office").
