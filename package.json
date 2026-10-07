@@ -8,7 +8,8 @@
     "install:user": "sh scripts/install-user.sh",
     "uninstall:user": "sh scripts/uninstall-user.sh",
     "check": "npm run validate && npm run typecheck && npm run test",
-    "sprites": "node scripts/sprites/slice.mjs"
+    "sprites": "node scripts/sprites/slice.mjs",
+    "sprites:check": "node scripts/sprites/check-table.mjs"
   },
   "devDependencies": {
     "pngjs": "^7.0.0",
