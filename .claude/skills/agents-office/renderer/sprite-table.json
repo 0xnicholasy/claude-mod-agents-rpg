@@ -7,7 +7,7 @@
   "armchair": {
    "w": 26,
    "h": 29,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "figure"
   },
@@ -21,7 +21,7 @@
   "bookshelf": {
    "w": 33,
    "h": 38,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "wall"
   },
@@ -84,14 +84,14 @@
   "coffee-machine": {
    "w": 36,
    "h": 32,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "figure"
   },
   "conference-table": {
    "w": 52,
    "h": 35,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "figure"
   },
@@ -140,7 +140,7 @@
   "desk-monitor": {
    "w": 43,
    "h": 32,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "figure"
   },
@@ -182,7 +182,7 @@
   "kitchen-counter": {
    "w": 49,
    "h": 31,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "figure"
   },
@@ -511,35 +511,35 @@
   "plant-tall": {
    "w": 22,
    "h": 35,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "figure"
   },
   "printer": {
    "w": 29,
    "h": 31,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "figure"
   },
   "reception-desk": {
    "w": 67,
    "h": 29,
-   "scale": 2,
+   "scale": 1.25,
    "anchor": "foot",
    "layer": "figure"
   },
   "round-table": {
    "w": 42,
    "h": 35,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "figure"
   },
   "server-rack": {
    "w": 26,
    "h": 38,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "figure"
   },
@@ -574,7 +574,7 @@
   "whiteboard": {
    "w": 41,
    "h": 33,
-   "scale": 2,
+   "scale": 1.5,
    "anchor": "foot",
    "layer": "wall"
   }

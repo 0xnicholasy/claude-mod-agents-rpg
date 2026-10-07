@@ -10,7 +10,7 @@ import type { Bubble, Motion, RemotePlayer } from './frame'
 import { MID_SEAT_W } from './midArt'
 import { drawnFacing, drawnPose } from './motion'
 import type { Player } from './player'
-import { CELL_PX, personVariant, SPRITE_NAMES, SPRITES, tierPlate } from './sceneArt'
+import { CELL_PX, personVariant, SEAT, SPRITE_NAMES, SPRITES, tierPlate } from './sceneArt'
 import type { SpriteLayer, SpriteName } from './sceneArt'
 import type { Facing } from './sprites'
 
@@ -96,12 +96,33 @@ const runs = (map: OfficeMap, kinds: readonly string[]): SceneRect[] => {
   return out
 }
 
-// Fraction positions of shared-room props across the interior width, left to right.
-const SHARED: Readonly<Record<Exclude<RoomKind, 'team' | 'booths'>, readonly (readonly [SpriteName, number])[]>> = {
-  reception: [['reception-desk', 0.4], ['plant-tall', 0.85]],
-  conference: [['conference-table', 0.5], ['whiteboard', 0.85]],
-  kitchen: [['fridge', 0.2], ['coffee-machine', 0.5], ['water-cooler', 0.8]],
-  lab: [['server-rack', 0.25], ['printer', 0.75]],
+// Shared-room furniture: sprite, x as a fraction of the interior width (the sprite's centre) and the foot line as a
+// fraction of the interior height (1 = floor). A wall sprite hangs near the top, a top-anchored one from it. The
+// fractions keep every sprite inside the narrowest room (13 cells = 104 px) and spread out in wider ones; a back row
+// (foot line near 0.6) sits behind a front row (foot line 1) so the room reads as two rows of furniture.
+type SharedProp = readonly [SpriteName, number, number]
+const SHARED: Readonly<Record<Exclude<RoomKind, 'team' | 'booths'>, readonly SharedProp[]>> = {
+  reception: [['reception-desk', 0.4, 0.95], ['plant-tall', 0.85, 1], ['wall-clock', 0.66, 0]],
+  conference: [['whiteboard', 0.5, 0.48], ['conference-table', 0.55, 0.97], ['plant-small', 0.14, 1]],
+  kitchen: [['fridge', 0.2, 0.62], ['kitchen-counter', 0.64, 0.62], ['coffee-machine', 0.3, 1], ['water-cooler', 0.87, 1]],
+  lab: [['server-rack', 0.18, 0.7], ['server-rack', 0.4, 0.7], ['desk-monitor', 0.35, 1], ['printer', 0.8, 1], ['wall-clock', 0.72, 0]],
+}
+const BOOTH_EXTRAS: readonly SharedProp[] = [['wall-clock', 0.5, 0]]
+
+// Decor along the corridor walls: plants at both ends, a sofa, a water cooler and two clocks. The corridor is walking space, so
+// every sprite hugs a wall and sorts behind the figures that cross it.
+const corridorProps = (c: SceneRect): SceneProp[] => {
+  const floorY = c.y + c.h - 2
+  const at = (sprite: SpriteName, x: number, y: number): SceneProp => ({ sprite, x: Math.round(x), y, layer: SPRITES[sprite].layer })
+
+  return [
+    at('plant-small', c.x + 24, floorY),
+    at('plant-small', c.x + c.w - 24, floorY),
+    at('sofa', c.x + c.w * 0.25, floorY),
+    at('water-cooler', c.x + c.w * 0.75, floorY),
+    at('wall-clock', c.x + c.w * 0.4, c.y),
+    at('wall-clock', c.x + c.w * 0.6, c.y),
+  ]
 }
 
 const propsOf = (map: OfficeMap): SceneProp[] => {
@@ -111,24 +132,25 @@ const propsOf = (map: OfficeMap): SceneProp[] => {
   }
   for (const room of map.rooms) {
     const b = px(room.bounds)
-    const floorY = b.y + b.h
     if (room.kind === 'team' || room.kind === 'booths') {
       for (const a of room.anchors) {
         // Mid team desks are laid out for the 8-cell seated figure (map.ts), so centre on that span.
         const span = room.kind === 'team' && isMid(map.foot) ? MID_SEAT_W : map.foot.w
         const cx = (a.x + span / 2) * CELL_PX.w
         if (room.kind === 'team') {
-          add('desk-monitor', cx, (a.y + map.foot.h - 1) * CELL_PX.h)
+          // The desk stands behind the chair; the seated figure sits in the chair with its back to us (SEAT).
+          add('desk-monitor', cx, a.y * CELL_PX.h + SEAT.deskFootY)
           add('chair', cx, (a.y + map.foot.h) * CELL_PX.h)
         } else {
           add('armchair', cx, (a.y + map.foot.h) * CELL_PX.h)
           add('phone', cx + CELL_PX.w * 2, (a.y + map.foot.h - 1) * CELL_PX.h)
         }
       }
-      continue
     }
-    for (const [sprite, f] of SHARED[room.kind]) add(sprite, Math.round(b.x + b.w * f), floorY)
+    const extras = room.kind === 'team' ? [] : room.kind === 'booths' ? BOOTH_EXTRAS : SHARED[room.kind]
+    for (const [sprite, fx, fy] of extras) add(sprite, Math.round(b.x + b.w * fx), Math.round(b.y + b.h * fy))
   }
+  props.push(...corridorProps(px(map.corridor)))
 
   return props
 }
@@ -162,17 +184,19 @@ const figuresOf = (input: SceneInput): SceneFigure[] => {
     const span = seated && room?.kind === 'team' && isMid(map.foot) ? MID_SEAT_W : map.foot.w
     const facing = drawnFacing(at)
     const bubble = remote ? undefined : bubbles.filter(b => b.agentId === agent.id && b.until > now).sort((a, b) => b.until - a.until)[0]
-    const y = footY(at.y, map.foot.h)
+    // A seated figure is the back view, SEAT.lift above the chair's foot line, and keeps that line as its depth (v3 D21).
+    const chairY = footY(at.y, map.foot.h)
+    const drawnFacingOf: Facing = seated ? 'up' : facing
     ranked.push({
       rank: 1,
       figure: {
         key: agent.id,
-        sprite: personSprite(personVariant(agent.id), facing),
-        facing,
+        sprite: personSprite(personVariant(agent.id), drawnFacingOf),
+        facing: drawnFacingOf,
         pose: seated ? 'seated' : 'standing',
         x: footX(at.x, span),
-        y,
-        z: y,
+        y: seated ? chairY - SEAT.lift : chairY,
+        z: chairY,
         plate: cut(agent.label, PLATE_MAX),
         plateColor: tierPlate(agent.tier),
         tier: agent.tier,
