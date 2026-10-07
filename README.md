@@ -4,9 +4,11 @@ Agents Office is a Claude Code mod. It adds an `/office` command that opens a pa
 
 You get a character of your own. With the pane focused, WASD walks it around, number keys emote, and other keys inspect an agent, peek at its messages, say a line, nudge it or interrupt the session.
 
+In a terminal that draws images, the office is a pixel-art picture drawn by headless Chromium (see "Image office"). Elsewhere, and whenever Chromium is not available, the pane draws the same office as text figures.
+
 Every Claude Code session on the machine can show up in the same office, one team room per session, read from small presence files (see "Shared office").
 
-![The office at 80x24: the session's team room, with the main agent and your own character](docs/images/office-80x24.png)
+![The office at 80x24 in the text fallback: the session's team room, with the main agent and your own character](docs/images/office-80x24.png)
 
 ## Install
 
@@ -22,11 +24,15 @@ npm run install:user
 
 This links `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/agents-office` to the mod folder of this checkout, so every Claude Code session loads the mod once, whatever its directory. The script refuses to replace a real directory, or a link to another checkout, unless you add `--force` (`npm run install:user -- --force`). Running it again on an already installed link changes nothing.
 
+The script also runs `npm ci` when `node_modules/playwright` is missing and then `npx playwright install chromium`, which downloads about 150 MB of Chromium into the Playwright browser cache. The image office needs it. Add `--no-chromium` to skip the download (`npm run install:user -- --no-chromium`); the office then draws as text until you run `npm ci` (if `node_modules` is missing) and `npx playwright install chromium` yourself. A failed Chromium download exits 1 but keeps the link.
+
 ```
 npm run uninstall:user
 ```
 
-This removes the link, and only if it points at this checkout. It leaves a real directory or a link to another checkout in place.
+This removes the link, and only if it points at this checkout. It leaves a real directory or a link to another checkout in place. It does not touch the Chromium download; it prints where the browser cache is.
+
+A project-local load (the first way) needs `npm ci` in the checkout and `npx playwright install chromium` for the image office; without them it draws the text office.
 
 While you develop in a checkout, the user-wide link shadows that checkout's own project copy: the sessions run the linked checkout's files. Uninstall first (or point the link at the checkout you are editing) when you want a worktree's copy to be the one that loads.
 
@@ -34,8 +40,32 @@ While you develop in a checkout, the user-wide link shadows that checkout's own 
 
 - `/office` opens the pane. Nothing opens by itself. Running it again re-focuses the pad.
 - `/office share all|anon|off` sets what this session publishes to the shared office (see "Shared office"). The choice is stored and kept between sessions; the default is `all`. Any other argument prints the usage line.
+- `/office scene auto|image|text` sets how the office is drawn. The choice is stored and kept between sessions; the default is `auto`. `auto` draws the image office when the terminal can show images and Chromium works, and the text office otherwise. `image` skips the test image and starts Chromium at once (it still falls back to text when the surface has no `Image` element, when a blit is refused or when Chromium fails). `text` always draws the text office. `/office scene image` or `auto` also clears an earlier failure and tries again. Any other argument prints the usage line.
 
 About one and a half seconds after the pane opens, a one-row input at its bottom-left takes the keyboard focus. That input is the pad: the keys below go to the office instead of the prompt.
+
+## Image office
+
+With `auto` or `image`, the pane shows one picture instead of text cells. A small node process (`renderer/render.mjs`) opens `renderer/office.html` in headless Chromium, draws the office from a scene description file that the mod rewrites when the scene changes (the renderer checks it every 50 ms), and saves each new frame as a PNG. The pane shows the newest PNG through the terminal's `Image` element. Rooms, desks, props and people are pixel-art sprites; the same rooms, motion, camera, pad keys, emotes, chat, inspect, shared sessions and status work as in the text office, so the "Controls", "Rooms" and "Shared office" sections apply to both.
+
+![The office at 120x40 in the image office: the team room with three agents at their desks, the corridor and the five shared rooms](docs/images/office-image-120x40.png)
+
+- The picture is sized to the pane: 8 pixels per column and 17 per row, each side capped at 2048 pixels. Resizing the pane in either direction resizes the picture. Below 60x11 the pane shows the size line and the renderer pauses.
+- People are drawn from 8 looks picked by a hash of the figure's key. The nameplate colour is the model tier. A seated agent shows its back at its desk. Figures bob while they move; there are no walk cycles.
+- Speech bubbles, emotes and chat lines are drawn above the figures. The inspect line, your chat draft and any fallback reason appear in a bar at the bottom of the picture.
+- Load: the renderer draws at most 12 frames a second while something moves and no frame at all while nothing changes. Measured on one Mac at 120x40: about 6 to 11% of one core while idle and about 30% while walking (node plus Chromium).
+- The scene description holds only what the text office shows (labels, rooms, poses, status, bubbles, chat). It sits in a private temp directory (mode 0700) that is deleted when the renderer exits. Nothing new is published to the presence files.
+- Lifecycle: one renderer per session. It starts when the pane is drawn and stops when the pane closes, when the plugin reloads and when the session ends. If Claude Code is killed, the renderer notices within about 10 seconds and closes Chromium.
+
+### Fallback to the text office
+
+The pane draws the text office by itself when the cases below happen. It shows the reason in the pane for 8 seconds, adds it to the `/office` reply and adds it as a line to the office log:
+
+- the terminal cannot draw the image. In `auto` the mod draws a small test image first. tmux answers that it cannot (Terminal.app is expected to, but that probe has not been run), and the reason is the terminal's own refusal text (inside tmux: "the Image draws its alt here: the terminal draws no placeholder images (env: inside tmux or screen)"). An ssh session can fail the same test, because the terminal cannot read the renderer's files;
+- node is not found, Playwright is not installed, or Chromium is not installed (`npx playwright install chromium` fixes the last two);
+- the renderer crashes three times within a minute. It restarts after 1 second and then 2 seconds before giving up. `/office scene auto` or `/office scene image` tries again.
+
+In `auto`, Chromium is never started before the test image is accepted.
 
 ## Controls
 
@@ -135,23 +165,31 @@ Each Claude Code session writes one small JSON file, and every pane reads the fi
 
 - Claude Code 2.1.289, the version the API types were taken from (see `CLAUDE.md`).
 - The terminal surface only. Other surfaces show "Office needs the terminal surface."
+- For the image office: node 20 or later, about 150 MB of disk for Chromium, and a terminal that draws images. Ghostty is verified by the owner (the image draws, and a height-only resize re-renders the pane). kitty is expected to work from the Claude Code API docs and is not tested here. WezTerm and iTerm2 are untested. tmux, Terminal.app and ssh fall back to the text office; without any of this the text office needs nothing extra.
 - A pane body of at least 60 columns by 11 rows. Inline, that means a terminal of about 64x24; the office fits 80x24 with no log there. `/office` requests a pane of up to 23 rows. A smaller pane shows a line naming the needed and actual size ("Office needs a 60x11 pane, this one is ...") and draws nothing else. Resizing to a valid size redraws at once.
 
 ## Known limits
 
+- tmux and Terminal.app cannot draw the image office and ssh may not; they get the text office with the reason shown (see "Fallback to the text office"). The Terminal.app probe has not been run, so that is from the design, not a measurement.
+- In the image office, figures bob while they move (there are no walk cycles), and the cat and any other pets have no collision with props or people.
+- A pane resize in height alone re-draws the pane in Ghostty and tmux, although the Claude Code API docs say it does not. If a future build follows the docs, the picture would keep its old height until the next width change or redraw.
+- Image office: a remote figure is placed from presence data, so mixed pane sizes across sessions place figures approximately, like in the text office.
 - Panes are not pixel-identical, and a remote figure's position is approximate when the two panes have different sizes (see "Shared office").
 - The pad takes focus 1.5 seconds after the pane opens, so keys pressed earlier go to the prompt.
 - The peek pane is a snapshot taken when you press `Shift+E`; it does not refresh and sits in a second tab. The full transcript view cannot be opened from the office.
 - Teammates have no tier colour and show grey.
 - A subagent's `agentId` on `tool.call` was observed through a test cast only (the typed test API drops it). Whether a real session delivers it the same way is not confirmed.
-- The cat walks through people and is drawn under them.
+- The cat walks through people and is drawn under them (the same in the image office).
 - The night tint uses the machine's local time zone.
 - Not covered: Windows, `/office` in a `/tmp` session (login wizard), and a relative `CLAUDE_CONFIG_DIR` (the user-wide link target is absolute; the link path is used as given).
 - At the narrowest layouts a bottom-room sign can be cut short, for example `Conferenc`.
 
 ## Develop
 
-- `npm install`, then `npm run check`. It runs `validate` (`claude plugin validate`), `typecheck` (`tsc -p tsconfig.json`) and `test` (`claude plugin test`). Validate and test need the `claude` CLI and run locally only. CI runs typecheck only.
+- `npm ci`, then `npx playwright install chromium` (needed by the image office and `smoke:renderer`), then `npm run check`. It runs `validate` (`claude plugin validate`), `typecheck` (`tsc -p tsconfig.json`) and `test` (`claude plugin test`). Validate and test need the `claude` CLI and run locally only. CI runs typecheck only.
 - Mod path: `.claude/skills/agents-office/` (manifest `.claude-plugin/plugin.json`, hooks in `hooks/`, state contract in `types/index.d.ts`). The design notes are in `docs/agents-office/plan.md`; the v2 plan and decisions are in `docs/agents-office-v2/TODO.md`.
+- `npm run smoke:renderer` starts the renderer on a fixture, checks that the PNG has the fixture's size, and tests frame pacing, the stale-heartbeat exit, the missing-Chromium error and the temp-dir sweep. It needs Chromium, so it runs locally only. With a path argument it renders that scene file: `npm run smoke:renderer -- scripts/fixtures/state-busy.json`; set `SMOKE_FRAME_OUT=<file.png>` to keep the frame. The `docs/images/office-image-120x40.png` picture is such a frame, from real `sceneOf` output for a 928x391 box.
+- `npm run sprites` re-cuts the 82 sprites and `atlas.json` from the raw sheets in `assets/sprites/raw/` (a re-run changes no file). `npm run sprites:check` verifies that `atlas.json` and `hooks/sceneArt.ts` list the same sprite names; `npm run sprites:table` regenerates `renderer/sprite-table.json`, which `smoke:renderer` checks.
+- The v3 plan and decisions are in `docs/agents-office-v3/TODO.md`.
 - Hot reload: saving a file in the mod reloads the module in a running session. The office keeps its agents, because state lives in `$.state` atoms and not in module variables.
 - Debug lines in the Claude Code debug log start with `agents-office:`. A line containing `threw` or `refused` is a failure.
