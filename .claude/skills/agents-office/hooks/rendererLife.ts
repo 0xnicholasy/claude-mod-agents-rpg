@@ -53,6 +53,8 @@ export const classify = (stderr: string, error?: string): Failure => {
     return parsed !== undefined && parsed.kind === 'error' ? [parsed] : []
   })
   if (errors.some(e => e.code === 'no-playwright')) return { code: 'no-playwright', reason: REASON_NO_PLAYWRIGHT }
+  const imported = errors.find(e => e.code === 'playwright-import')
+  if (imported !== undefined) return { code: 'no-playwright', reason: `The playwright package failed to load (${imported.text}). Run npm ci in the mod checkout.` }
   if (errors.some(e => e.code === 'no-chromium')) return { code: 'no-chromium', reason: REASON_NO_CHROMIUM }
   const first = errors[0]
   if (first !== undefined) return { code: 'crash', reason: crashReason(first.text) }
@@ -110,6 +112,16 @@ export const next = (life: Life, event: LifeEvent, now: number): Life => {
 }
 
 // What the image probe found (D11): not run yet, a blit of the placeholder was accepted, or refused with this text.
+export const PROBE_ROUNDS = 5
+
+// What a finished probe round leads to. A closed pane (no columns) never gets a verdict: the scene stays at `probe` and the
+// next render schedules the probe again. Otherwise the round either tries again or, on the last round, denies.
+export const probeRoundVerdict = (effective: Effective['effective'], round: number, paneOpen: boolean): 'again' | 'stop' | 'deny' => {
+  if (effective !== 'probe' || !paneOpen) return 'stop'
+
+  return round < PROBE_ROUNDS ? 'again' : 'deny'
+}
+
 export type Probe = { kind: 'pending' } | { kind: 'ok' } | { kind: 'denied'; reason: string }
 
 export type Effective = { effective: 'probe' | 'image' | 'text'; reason?: string }
@@ -132,7 +144,9 @@ export const sshReason = (sshConnection: string, sshTty: string): string | undef
   sshConnection !== '' || sshTty !== '' ? 'the terminal is across ssh and cannot read the renderer\'s picture files.' : undefined
 
 // A scene written to the renderer that no `frame` line answers within this long means a hung page (E-08).
-export const STALL_MS = 15_000
+// The plugin names a stall before the renderer's own watchdog does: render.mjs ends itself after STALE_MS = 10_000 without a
+// heartbeat, so a pending picture older than 8 s is detected first and the exit reason is "the picture stopped updating".
+export const STALL_MS = 8_000
 
 export const isStalled = (pendingSince: number | undefined, now: number): boolean => pendingSince !== undefined && now - pendingSince > STALL_MS
 

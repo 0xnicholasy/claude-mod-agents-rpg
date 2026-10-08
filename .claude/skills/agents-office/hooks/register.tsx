@@ -50,7 +50,7 @@ import type { PadState } from './pad'
 import { padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
-import { effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next as nextLife, paneCloseOf, sshReason } from './rendererLife'
+import { effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next as nextLife, paneCloseOf, probeRoundVerdict, sshReason } from './rendererLife'
 import type { Life, LifeEvent, Probe } from './rendererLife'
 import { sceneKey, sceneOf } from './scene'
 import type { SceneModel } from './scene'
@@ -729,6 +729,11 @@ const peekTick = async ($: EngineInterface, now: number, at: Player | null | und
 // and the office pane is opened again behind it as a tab, still in this asked context so it is placed at any width.
 // Escape (`closeOnEscape`) closes the peek; the `ui.close` hook then re-opens the office pane with the pad's focus.
 // Only called from the ui.input hook.
+// Forgets the last blit mark so the next frame is drawn again even when the scene is unchanged.
+const reframeRenderer = (): void => {
+  if (rendererLoop !== undefined) rendererLoop.mark = undefined
+}
+
 const openPeek = async ($: EngineInterface, shown: Peek, title: string): Promise<void> => {
   await update($, peek, () => shown)
   await update($, peekSwap, () => true)
@@ -742,6 +747,8 @@ const openPeek = async ($: EngineInterface, shown: Peek, title: string): Promise
     // The office always comes back; with the keys when the peek is not up (the press context is still asked).
     try {
       await $.ui.open({ id: PANE, title: 'Office', rows: INLINE_MAX_ROWS, columns: MIN_COLUMNS, ...(isPeekUp ? {} : { focus: true as const }) })
+      // The re-opened pane mounts a fresh Image, so the last blit mark no longer describes what is on screen.
+      reframeRenderer()
     } finally {
       await update($, peekSwap, () => false)
     }
@@ -1178,23 +1185,23 @@ const runProbe = async ($: EngineInterface): Promise<void> => {
 
 // When every try was refused as "not mounted" the scene stays at `probe`; a later round (1 s on, at most 5) tries again,
 // and when the last round is refused too the pane falls to the text office with a reason.
-const PROBE_ROUNDS = 5
 const startProbe = ($: EngineInterface, delay: number, round: number): void => {
   probing = true
   $.clock.after(delay, () => {
     runProbe($)
       .catch(error => logOnce($, 'probe', `threw ${String(error)}`))
-      .then(() => read($, scene))
-      .then(cur => {
-        if (cur.effective === 'probe' && round < PROBE_ROUNDS) {
+      .then(async () => {
+        const cur = await read($, scene)
+        const verdict = probeRoundVerdict(cur.effective, round, (await read($, viewport)).columns > 0)
+        if (verdict === 'again') {
           startProbe($, 1000, round + 1)
           return undefined
         }
         probing = false
+        // Closed pane: no verdict; the scene stays at `probe` and the next render schedules the probe again.
+        if (verdict === 'stop') return undefined
         // Every round was refused without a verdict: the text office with a reason, never a placeholder that stays (E-09).
-        if (cur.effective === 'probe') return settleScene($, { kind: 'denied', reason: 'the terminal never accepted the picture probe.' })
-
-        return undefined
+        return settleScene($, { kind: 'denied', reason: 'the terminal never accepted the picture probe.' })
       })
       .catch(() => {
         probing = false
@@ -1373,11 +1380,14 @@ const runRenderer = async ($: EngineInterface, loop: RendererLoop): Promise<void
     rendererLog($, `loop ended: ${ending}`)
   }
   const ranMs = (await $.clock.now()) - spawnedAt
-  // The renderer's own watchdog ends it with code 0 when no heartbeat arrived for 10 s; that is a restart, not a crash.
-  if (outcome.kind === 'exit' && isWatchdogExit(outcome.code, outcome.signal, ranMs, outcome.stderr)) outcome = { kind: 'closed' }
+  // An exit the plugin did not ask for is a crash. The renderer's own watchdog ends it with code 0 when no heartbeat arrived
+  // for 10 s; that exit counts toward MAX_EXITS like any other, only its reason is relabelled.
+  if (outcome.kind === 'exit' && isWatchdogExit(outcome.code, outcome.signal, ranMs, outcome.stderr)) {
+    outcome = { ...outcome, stderr: 'no heartbeat reached the renderer for 10 s' }
+  }
   const life = await lifeEvent($, loop.stalled ? { kind: 'exit', code: 1, signal: null, stderr: 'the picture stopped updating', stdout: '' } : outcome)
   // A loop stopped from outside is stale: the scene it served is already decided elsewhere, so it never falls to text.
-  // A stall stop is a failure of this renderer, so it goes through the life like a crash and restarts.
+  // A stall stop is a failure of this renderer, so it goes through the life like a crash and counts toward MAX_EXITS.
   if (loop.closed && !loop.stalled) return
   if (denied !== undefined) await fallToText($, { kind: 'denied', reason: denied })
   else if (life.status === 'failed') await fallToText($, { kind: 'ok' })

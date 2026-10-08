@@ -5,7 +5,7 @@ export const CELL_H = 17
 export const HEARTBEAT_MS = 2000
 export const STATE_VERSION = 1
 
-export type RendererErrorCode = 'no-playwright' | 'no-chromium' | 'launch' | 'page'
+export type RendererErrorCode = 'no-playwright' | 'playwright-import' | 'no-chromium' | 'launch' | 'page'
 
 export type RendererLine =
   | { kind: 'dir'; path: string }
@@ -18,7 +18,7 @@ export type Box = { columns: number; rows: number }
 
 export type WriteMark = { key: string; at: number }
 
-const ERROR_CODES: readonly string[] = ['no-playwright', 'no-chromium', 'launch', 'page']
+const ERROR_CODES: readonly string[] = ['no-playwright', 'playwright-import', 'no-chromium', 'launch', 'page']
 
 // Splits stdout text into whole lines. The unfinished tail is returned as the next carry.
 export const splitLines = (carry: string, text: string): { lines: string[]; carry: string } => {

@@ -84,3 +84,7 @@ test('a heartbeat-only rewrite keeps the seq and a changed key takes the next on
   expect(seqFor({ key: 'k', at: 1000 }, 'other', 7)).toBe(8)
   expect(seqFor(undefined, 'k', 0)).toBe(1)
 })
+
+test('a playwright-import error line parses as an error', () => {
+  expect(parseLine('error playwright-import x')?.kind).toBe('error')
+})

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { classify, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next, paneCloseOf, sshReason, STALL_MS } from './rendererLife'
+import { classify, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next, paneCloseOf, PROBE_ROUNDS, probeRoundVerdict, sshReason, STALL_MS } from './rendererLife'
 import type { Life, LifeEvent, Probe } from './rendererLife'
 
 const crash: LifeEvent = { kind: 'exit', code: 1, signal: null, stderr: 'boom' }
@@ -167,4 +167,36 @@ test('an ssh session gives a text reason and a local one gives none', () => {
   expect(sshReason('1.2.3.4 22 5.6.7.8 22', '')).toContain('ssh')
   expect(sshReason('', '/dev/pts/3')).toContain('ssh')
   expect(sshReason('', '')).toBeUndefined()
+})
+
+test('a clean exit nobody asked for is a counted crash, three within 60 s fail', () => {
+  const quiet: LifeEvent = { kind: 'exit', code: 0, signal: null, stderr: '' }
+  const one = run([...start(0), [quiet, 10_500]])
+  expect(one.status).toBe('backoff')
+  expect(one.exits.length).toBe(1)
+  const three = run([
+    ...start(0), [quiet, 10_000], [{ kind: 'retry-due' }, 11_000],
+    ...start(11_000).slice(1), [quiet, 21_000], [{ kind: 'retry-due' }, 23_000],
+    ...start(23_000).slice(1), [quiet, 33_000],
+  ])
+  expect(three.status).toBe('failed')
+  expect(three.exits.length).toBe(3)
+})
+
+test('the plugin names a stall before the renderer watchdog (10 s) does', () => {
+  expect(STALL_MS).toBeLessThan(10_000)
+})
+
+test('a probe round on a closed pane stops, an open one denies on the last round and tries again before', () => {
+  expect(probeRoundVerdict('probe', PROBE_ROUNDS, false)).toBe('stop')
+  expect(probeRoundVerdict('probe', PROBE_ROUNDS, true)).toBe('deny')
+  expect(probeRoundVerdict('probe', 1, true)).toBe('again')
+  expect(probeRoundVerdict('image', 1, true)).toBe('stop')
+})
+
+test('a playwright import failure is a non-crash failure with the cause and no retries', () => {
+  const life = run([...start(0), [{ kind: 'exit', code: 1, signal: null, stderr: '', stdout: 'error playwright-import x' }, 1000]])
+  expect(life.status).toBe('failed')
+  expect(life.exits).toEqual([])
+  expect(life.reason).toContain('failed to load (x)')
 })
