@@ -1,0 +1,424 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #14161d; overflow: hidden; image-rendering: pixelated; }
+  /* #view is the camera window in screen px; #world is the whole office in world px, moved and scaled inside it. */
+  #view { position: absolute; overflow: hidden; background: #2b303b; }
+  #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; image-rendering: pixelated; }
+  #world > * { position: absolute; }
+  .floor { box-sizing: border-box; background-image:
+    repeating-linear-gradient(0deg, rgba(0,0,0,.10) 0 1px, transparent 1px 17px),
+    repeating-linear-gradient(90deg, rgba(0,0,0,.06) 0 1px, transparent 1px 16px); }
+  .wall { background: #5c6370; box-shadow: inset 0 -4px 0 #454b57; z-index: 1; }
+  .door { background: #8a6d46; box-shadow: inset 0 0 0 2px #6b5436; z-index: 2; }
+  .sign { z-index: 900000; padding: 1px 5px; background: #1c1e26; color: #f0aa28; border: 1px solid #8a6a2a;
+    font: bold 9px "Courier New", monospace; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; image-rendering: auto; }
+  .spr { image-rendering: pixelated; }
+  .fig.dim { opacity: .6; }
+  .fig.hl { filter: drop-shadow(2px 0 0 #ffd54f) drop-shadow(-2px 0 0 #ffd54f) drop-shadow(0 2px 0 #ffd54f) drop-shadow(0 -2px 0 #ffd54f); }
+  /* Tags (plates, bubbles, emotes) sit above every figure, so a near figure never hides a name. */
+  .tag { z-index: 900001; display: flex; flex-direction: column; align-items: center; gap: 2px; pointer-events: none;
+    font: bold 9px "Courier New", monospace; image-rendering: auto; }
+  .plate { padding: 0 3px; border: 1px solid rgba(0,0,0,.65); white-space: nowrap; line-height: 11px; }
+  .bub { position: relative; max-width: 132px; padding: 2px 5px; background: #f4f1e6; color: #1c1e26; border: 2px solid #1c1e26;
+    font-weight: normal; line-height: 11px; text-align: center; overflow-wrap: anywhere; margin-bottom: 6px; }
+  .bub::after { content: ""; position: absolute; left: 50%; bottom: -7px; margin-left: -4px; width: 0; height: 0;
+    border: 4px solid transparent; border-top: 5px solid #1c1e26; border-bottom: 0; }
+  .bub.chat { background: #dff3ff; }
+  .emote { font-size: 16px; line-height: 16px; color: #ff5a7a; text-shadow: 0 1px 0 #1c1e26, 0 -1px 0 #1c1e26, 1px 0 0 #1c1e26, -1px 0 0 #1c1e26; }
+  .fresh { animation: pop 150ms ease-out; }
+  @keyframes pop { from { transform: scale(.5); } to { transform: scale(1); } }
+  #night { position: absolute; inset: 0; background: #98a6e6; mix-blend-mode: multiply; display: none; z-index: 5; pointer-events: none; }
+  #caption { position: absolute; left: 0; right: 0; bottom: 0; display: none; z-index: 6; box-sizing: border-box; padding: 3px 8px;
+    background: rgba(10,12,20,.88); color: #f5e6b0; border-top: 2px solid #8a6a2a;
+    font: bold 12px "Courier New", monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; image-rendering: auto; }
+</style>
+</head>
+<body>
+<div id="view">
+  <div id="world"></div>
+  <div id="night"></div>
+  <div id="caption"></div>
+</div>
+<script>
+  // The page is a thin drawer of the SceneModel (hooks/scene.ts): window.setScene(model) draws it, window.sceneBusy()
+  // says whether something is still moving. SPRITE_TABLE is injected by render.mjs from renderer/sprite-table.json.
+  const SPRITES = (window.SPRITE_TABLE && window.SPRITE_TABLE.sprites) || {}
+  const TWEEN_MS = 100
+  // Camera ease: 25% of the remaining distance per 1/60 s, applied by elapsed time so frame pacing cannot change its speed.
+  const EASE = 0.25
+  const EASE_STEP_MS = 1000 / 60
+  let camAt = 0
+  const BOB_MS = 220
+  const WORLD_Z = { floor: 3, wall: 4, base: 100 }
+  // Depth = foot y x 1024, leaving room for a seated lift and the model order of figures on the same foot line.
+  const zOf = y => (WORLD_Z.base + Math.round(y)) * 1024
+  const view = document.getElementById('view')
+  const world = document.getElementById('world')
+  const night = document.getElementById('night')
+  const caption = document.getElementById('caption')
+
+  const hex = n => '#' + n.toString(16).padStart(6, '0')
+  const rect = (cls, r, extra) => {
+    const e = document.createElement('div')
+    e.className = cls
+    e.style.left = r.x + 'px'
+    e.style.top = r.y + 'px'
+    e.style.width = r.w + 'px'
+    e.style.height = r.h + 'px'
+    if (extra) Object.assign(e.style, extra)
+    return e
+  }
+  const textColorOn = css => {
+    const n = parseInt(css.slice(1), 16)
+    const lum = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)
+    return lum > 140 ? '#1c1e26' : '#ffffff'
+  }
+
+  // Placement of a sprite from its table entry: the box is w*scale by h*scale, centred on x, and bottom (foot) or top at y.
+  const boxOf = (name, x, y) => {
+    const s = SPRITES[name]
+    if (!s) return null
+    const w = s.w * s.scale
+    const h = s.h * s.scale
+    return { left: x - w / 2, top: s.anchor === 'top' ? y : y - h, w, h, s }
+  }
+  const spriteEl = (name, x, y, z) => {
+    const b = boxOf(name, x, y)
+    if (!b) return null
+    const e = document.createElement('img')
+    e.className = 'spr'
+    e.src = 'sprites/' + name + '.png'
+    e.style.left = b.left + 'px'
+    e.style.top = b.top + 'px'
+    e.style.width = b.w + 'px'
+    e.style.height = b.h + 'px'
+    e.style.zIndex = z
+    return e
+  }
+
+  // Static layer: corridor, rooms, walls, doors, props. Rebuilt only when it changes.
+  let staticSig = ''
+  let staticEls = []
+  const buildStatic = m => {
+    for (const e of staticEls) e.remove()
+    staticEls = []
+    const add = e => {
+      if (!e) return
+      staticEls.push(e)
+      world.insertBefore(e, figLayerStart)
+    }
+    add(rect('floor', m.corridor, { backgroundColor: hex(m.corridor.floor) }))
+    for (const r of m.rooms) add(rect('floor', r, { backgroundColor: hex(r.floor) }))
+    for (const w of m.walls) add(rect('wall', w))
+    for (const d of m.doors) add(rect('door', d))
+    for (const r of m.rooms) {
+      const e = document.createElement('div')
+      e.className = 'sign'
+      e.textContent = r.name
+      e.style.left = r.x + 4 + 'px'
+      e.style.top = r.y - 15 + 'px'
+      e.style.maxWidth = Math.max(0, r.w - 8) + 'px'
+      e.style.overflow = 'hidden'
+      e.style.textOverflow = 'ellipsis'
+      e.style.boxSizing = 'border-box'
+      add(e)
+    }
+    for (const p of m.props) {
+      const z = p.layer === 'floor' ? WORLD_Z.floor : p.layer === 'wall' ? WORLD_Z.wall : zOf(p.y)
+      add(spriteEl(p.sprite, p.x, p.y, z))
+    }
+  }
+  const figLayerStart = document.createComment('figures')
+  world.appendChild(figLayerStart)
+
+  // Figures: one sprite element and one tag element per key, tweened toward the model's foot point.
+  const figs = new Map()
+  let model = null
+  let bubbleUntil = 0
+  let camera = null
+  let camNow = null
+
+  const syncTag = (f, fig) => {
+    const sig = [fig.plate, fig.plateColor, fig.bubble || '', fig.emote || '', fig.chat || ''].join('\u0001')
+    if (f.tagSig === sig) return
+    // A change after the first draw pops the bubble in and keeps the page busy while it does.
+    const later = f.tagSig !== undefined
+    if (later) bubbleUntil = performance.now() + 200
+    f.tagSig = sig
+    f.tag.textContent = ''
+    const bub = (cls, text) => {
+      const b = document.createElement('div')
+      b.className = later ? cls + ' fresh' : cls
+      b.textContent = text
+      f.tag.appendChild(b)
+    }
+    if (fig.bubble) bub('bub', fig.bubble)
+    if (fig.chat) bub('bub chat', fig.chat)
+    if (fig.emote) bub('emote', fig.emote)
+    if (fig.plate) {
+      const p = document.createElement('div')
+      p.className = 'plate'
+      p.textContent = fig.plate
+      p.style.background = fig.plateColor
+      p.style.color = textColorOn(fig.plateColor)
+      f.tag.appendChild(p)
+    }
+  }
+
+  const reconcile = (m, now) => {
+    const seen = new Set()
+    m.figures.forEach((fig, order) => {
+      seen.add(fig.key)
+      let f = figs.get(fig.key)
+      const fresh = !f
+      if (fresh) {
+        f = { key: fig.key, img: document.createElement('img'), legL: document.createElement('img'), legR: document.createElement('img'), mug: document.createElement('img'), seat: document.createElement('img'), tag: document.createElement('div'), x: fig.x, y: fig.y, fromX: fig.x, fromY: fig.y, t0: 0, tx: fig.x, ty: fig.y, stride: 0 }
+        f.img.className = 'spr fig'
+        // The legs are two clipped copies of the sprite, drawn over the body while the figure strides (placeFigures).
+        f.legL.className = 'spr fig'
+        f.legR.className = 'spr fig'
+        f.legL.style.display = 'none'
+        f.legR.style.display = 'none'
+        // The mug in the player's hand and the sofa seat drawn again over a seated player's legs (placeFigures).
+        f.mug.className = 'spr'
+        f.mug.src = 'sprites/mug.png'
+        f.mug.style.display = 'none'
+        f.seat.className = 'spr'
+        f.seat.src = 'sprites/sofa.png'
+        f.seat.style.display = 'none'
+        f.tag.className = 'tag'
+        world.appendChild(f.img)
+        world.appendChild(f.legL)
+        world.appendChild(f.legR)
+        world.appendChild(f.mug)
+        world.appendChild(f.seat)
+        world.appendChild(f.tag)
+        figs.set(fig.key, f)
+      }
+      if (fig.x !== f.tx || fig.y !== f.ty) {
+        f.fromX = f.x
+        f.fromY = f.y
+        f.t0 = now
+        f.stride++
+        f.tx = fig.x
+        f.ty = fig.y
+      }
+      if (f.name !== fig.sprite) {
+        f.name = fig.sprite
+        f.img.src = 'sprites/' + fig.sprite + '.png'
+        f.legL.src = f.img.src
+        f.legR.src = f.img.src
+      }
+      f.fig = fig
+      f.order = order
+      for (const el of [f.img, f.legL, f.legR]) {
+        el.classList.toggle('dim', fig.status === 'done' || fig.status === 'leaving')
+        el.classList.toggle('hl', fig.highlight)
+      }
+      syncTag(f, fig)
+    })
+    for (const [key, f] of figs) {
+      if (seen.has(key)) continue
+      f.img.remove()
+      f.legL.remove()
+      f.legR.remove()
+      f.mug.remove()
+      f.seat.remove()
+      f.tag.remove()
+      figs.delete(key)
+      bubbleUntil = now + 200
+    }
+  }
+
+  // Procedural walk cycle (no walk art exists): the person sprite is split into the body and a legs band (the bottom
+  // LEG_BAND of it, two halves). Each tween is one step; the step's first half is the stride pose, its second half the
+  // passing pose with the body one art px higher. Down/up: the legs take turns lifting a foot. Left/right: the halves
+  // swing opposite ways along the walk and swap each step. ART_PX is one art pixel in world px (every person sprite is
+  // drawn at scale 2).
+  const ART_PX = 2
+  const LEG_BAND = 0.3
+  const strideOf = (f, p) => {
+    const odd = f.stride % 2 === 1
+    return { passing: p >= 0.5, odd }
+  }
+  const legPose = (f, cycle) => {
+    if (cycle.passing) return { l: [0, 0], r: [0, 0] }
+    const side = f.fig.facing === 'left' || f.fig.facing === 'right'
+    const sign = cycle.odd ? 1 : -1
+    if (side) return { l: [sign * 2 * ART_PX, 0], r: [-sign * 2 * ART_PX, 0] }
+    return cycle.odd ? { l: [0, -2 * ART_PX], r: [0, 0] } : { l: [0, 0], r: [0, -2 * ART_PX] }
+  }
+  const applyStride = (f, b, cycle, z) => {
+    if (!cycle) {
+      f.img.style.clipPath = ''
+      f.legL.style.display = 'none'
+      f.legR.style.display = 'none'
+      return
+    }
+    const cut = Math.round((1 - LEG_BAND) * 100)
+    f.img.style.clipPath = 'inset(0 0 ' + (100 - cut) + '% 0)'
+    const pose = legPose(f, cycle)
+    for (const [el, half, at] of [[f.legL, 'l', pose.l], [f.legR, 'r', pose.r]]) {
+      el.style.display = 'block'
+      el.style.left = b.left + 'px'
+      el.style.top = b.top + 'px'
+      el.style.width = b.w + 'px'
+      el.style.height = b.h + 'px'
+      el.style.zIndex = z
+      el.style.clipPath = 'inset(' + cut + '% ' + (half === 'l' ? '50% 0 0' : '0 0 50%') + ')'
+      el.style.transform = 'translate(' + at[0] + 'px,' + at[1] + 'px)'
+    }
+  }
+
+  // The mug sits in the hand on the side the figure faces (down and up: the figure's left on screen), HAND_Y px above the foot line.
+  const HAND_X = { left: -13, right: 13, down: 13, up: 13 }
+  const HAND_Y = 12
+  // The sofa seat: the lower part of the sofa sprite, drawn over a seated player's legs.
+  const SEAT_CLIP = 50
+  const SEAT_DROP = 6
+  const sofaUnder = fig => {
+    let best = null
+    for (const p of model.props) {
+      if (p.sprite !== 'sofa' || p.y !== fig.y) continue
+      if (!best || Math.abs(p.x - fig.x) < Math.abs(best.x - fig.x)) best = p
+    }
+    return best
+  }
+  const placeExtras = (f, y, z) => {
+    const mug = f.fig.holding === 'mug' ? boxOf('mug', f.x + (HAND_X[f.fig.facing] || 0), y - HAND_Y) : null
+    f.mug.style.display = mug ? 'block' : 'none'
+    if (mug) {
+      f.mug.style.left = mug.left + 'px'
+      f.mug.style.top = mug.top + 'px'
+      f.mug.style.width = mug.w + 'px'
+      f.mug.style.height = mug.h + 'px'
+      f.mug.style.zIndex = z + 1
+    }
+    const sofa = f.fig.player && f.fig.pose === 'seated' ? sofaUnder(f.fig) : null
+    const sb = sofa ? boxOf('sofa', sofa.x, sofa.y) : null
+    f.seat.style.display = sb ? 'block' : 'none'
+    if (sb) {
+      f.seat.style.left = sb.left + 'px'
+      f.seat.style.top = sb.top + 'px'
+      f.seat.style.width = sb.w + 'px'
+      f.seat.style.height = sb.h + 'px'
+      f.seat.style.clipPath = 'inset(' + SEAT_CLIP + '% 0 0 0)'
+      f.seat.style.zIndex = z + 1
+    }
+  }
+
+  const placeFigures = now => {
+    let moving = false
+    for (const f of figs.values()) {
+      const p = f.t0 === 0 ? 1 : Math.max(0, Math.min(1, (now - f.t0) / TWEEN_MS))
+      if (p < 1) moving = true
+      f.x = f.fromX + (f.tx - f.fromX) * p
+      f.y = f.fromY + (f.ty - f.fromY) * p
+      f.walking = p < 1
+      const seated = f.fig.pose === 'seated'
+      // A walking person strides (below); the cat and anything else keeps the plain bob.
+      // A highlighted or dimmed figure keeps the plain bob: its filter or opacity would be cut or doubled on the clipped copies.
+      const plain = f.fig.highlight || f.fig.status === 'done' || f.fig.status === 'leaving'
+      const strides = f.walking && !seated && !f.fig.holding && !plain && f.fig.key !== 'cat' && /^person\d+-/.test(f.fig.sprite)
+      const cycle = strides ? strideOf(f, p) : null
+      const bob = strides ? (cycle.passing ? ART_PX : 0) : f.walking && Math.floor(now / BOB_MS) % 2 ? 2 : 0
+      // A seated figure's y already carries the seat lift (scene.ts SEAT); its depth z stays the chair's foot line.
+      // A player sitting on the sofa is drawn SEAT_DROP px higher so the shoes stay behind the sofa seat.
+      const y = f.y - bob - (f.fig.player && seated ? SEAT_DROP : 0)
+      const b = boxOf(f.fig.sprite, f.x, y)
+      if (!b) continue
+      f.img.style.left = b.left + 'px'
+      f.img.style.top = b.top + 'px'
+      f.img.style.width = b.w + 'px'
+      f.img.style.height = b.h + 'px'
+      // The model's array order breaks ties on equal depth (cat, agents, other players, own player).
+      f.img.style.zIndex = zOf(f.fig.z) + (seated ? 1 : 0) + f.order
+      // The model decides the flip (scene.ts catMirror): the cat art faces left.
+      applyStride(f, b, cycle, f.img.style.zIndex)
+      placeExtras(f, y, Number(f.img.style.zIndex))
+      f.img.style.transform = f.fig.mirror ? 'scaleX(-1)' : ''
+      f.tag.style.left = f.x + 'px'
+      f.tag.style.top = b.top - 2 + 'px'
+      f.tag.style.transform = 'translate(-50%, -100%)'
+    }
+    return moving
+  }
+
+  // Camera: eases toward the model's camera rectangle, snaps on the first scene or when its size changes.
+  const placeCamera = now => {
+    const t = model.camera
+    let easing = false
+    const dt = camAt === 0 ? EASE_STEP_MS : Math.max(0, now - camAt)
+    camAt = now
+    const k = 1 - Math.pow(1 - EASE, dt / EASE_STEP_MS)
+    if (!camNow || camNow.w !== t.w || camNow.h !== t.h) camNow = { ...t }
+    else {
+      const dx = t.x - camNow.x
+      const dy = t.y - camNow.y
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+        camNow.x = t.x
+        camNow.y = t.y
+      } else {
+        camNow.x += dx * k
+        camNow.y += dy * k
+        easing = true
+      }
+    }
+    const raw = Math.min(innerWidth / t.w, innerHeight / t.h)
+    const sc = raw >= 1 ? Math.floor(raw) : raw
+    const vw = Math.round(t.w * sc)
+    const vh = Math.round(t.h * sc)
+    view.style.left = Math.round((innerWidth - vw) / 2) + 'px'
+    view.style.top = Math.round((innerHeight - vh) / 2) + 'px'
+    view.style.width = vw + 'px'
+    view.style.height = vh + 'px'
+    world.style.transform = 'translate(' + Math.round(-camNow.x * sc) + 'px,' + Math.round(-camNow.y * sc) + 'px) scale(' + sc + ')'
+    return easing
+  }
+
+  let busy = false
+  const frame = now => {
+    if (!model) return
+    const easing = placeCamera(now)
+    const moving = placeFigures(now)
+    busy = easing || moving || now < bubbleUntil
+    // Idle frames stop, so forget the clock: the next ease starts with one step, not the whole idle gap (T18).
+    if (!busy) camAt = 0
+  }
+  // An idle scene is not redrawn every animation frame: setScene and resize call frame() themselves (T18).
+  const loop = now => {
+    requestAnimationFrame(loop)
+    if (busy) frame(now)
+  }
+  requestAnimationFrame(loop)
+  addEventListener('resize', () => frame(performance.now()))
+
+  window.sceneBusy = () => busy
+
+  // Draws the model. The promise resolves once every image in the world is decoded, so a screenshot taken right
+  // after it never shows an empty sprite.
+  window.setScene = async m => {
+    if (!m || !m.world) return
+    const now = performance.now()
+    const sig = JSON.stringify([m.world, m.corridor, m.rooms, m.walls, m.doors, m.props])
+    if (sig !== staticSig) {
+      staticSig = sig
+      world.style.width = m.world.w + 'px'
+      world.style.height = m.world.h + 'px'
+      model = m
+      buildStatic(m)
+    }
+    model = m
+    night.style.display = m.night ? 'block' : 'none'
+    caption.style.display = m.caption ? 'block' : 'none'
+    caption.textContent = m.caption || ''
+    reconcile(m, now)
+    frame(now)
+    await Promise.all([...world.querySelectorAll('img')].map(i => i.decode().catch(() => {})))
+  }
+</script>
+</body>
+</html>

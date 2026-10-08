@@ -2,11 +2,11 @@ import type { AgentInfo, AgentSpawnInput } from 'claude-code'
 import type { Activity } from './activity'
 import type { OfficeMap, RoomId } from './map'
 import type { Motion } from './frame'
-import type { Pose } from './sprites'
+import type { Pose, Role } from './sprites'
 import { DESPAWN_MS } from './timing'
 
 // A meeting walk (D38). `text` is the speaker's bubble, shown on arrival; `until` is
-// set once both stand in the Meeting Room.
+// set once both stand in the Conference Room.
 export type MeetScript = {
   kind: 'meet'
   peer: string
@@ -19,11 +19,11 @@ export type MeetScript = {
   text?: string
 }
 
-// A completion walk (T09): Lobby, bubbles for BUBBLE_MS (`until`), then the Break Room.
+// A completion walk (T09): Reception, bubbles for BUBBLE_MS (`until`), then the Kitchen.
 // `stopped` is true when the turn did not end with an answer.
 export type ReportScript = {
   kind: 'report'
-  phase: 'toLobby' | 'reporting' | 'toBreak'
+  phase: 'toReception' | 'reporting' | 'toKitchen'
   stopped: boolean
   until?: number
 }
@@ -37,15 +37,22 @@ export type OfficeAgent = {
   id: string
   label: string
   tier: Tier
+  // Pants color. A roster entry from before roles existed has none and draws as dev (D6).
+  role?: Role
   parentId?: string
   status: AgentStatus
   room: RoomId
   pose: Pose
   // The room holding the agent's own desk; activity 'desk' resolves to it (D37).
   home: RoomId
+  // True when the label came from the task description, which is prompt text and never leaves the machine (T14).
+  described?: boolean
   // A teammate has several turns: turn.complete makes it idle, never done (D26).
   teammate: boolean
   completedAt?: number
+  // The last tool this agent called, and when that tool began (D39); undefined before its first tool.
+  tool?: string
+  seenAt?: number
   // A running choreography (T08); tool activity is ignored while one runs.
   script?: Script
 }
@@ -67,11 +74,19 @@ const tierOf = (text: string | undefined): Tier | undefined => {
   return TIERS.find(tier => lower.includes(tier))
 }
 
-// An Explore-type agent works from the Library, every other spawned agent from the Dev Bay (D37).
-const homeOf = (type: string): RoomId => (type.toLowerCase().includes('explore') ? 'library' : 'devbay')
+// Pants color by agent type (D6): review, then research (explore/research/search), else dev.
+export const roleOf = (type: string): Role => {
+  const lower = type.toLowerCase()
+  if (lower.includes('review')) return 'review'
+  if (['explore', 'research', 'search'].some(word => lower.includes(word))) return 'research'
+
+  return 'dev'
+}
 
 const labelOf = (name: string | undefined, type: string, description: string): string =>
   name || type || description.slice(0, 12)
+
+const describedOf = (name: string | undefined, type: string): { described?: true } => (name || type ? {} : { described: true })
 
 // A live status carries no completedAt, so expire never drops the agent.
 const withStatus = (agent: OfficeAgent, status: 'working' | 'idle'): OfficeAgent => {
@@ -81,22 +96,32 @@ const withStatus = (agent: OfficeAgent, status: 'working' | 'idle'): OfficeAgent
   return next
 }
 
-export const seedMain = (roster: Roster): Roster =>
+// Records the tool an agent just called; `seenAt` restarts only when the tool changes (D39).
+export const markTool = (roster: Roster, agentId: string, tool: string, now: number): Roster => {
+  const agent = roster[agentId]
+  if (agent === undefined || agent.tool === tool) return roster
+
+  return { ...roster, [agentId]: { ...agent, tool, seenAt: now } }
+}
+
+// `home` is the own team room (D12): every agent works from its desk there.
+export const seedMain = (roster: Roster, home: RoomId): Roster =>
   roster.main !== undefined
     ? roster
     : {
         ...roster,
-        main: { id: 'main', label: 'main', tier: 'grey', status: 'working', room: 'lobby', pose: 'idle', home: 'lobby', teammate: false },
+        main: { id: 'main', label: 'main', tier: 'grey', role: 'lead', status: 'working', room: home, pose: 'idle', home, teammate: false },
       }
 
-export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult): Roster => {
+export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult, home: RoomId): Roster => {
   const id = result.agentId
   if (id === undefined) return roster
-  const home = homeOf(input.subagentType)
   const agent: OfficeAgent = {
     id,
     label: labelOf(input.name, input.subagentType, input.description),
+    ...describedOf(input.name, input.subagentType),
     tier: tierOf(input.model) ?? tierOf(result.model) ?? 'grey',
+    role: roleOf(input.subagentType),
     status: 'working',
     room: home,
     pose: 'idle',
@@ -106,6 +131,52 @@ export const onSpawn = (roster: Roster, input: SpawnInput, result: SpawnResult):
   if (input.parentAgentId !== undefined) agent.parentId = input.parentAgentId
 
   return { ...roster, [id]: agent }
+}
+
+const V1_ROOMS: Record<string, RoomId | 'home'> = {
+  lobby: 'reception',
+  meeting: 'conference',
+  break: 'kitchen',
+  server: 'lab',
+  phone: 'booths',
+  devbay: 'home',
+  library: 'home',
+}
+const V1_PHASES: Record<string, ReportScript['phase']> = { toLobby: 'toReception', toBreak: 'toKitchen' }
+
+// A roster written by v1 (hot reload) holds the old room ids and report phases; this maps them to
+// the D10 rooms (D11). Dev Bay and Library work moves to the own team room, as does any other team id
+// (a new session id) and any Reception home. Returns the same reference
+// when nothing is v1, so a v2 roster is never rewritten.
+export const migrateRoster = (roster: Roster, home: RoomId): Roster => {
+  // Stored values predate the RoomId union, so they are matched as plain strings.
+  const room = (id: string): RoomId => {
+    // The roster holds only own agents, so a team room in it is the own team's, even a stale id.
+    if (id.startsWith('team:')) return home
+    const mapped = V1_ROOMS[id]
+    // A string index returns undefined for an id that is already v2.
+    if (mapped === undefined) return id as RoomId
+    return mapped === 'home' ? home : mapped
+  }
+  let changed = false
+  const out: Roster = {}
+  for (const [key, agent] of Object.entries(roster)) {
+    const nextRoom = room(agent.room)
+    // No agent works from a shared room: a Reception home is v1's main in the Lobby, or an agent made before the team existed.
+    const mappedHome = room(agent.home)
+    const nextHome = mappedHome === 'reception' ? home : mappedHome
+    let script = agent.script
+    if (script?.kind === 'meet' && room(script.returnRoom) !== script.returnRoom) script = { ...script, returnRoom: room(script.returnRoom) }
+    if (script?.kind === 'report' && V1_PHASES[script.phase] !== undefined) script = { ...script, phase: V1_PHASES[script.phase] ?? script.phase }
+    if (nextRoom === agent.room && nextHome === agent.home && script === agent.script) {
+      out[key] = agent
+      continue
+    }
+    changed = true
+    out[key] = script === undefined ? { ...agent, room: nextRoom, home: nextHome } : { ...agent, room: nextRoom, home: nextHome, script }
+  }
+
+  return changed ? out : roster
 }
 
 export const onComplete = (roster: Roster, agentId: string, now: number): Roster => {
@@ -151,7 +222,7 @@ export const onActivity = (roster: Roster, agentId: string, activity: Activity):
 
 // Adds listed agents the roster does not know yet and revives a done agent the list
 // reports running (a new turn); never removes one.
-export const syncList = (roster: Roster, infos: readonly AgentInfo[]): Roster => {
+export const syncList = (roster: Roster, infos: readonly AgentInfo[], home: RoomId): Roster => {
   let next = roster
   for (const info of infos) {
     const known = next[info.id]
@@ -162,11 +233,12 @@ export const syncList = (roster: Roster, infos: readonly AgentInfo[]): Roster =>
       continue
     }
     if (info.status !== 'running' && info.status !== 'idle' && info.status !== 'waiting') continue
-    const home = homeOf(info.type)
     const agent: OfficeAgent = {
       id: info.id,
       label: labelOf(info.name, info.type, info.description),
+      ...describedOf(info.name, info.type),
       tier: 'grey',
+      role: roleOf(info.type),
       status: info.status === 'idle' ? 'idle' : 'working',
       room: home,
       pose: 'idle',
@@ -180,15 +252,15 @@ export const syncList = (roster: Roster, infos: readonly AgentInfo[]): Roster =>
   return next
 }
 
-const inBreakRoom = (map: OfficeMap, at: Motion[string]): boolean => {
-  const room = map.rooms.find(r => r.id === 'break')
+const inKitchen = (map: OfficeMap, at: Motion[string]): boolean => {
+  const room = map.rooms.find(r => r.id === 'kitchen')
   if (room === undefined) return false
   const { x, y, w, h } = room.bounds
 
   return at.path.length === 0 && at.x >= x && at.x < x + w && at.y >= y && at.y < y + h
 }
 
-// Removes a finished agent (D15) only once it stands in the Break Room with an empty path
+// Removes a finished agent (D15) only once it stands in the Kitchen with an empty path
 // AND DESPAWN_MS have passed since its turn completed. With no map (no pane drawn) or no
 // motion entry nothing is on screen, so the time alone decides. Drops no motion entry
 // itself: the tick's placeMotion drops the entries of agents no longer in the roster.
@@ -199,7 +271,7 @@ export const expire = (roster: Roster, now: number, motion: Motion, map: OfficeM
     const at = motion[agent.id]
     if (map === undefined || at === undefined) return false
 
-    return !inBreakRoom(map, at)
+    return !inKitchen(map, at)
   })
   if (kept.length === Object.keys(roster).length) return roster
 

@@ -2,3 +2,5 @@ node_modules/
 .claude/worktrees/
 .claude/skills/agents-office/.claude-plugin/types/
 *.log
+.claude/skills/agents-office/renderer/state.json
+.claude/skills/agents-office/tsconfig.json
