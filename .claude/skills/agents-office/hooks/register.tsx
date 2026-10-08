@@ -50,7 +50,7 @@ import type { PadState } from './pad'
 import { padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
-import { blitFailVerdict, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next as nextLife, paneCloseOf, probeRoundVerdict, sshReason } from './rendererLife'
+import { blitFailuresAfter, blitFailVerdict, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next as nextLife, paneCloseOf, probeRoundVerdict, sshReason } from './rendererLife'
 import type { Life, LifeEvent, Probe } from './rendererLife'
 import { sceneKey, sceneOf } from './scene'
 import type { SceneModel } from './scene'
@@ -1363,7 +1363,7 @@ const runRenderer = async ($: EngineInterface, loop: RendererLoop): Promise<void
         ending = `blit denied (${deny})`
         break
       }
-      blitFailures += 1
+      blitFailures = blitFailuresAfter(blitFailures, threw, deny)
       if (blitFailVerdict(blitFailures) === 'text') {
         denied = `the terminal kept refusing the picture (${deny})`
         ending = `blit failed ${blitFailures} times (${deny})`
@@ -1717,6 +1717,14 @@ const openOffice = async ($: EngineInterface): Promise<void> => {
   $.clock.after(PAD_FOCUS_MS, () => requestPadFocus($))
 }
 
+// A pane outlives a session that ends inside the same process (/clear, a resume), so a peek tab left up by the old session
+// would still sit in front of the office in the new one. Closing it (a plugin close: it reopens nothing) leaves the office
+// pane as the one shown; the peek content goes with it.
+const dropPeek = async ($: EngineInterface): Promise<void> => {
+  await update($, peek, () => null)
+  if ((await $.ui.panes()).some(pane => pane.id === PEEK_PANE)) await $.ui.close({ id: PEEK_PANE })
+}
+
 const requestPadFocus = ($: EngineInterface): void => {
   $.ui
     .focus({ requestId: PANE, key: PAD_KEY })
@@ -1753,6 +1761,7 @@ export const register: Register = on => {
     })
     // Own guards: neither a failing first agent.list nor a failing seed may stop
     // the frame loop above or the 10 s refresh.
+    await guard($, 'session.start peek', undefined, async () => dropPeek($))
     await guard($, 'session.start team', undefined, async () => ensureTeam($, e.cwd, true))
     await guard($, 'session.start branch', undefined, async () => labelTeam($, e.cwd))
     // The share mode loads before the dir resolves, so a publisher that waits for `dir` never sees the default.
@@ -1888,6 +1897,8 @@ export const register: Register = on => {
       // back with a re-open. An office pane the person closed meanwhile stays closed.
       await guard($, 'ui.close peek', undefined, async () => {
         if ((await $.ui.panes()).some(pane => pane.id === PANE)) await openOffice($)
+        // The office was behind the peek with its Image unmounted; the shown pane mounts a fresh one that is owed a frame.
+        reframeRenderer()
       })
     }
     if (closing.stopRenderer) {
@@ -1921,6 +1932,8 @@ export const register: Register = on => {
         return { text: `Office scene: ${parsed.mode}${await reasonSuffix($)}` }
       }
       const wasOpened = await read($, opened)
+      // A peek tab still up would stay in front of the office this command is asked to show.
+      await guard($, 'command.run peek', undefined, async () => dropPeek($))
       await openOffice($)
 
       return { text: `${wasOpened ? 'Office pane reopened.' : 'Office pane opened.'}${await reasonSuffix($)}` }

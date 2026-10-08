@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, UiPane } from 'claude-code'
 import { itemsOf } from './items'
 import type { Item } from './items'
 import { mapFor } from './loop'
@@ -346,6 +346,7 @@ test('/office opens the office pane', async ($, on) => {
 
 test('/office opens the pane with focus and the pad asks for focus after 1500 ms', async ($, on) => {
   const clock = mock.clock(on)
+  on('ui.panes', () => ({ value: [] }))
   let focusRequested: boolean | undefined
   on('ui.open', ($, e) => {
     focusRequested = e.focus
@@ -467,7 +468,9 @@ test('no blit happens before the pane renders', async ($, on) => {
 })
 
 // `logs`, when given, collects the text of every ui.log call.
-const stubSession = (on: On, logs?: string[]): void => {
+// `panes` is what `$.ui.panes()` lists: none by default.
+const stubSession = (on: On, logs?: string[], panes: UiPane[] = []): void => {
+  on('ui.panes', () => ({ value: panes }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'office' } }))
   on('session.id', () => ({ value: 't1' }))
@@ -508,6 +511,43 @@ test('session.start seeds main and the listed teammates', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
   expect(roster().sort()).toEqual(['bot', 'main'])
+})
+
+// A peek tab left up by an earlier session in the same process (/clear, a resume) is closed by the next session.start and by
+// /office, so the office is the pane in front.
+const PEEK_UP: UiPane[] = [{ id: 'office-peek', title: 'Whiteboard', isShown: true, isFocused: false, isPlaced: true }]
+
+const watchClosed = (on: On): string[] => {
+  const closed: string[] = []
+  on('ui.close', (_$, e) => {
+    closed.push(e.id)
+
+    return { value: undefined }
+  })
+
+  return closed
+}
+
+test('session.start closes a peek tab an earlier session left up', async ($, on) => {
+  mock.clock(on)
+  stubSession(on, undefined, PEEK_UP)
+  on('agent.list', () => ({ value: [] }))
+  const closed = watchClosed(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  expect(closed).toEqual(['office-peek'])
+})
+
+test('/office closes a peek tab that is up so the office shows in front', async ($, on) => {
+  mock.clock(on)
+  stubSession(on, undefined, PEEK_UP)
+  stubStore(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const closed = watchClosed(on)
+  await $.command.run(runOffice(''))
+
+  expect(closed).toEqual(['office-peek'])
 })
 
 test('the roster refreshes from agent.list every 10 s', async ($, on) => {
@@ -2077,6 +2117,22 @@ test('a stop signals the renderer process by its state path and waits for its st
   expect(spawned.filter(argv => argv[0] === 'pkill')).toEqual([['pkill', '-TERM', '-f', '--', `--state=${STATE_DIR.replace('.', '\\.')}/state\\.json`]])
   expect(state.killed).toBe(true)
   expect(state.returned).toBe(true)
+  await ui.unmount()
+})
+
+test('blits denied as not mounted many times over keep the image scene (the office tab behind a peek)', async ($, on) => {
+  const { ui, clock, blits, state } = await imageSession($, on, 'ready\nframe 1 /x/frame-0.png\n', {
+    deny: 'no Image of its own is mounted under key "scene" in office',
+    frames: true,
+  })
+  for (let i = 0; i < 40; i++) {
+    await clock.advance(TICK_MS)
+    await settle(3)
+  }
+
+  expect(blits.length).toBeGreaterThan(3)
+  expect(state.returned).toBe(false)
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
   await ui.unmount()
 })
 
