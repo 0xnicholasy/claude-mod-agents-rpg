@@ -77,7 +77,7 @@ These work once the pad has focus.
 | `[` and `]` | Walk to the previous or next room, team rooms first and then the shared rooms, wrapping at both ends. |
 | `1` `2` `3` `4` | Emote for 3 seconds: `!`, `?`, a heart and a note. The pane cannot draw the heart or the note glyph, so `3` shows a diamond and `4` shows `~`. |
 | `e` | Use the nearest thing within reach: inspect an agent within 2 tiles (label, status, tool, room and elapsed time, shown for 6 seconds; your own session's agents only, with the last 60 characters of their latest text), or use the cat or a prop. See "Things to use". |
-| `Shift+E` | Peek: opens a second pane with the last 10 text messages of the nearest agent of your own session. |
+| `Shift+E` | Peek: opens a second pane with the last 10 text messages of the nearest agent of your own session, and switches to its tab. `Esc` returns to the Office pane. |
 | `t` | Chat. What you type until Enter becomes a speech bubble of up to 40 characters above your character for 5 seconds. An empty line cancels. In chat mode every key, WASD and digits included, is text. |
 | `m` | Nudge the nearest agent of your own session that is not main. A No/Yes dialog comes first; Yes sends the fixed text "Nudge from the office: please post a short status update." |
 | `x` | Interrupt the main session's running turn, after a No/Yes dialog. |
@@ -102,7 +102,9 @@ Inspect, peek and nudge only ever target agents of your own session, never a rem
 
 While something is in reach, a hint names it: `e: coffee machine`, `e: inspect <label>`, `e: pet the cat`. It disappears when you walk away. When several lines compete, your chat draft is shown first, then an inspect or action line, then the hint.
 
-Text office limits: it draws no mug, no sitting pose and no heart. Instead a line appears: `You hold a mug of coffee.` (8 seconds), `You sit on the sofa.` (6 seconds, although you stay seated until you move) and `You pet the cat.` (3 seconds). The hint is drawn on the overlay row of the map; when the pane has a log strip it replaces the strip's newest row while it shows. The peek panes open beside the office only when `e` or `Shift+E` is pressed, never by themselves, and none of them refresh except the whiteboard.
+While a peek pane is shown (`Shift+E`, or `e` at a desk, the whiteboard or the rack), the pane switches to it at once (its tab sits before `Office`, for example `Whiteboard | Office`) and the keys belong to it, so `W` `A` `S` `D` do nothing. Press `Esc` to go back to the Office pane; the keys return to it and `W` `A` `S` `D` move your character again.
+
+Text office limits: it draws no mug, no sitting pose and no heart. Instead a line appears: `You hold a mug of coffee.` (8 seconds), `You sit on the sofa.` (6 seconds, although you stay seated until you move) and `You pet the cat.` (3 seconds). The hint is drawn on the overlay row of the map; when the pane has a log strip it replaces the strip's newest row while it shows. The peek panes open (as a tab, shown at once) only when `e` or `Shift+E` is pressed, never by themselves, and none of them refresh except the whiteboard.
 
 ## Rooms
 
@@ -195,7 +197,7 @@ Each Claude Code session writes one small JSON file, and every pane reads the fi
 - Image office: a remote figure is placed from presence data, so mixed pane sizes across sessions place figures approximately, like in the text office.
 - Panes are not pixel-identical, and a remote figure's position is approximate when the two panes have different sizes (see "Shared office").
 - The pad takes focus 1.5 seconds after the pane opens, so keys pressed earlier go to the prompt.
-- The peek pane is a snapshot taken when you press `Shift+E`; it does not refresh and sits in a second tab. The full transcript view cannot be opened from the office.
+- The peek pane is a snapshot taken when you press `Shift+E`; it does not refresh and opens as a second tab that is shown at once. The full transcript view cannot be opened from the office.
 - Teammates have no tier colour and show grey.
 - A subagent's `agentId` on `tool.call` was observed through a test cast only (the typed test API drops it). Whether a real session delivers it the same way is not confirmed.
 - The cat walks through people and is drawn under them (the same in the image office).

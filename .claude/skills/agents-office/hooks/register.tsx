@@ -685,7 +685,7 @@ const catTick = async ($: EngineInterface, map: OfficeMap, now: number): Promise
 }
 
 // `E` (D25), called from the ui.input hook: finds the nearest agent within 2 tiles among this session's own roster (a remote agent is never in
-// it), writes the `peek` atom and opens `office-peek` without focus, so the pad keeps the keys. A messages deny or
+// it), writes the `peek` atom and shows `office-peek` (`openPeek`, D31). A messages deny or
 // throw, or no text, shows `Nothing to show for <label>.`. Nobody in range shows the inspect line instead.
 const peekTick = async ($: EngineInterface, now: number, at: Player | null | undefined, foot: Footprint): Promise<void> => {
   const pending = (await read($, pad)).peek
@@ -700,11 +700,24 @@ const peekTick = async ($: EngineInterface, now: number, at: Player | null | und
   await openAgentPeek($, target.id, target.label)
 }
 
-// Writes the `peek` atom and opens `office-peek` (no focus, so the pad keeps the keys). Only called from the ui.input hook.
+// Writes the `peek` atom and shows `office-peek` (D31). The surface shows one pane at a time and refuses `focus` for a pane
+// opened while the pad Input holds the keys (T34 spike: `focus: true` left `office-peek` unshown and unfocused beside the
+// office). So the office pane is closed, the peek pane is opened with `focus` (granted: the prompt has the keys again),
+// and the office pane is opened again behind it as a tab, still in this asked context so it is placed at any width.
+// Escape (`closeOnEscape`) closes the peek; the `ui.close` hook then re-opens the office pane with the pad's focus.
+// Only called from the ui.input hook.
 const openPeek = async ($: EngineInterface, shown: Peek, title: string): Promise<void> => {
   await update($, peek, () => shown)
-  const opened = await $.ui.open({ id: PEEK_PANE, title, rows: PEEK_ROWS })
-  if ('reason' in opened && opened.reason !== undefined) logOnce($, 'peek open', String(opened.reason))
+  await $.ui.close({ id: PANE })
+  let isPeekUp = false
+  try {
+    const opened = await $.ui.open({ id: PEEK_PANE, title, rows: PEEK_ROWS, focus: true, closeOnEscape: true })
+    isPeekUp = opened.isPlaced
+    if ('reason' in opened && opened.reason !== undefined) logOnce($, 'peek open', String(opened.reason))
+  } finally {
+    // The office always comes back; with the keys when the peek is not up (the press context is still asked).
+    await $.ui.open({ id: PANE, title: 'Office', rows: INLINE_MAX_ROWS, columns: MIN_COLUMNS, ...(isPeekUp ? {} : { focus: true as const }) })
+  }
 }
 
 const openAgentPeek = async ($: EngineInterface, agentId: string, rawLabel: string): Promise<void> => {
@@ -1700,6 +1713,13 @@ export const register: Register = on => {
   // The pane closed (plugin, person or unload-with-hooks): stop blitting until a render.
   on('ui.close', async ($, e, next) => {
     const result = await next(e)
+    if (e.id === PEEK_PANE && e.origin.kind === 'person') {
+      // Escape (or a closed tab) on the peek pane: the office pane waits behind it as a tab (D31), so ask the pad's keys
+      // back with a re-open. An office pane the person closed meanwhile stays closed.
+      await guard($, 'ui.close peek', undefined, async () => {
+        if ((await $.ui.panes()).some(pane => pane.id === PANE)) await openOffice($)
+      })
+    }
     if (e.id === PANE) {
       // Closing the pane does not stop the child: the loop must end and call `return()` on its stream (D12).
       stopRenderer($, 'ui.close')
