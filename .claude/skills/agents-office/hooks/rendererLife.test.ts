@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { classify, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next, paneCloseOf, PROBE_ROUNDS, probeRoundVerdict, sshReason, STALL_MS } from './rendererLife'
+import { BLIT_FAIL_CAP, blitFailVerdict, classify, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next, paneCloseOf, PROBE_ROUNDS, probeRoundVerdict, sshReason, STALL_MS } from './rendererLife'
 import type { Life, LifeEvent, Probe } from './rendererLife'
 
 const crash: LifeEvent = { kind: 'exit', code: 1, signal: null, stderr: 'boom' }
@@ -199,4 +199,12 @@ test('a playwright import failure is a non-crash failure with the cause and no r
   expect(life.status).toBe('failed')
   expect(life.exits).toEqual([])
   expect(life.reason).toContain('failed to load (x)')
+})
+
+test('repeated blit failures retry below the cap and fall to text at it', () => {
+  expect(BLIT_FAIL_CAP).toBe(3)
+  expect(blitFailVerdict(0)).toBe('retry')
+  expect(blitFailVerdict(BLIT_FAIL_CAP - 1)).toBe('retry')
+  expect(blitFailVerdict(BLIT_FAIL_CAP)).toBe('text')
+  expect(blitFailVerdict(BLIT_FAIL_CAP + 1)).toBe('text')
 })

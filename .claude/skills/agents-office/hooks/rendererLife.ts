@@ -161,6 +161,12 @@ export const isWatchdogExit = (code: number | null, signal: string | null, ranMs
 // size the frame was made for, and the text does not say nothing is mounted yet (E-07).
 export const isFinalBlitDeny = (threw: boolean, deny: string, sameSize: boolean): boolean => !threw && sameSize && !/mounted/i.test(deny)
 
+// Consecutive blits that threw or were refused without a final deny. At this count the picture is given up for text, so a
+// blit that never works cannot leave the placeholder on screen for good. Any accepted blit starts the count again.
+export const BLIT_FAIL_CAP = 3
+
+export const blitFailVerdict = (failures: number): 'retry' | 'text' => (failures >= BLIT_FAIL_CAP ? 'text' : 'retry')
+
 // What a closed pane asks of the plugin: the person closing the peek tab brings the office back with the pad's keys; the
 // office pane closing stops the renderer, except when the plugin closed it itself to raise the peek tab (D31, E-04).
 export const paneCloseOf = (

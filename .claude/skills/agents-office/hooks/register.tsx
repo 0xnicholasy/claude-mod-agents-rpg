@@ -50,7 +50,7 @@ import type { PadState } from './pad'
 import { padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
-import { effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next as nextLife, paneCloseOf, probeRoundVerdict, sshReason } from './rendererLife'
+import { blitFailVerdict, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next as nextLife, paneCloseOf, probeRoundVerdict, sshReason } from './rendererLife'
 import type { Life, LifeEvent, Probe } from './rendererLife'
 import { sceneKey, sceneOf } from './scene'
 import type { SceneModel } from './scene'
@@ -1267,6 +1267,7 @@ const runRenderer = async ($: EngineInterface, loop: RendererLoop): Promise<void
   let pulled: ReturnType<ChildStream['next']> | undefined
   let childDone = false
   let spawnedAt = 0
+  let blitFailures = 0
   try {
     const current = await read($, renderer)
     if (current.status !== 'backoff') await lifeEvent($, { kind: 'closed' })
@@ -1353,10 +1354,19 @@ const runRenderer = async ($: EngineInterface, loop: RendererLoop): Promise<void
         deny = String(error)
         threw = true
       }
-      if (deny === undefined) continue
+      if (deny === undefined) {
+        blitFailures = 0
+        continue
+      }
       if (!threw && (await isFinalDeny($, deny, sized))) {
         denied = deny
         ending = `blit denied (${deny})`
+        break
+      }
+      blitFailures += 1
+      if (blitFailVerdict(blitFailures) === 'text') {
+        denied = `the terminal kept refusing the picture (${deny})`
+        ending = `blit failed ${blitFailures} times (${deny})`
         break
       }
       logOnce($, 'renderer', `blit refused, retrying on the next frame (${deny})`)
