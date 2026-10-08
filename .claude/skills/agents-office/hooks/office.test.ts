@@ -1250,6 +1250,7 @@ test('inspect shows for 6 s and a messages deny keeps the base text', async ($, 
 test('the peek pane draws the lines', async ($, on) => {
   const clock = mock.clock(on)
   const opened: Array<{ id: string; title?: string; focus?: true }> = []
+  on('ui.close', () => ({ value: undefined }))
   on('ui.open', (_$, e) => {
     opened.push({ id: e.id, title: e.title, focus: e.focus })
     return { value: { isPlaced: true } }
@@ -1275,8 +1276,8 @@ test('the peek pane draws the lines', async ($, on) => {
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'E', kind: 'change' })
   await clock.advance(200)
 
-  // Opened without focus, titled for the agent; the pad keeps the keys.
-  expect(opened.filter(o => o.id === 'office-peek')).toEqual([{ id: 'office-peek', title: 'Peek: main', focus: undefined }])
+  // Opened with focus (D31), titled for the agent.
+  expect(opened.filter(o => o.id === 'office-peek')).toEqual([{ id: 'office-peek', title: 'Peek: main', focus: true }])
   const peek = await $.ui.mount({ ...paneAt(23), requestId: 'office-peek' })
   const texts = (await peek.findAll({ type: 'Text' })).map(t => String(t.text))
   expect(texts).toEqual(['> fix the bug', 'Looking at it now', 'Found it'])
@@ -2207,6 +2208,7 @@ const padSession = async ($: Engine, on: On, answer = 'Yes') => {
   stubSession(on)
   on('agent.list', () => ({ value: [] }))
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('ui.close', () => ({ value: undefined }))
   on('ui.open', (_$, e) => {
     calls.opened.push(`${e.id}|${e.title ?? ''}`)
 
@@ -2519,10 +2521,18 @@ const useSession = async ($: Engine, on: On, mode: 'text' | 'image' = 'text') =>
     return { value: undefined }
   })
   if (mode === 'image') stubRenderer(on, 'ready\n')
+  // Each pane open or close as `open <id>[ focus][ esc]` / `close <id>`.
+  const events: string[] = []
   on('ui.open', (_$, e) => {
     opened.push(`${e.id}|${e.title ?? ''}`)
+    events.push(`open ${e.id}${e.focus === true ? ' focus' : ''}${e.closeOnEscape === true ? ' esc' : ''}`)
 
     return { value: { isPlaced: true } }
+  })
+  on('ui.close', (_$, e) => {
+    events.push(`close ${e.id}`)
+
+    return { value: undefined }
   })
   on('ui.blit', () => ({ value: {} }))
   on('agent.list', () => ({ value: [{ id: 'main', status: 'running' }, { id: 'done1', status: 'completed' }] as never }))
@@ -2594,7 +2604,7 @@ const useSession = async ($: Engine, on: On, mode: 'text' | 'image' = 'text') =>
   const scene = (): SceneModel => (JSON.parse(states.at(-1) ?? '{}') as { scene: SceneModel }).scene
   const figure = (key: string): SceneFigure | undefined => scene().figures.find(f => f.key === key)
 
-  return { clock, ui, opened, last, items, press, stand, standClear, peekTexts, scene, figure }
+  return { clock, ui, opened, events, last, items, press, stand, standClear, peekTexts, scene, figure }
 }
 
 test('e at the whiteboard lists a TodoWrite and the pane redraws after a second TodoWrite', async ($, on) => {
@@ -2613,6 +2623,21 @@ test('e at the whiteboard lists a TodoWrite and the pane redraws after a second 
   await run.clock.advance(TICK_MS)
   expect(await lines()).toEqual(['[x] write tests', '[>] ship'])
   await pane.unmount()
+  await run.ui.unmount()
+})
+
+test('e at the whiteboard shows the peek tab with the keys, behind it the office pane waits as a tab (D31)', async ($, on) => {
+  const run = await useSession($, on)
+  const board = run.items().find(i => i.kind === 'whiteboard')
+  if (board === undefined) throw new Error('no whiteboard')
+  await run.stand(board.rect, 1)
+  run.events.length = 0
+  await run.press('e')
+
+  // The office pane is closed so the peek can take the keys, then comes back behind it as a tab.
+  expect(run.events).toEqual(['close office', 'open office-peek focus esc', 'open office'])
+
+  // The Escape half (the `ui.close` hook asking the pad's keys back) cannot run here: the test engine's `$.ui` has no close.
   await run.ui.unmount()
 })
 
