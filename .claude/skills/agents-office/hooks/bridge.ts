@@ -80,6 +80,10 @@ export const stateText = <S>(input: {
 export const shouldWrite = (prev: WriteMark | undefined, nextKey: string, now: number): boolean =>
   prev === undefined || prev.key !== nextKey || now - prev.at >= HEARTBEAT_MS
 
+// A heartbeat-only rewrite keeps the seq: a new seq is a new scene to the renderer, which would screenshot a static
+// office again every heartbeat. Only a changed key takes the next seq (the heartbeat time still refreshes).
+export const seqFor = (prev: WriteMark | undefined, key: string, seq: number): number => (prev?.key === key ? seq : seq + 1)
+
 // The write key of a scene at an Image box: a resize changes it even when the scene text does not (D8, T19), so the
 // renderer gets the new `size` at the next tick instead of at the next heartbeat.
 export const writeKeyOf = (size: { w: number; h: number }, sceneText: string): string => `${size.w}x${size.h}|${sceneText}`

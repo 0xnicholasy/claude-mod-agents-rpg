@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { clampCells, newestFrame, parseLine, pixelsFor, shouldWrite, splitLines, stateText, writeKeyOf } from './bridge'
+import { clampCells, newestFrame, parseLine, pixelsFor, seqFor, shouldWrite, splitLines, stateText, writeKeyOf } from './bridge'
 import type { RendererLine } from './bridge'
 
 const parseAll = (lines: string[]): RendererLine[] =>
@@ -77,4 +77,10 @@ test('a new box gives a new size in the state text and a new write key for the s
   expect(writeKeyOf(small, sceneText)).not.toBe(writeKeyOf(wide, sceneText))
   expect(shouldWrite({ key: writeKeyOf(small, sceneText), at: 1000 }, writeKeyOf(wide, sceneText), 1100)).toBe(true)
   expect(shouldWrite({ key: writeKeyOf(small, sceneText), at: 1000 }, writeKeyOf(small, sceneText), 1100)).toBe(false)
+})
+
+test('a heartbeat-only rewrite keeps the seq and a changed key takes the next one', () => {
+  expect(seqFor({ key: 'k', at: 1000 }, 'k', 7)).toBe(7)
+  expect(seqFor({ key: 'k', at: 1000 }, 'other', 7)).toBe(8)
+  expect(seqFor(undefined, 'k', 0)).toBe(1)
 })

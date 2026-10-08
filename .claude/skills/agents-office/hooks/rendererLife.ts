@@ -126,6 +126,11 @@ export const effectiveScene = (want: 'auto' | 'image' | 'text', probe: Probe, li
   return { effective: 'probe' }
 }
 
+// Over ssh the terminal runs on another machine and cannot read the renderer's files, so the Image would be a blank box
+// and not a deny (the Image source doc in the API types). The probe is not run; the pane goes to text with this reason.
+export const sshReason = (sshConnection: string, sshTty: string): string | undefined =>
+  sshConnection !== '' || sshTty !== '' ? 'the terminal is across ssh and cannot read the renderer\'s picture files.' : undefined
+
 // A scene written to the renderer that no `frame` line answers within this long means a hung page (E-08).
 export const STALL_MS = 15_000
 

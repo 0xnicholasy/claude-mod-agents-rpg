@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { classify, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next, paneCloseOf, STALL_MS } from './rendererLife'
+import { classify, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next, paneCloseOf, sshReason, STALL_MS } from './rendererLife'
 import type { Life, LifeEvent, Probe } from './rendererLife'
 
 const crash: LifeEvent = { kind: 'exit', code: 1, signal: null, stderr: 'boom' }
@@ -161,4 +161,10 @@ test('closing the office pane stops the renderer unless the plugin is swapping t
   expect(paneCloseOf({ id: 'office', origin: 'plugin' }, ids, true)).toEqual({ reopenOffice: false, stopRenderer: false })
   expect(paneCloseOf({ id: 'office-peek', origin: 'person' }, ids, false)).toEqual({ reopenOffice: true, stopRenderer: false })
   expect(paneCloseOf({ id: 'office-peek', origin: 'plugin' }, ids, false)).toEqual({ reopenOffice: false, stopRenderer: false })
+})
+
+test('an ssh session gives a text reason and a local one gives none', () => {
+  expect(sshReason('1.2.3.4 22 5.6.7.8 22', '')).toContain('ssh')
+  expect(sshReason('', '/dev/pts/3')).toContain('ssh')
+  expect(sshReason('', '')).toBeUndefined()
 })

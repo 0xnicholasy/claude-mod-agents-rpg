@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { applyKeys, chatLine, CONFIRM_OPTIONS, isYes, emoteOf, INITIAL_PAD, MAX_TAPS, onPadInput, onPadSubmit, readKeys } from './pad'
+import { applyKeys, chatLine, CONFIRM_OPTIONS, isYes, emoteOf, claimPress, INITIAL_PAD, MAX_TAPS, onPadInput, onPadSubmit, readKeys } from './pad'
 import { isValidGlyph } from './raster'
 import { CHAT_MAX } from './timing'
 
@@ -180,4 +180,14 @@ test('only the exact answer Yes confirms', () => {
   expect(CONFIRM_OPTIONS).toEqual(['No', 'Yes'])
   expect(isYes('Yes')).toBe(true)
   for (const answer of ['No', '', 'yes', 'Yes, please', 'Other']) expect(isYes(answer)).toBe(false)
+})
+
+test('claimPress claims only the press it was given and a re-run on a cleared pad claims nothing', () => {
+  const pressed = { ...INITIAL_PAD, inspect: { at: 5 } }
+  const first = claimPress(pressed, 'inspect', 5)
+  expect(first.claimed).toBe(true)
+  expect(first.next.inspect).toBeUndefined()
+  expect(claimPress(first.next, 'inspect', 5).claimed).toBe(false)
+  expect(claimPress(pressed, 'inspect', 6).claimed).toBe(false)
+  expect(claimPress({ ...INITIAL_PAD, peek: { at: 5 } }, 'inspect', 5).claimed).toBe(false)
 })

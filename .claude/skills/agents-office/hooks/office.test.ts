@@ -2167,7 +2167,7 @@ const autoSession = async (
   $: Engine,
   on: On,
   answer: (n: number, file: string) => string | undefined,
-  opts: { stored?: string; lines?: string; spawnFails?: boolean; exits?: boolean } = {},
+  opts: { stored?: string; lines?: string; spawnFails?: boolean; exits?: boolean; env?: Record<string, string> } = {},
 ) => {
   const clock = mock.clock(on)
   const probes: Array<{ key: string; file: string }> = []
@@ -2188,6 +2188,11 @@ const autoSession = async (
     return { value: deny === undefined ? {} : { deny } }
   })
   on('fs.write', () => ({ value: undefined }))
+  on('process.run', (_$, e) => {
+    const stdout = e.argv[0] === 'printenv' ? `${opts.env?.[e.argv[1] ?? ''] ?? ''}\n` : ''
+
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   const ending = opts.spawnFails === true ? 'throw' : opts.exits === true ? 'exit' : 'run'
   const renderer = stubRenderer(on, opts.lines ?? 'ready\n', true, ending)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -2220,6 +2225,16 @@ test('a probe deny gives the text office with the reason once, and never spawns'
   expect(reasons).toHaveLength(1)
   const reply = await $.command.run(runOffice(''))
   expect(JSON.stringify(reply)).toContain(TMUX_DENY)
+  await ui.unmount()
+})
+
+test('over ssh auto goes to the text office with the ssh reason and sends no probe', async ($, on) => {
+  const { ui, probes, spawned } = await autoSession($, on, () => undefined, { env: { SSH_CONNECTION: '1.2.3.4 22 5.6.7.8 22' } })
+
+  expect(probes).toEqual([])
+  expect(spawned.filter(argv => argv[0] === 'node' || argv[0] === 'mktemp')).toEqual([])
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(JSON.stringify(await $.command.run(runOffice('')))).toContain('ssh')
   await ui.unmount()
 })
 

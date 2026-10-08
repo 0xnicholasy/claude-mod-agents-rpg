@@ -10,7 +10,7 @@ import type { Cat } from './cat'
 import { cropFrame, focusOf, overlaySpan, viewFor } from './camera'
 import { buildFrame, hourOf, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
-import { clampCells, newestFrame, parseLine, pixelsFor, shouldWrite, splitLines, stateText, writeKeyOf } from './bridge'
+import { clampCells, newestFrame, parseLine, pixelsFor, seqFor, shouldWrite, splitLines, stateText, writeKeyOf } from './bridge'
 import type { WriteMark } from './bridge'
 import { arrived, clean, interrupted, interruptFailed, nudged, nudgeFailed, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
@@ -19,7 +19,7 @@ import type { Footprint, OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest, peekLines } from './inspect'
 import { itemsOf } from './items'
-import { chatLine, CONFIRM_OPTIONS, INITIAL_PAD, isYes, NUDGE_TEXT, onPadInput, onPadSubmit } from './pad'
+import { chatLine, claimPress, CONFIRM_OPTIONS, INITIAL_PAD, isYes, NUDGE_TEXT, onPadInput, onPadSubmit } from './pad'
 import {
   asScene,
   asShare,
@@ -50,7 +50,7 @@ import type { PadState } from './pad'
 import { padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
-import { effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next as nextLife, paneCloseOf } from './rendererLife'
+import { effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next as nextLife, paneCloseOf, sshReason } from './rendererLife'
 import type { Life, LifeEvent, Probe } from './rendererLife'
 import { sceneKey, sceneOf } from './scene'
 import type { SceneModel } from './scene'
@@ -656,10 +656,10 @@ const inspectTick = async ($: EngineInterface, map: OfficeMap, now: number, at: 
     // One update claims the press, so `useTick` and this tick cannot both act on it.
     let claimed = false
     await update($, pad, cur => {
-      if (cur.inspect?.at !== pending.at) return cur
-      claimed = true
+      const claim = claimPress(cur, 'inspect', pending.at)
+      claimed = claim.claimed
 
-      return { ...cur, inspect: undefined }
+      return claim.next
     })
     // A press that waited (no player or map yet) is stale, not a phantom inspect later.
     if (!claimed || now - pending.at > INSPECT_PRESS_MS) return undefined
@@ -709,10 +709,10 @@ const peekTick = async ($: EngineInterface, now: number, at: Player | null | und
   if (pending === undefined || at === null || at === undefined) return
   let claimed = false
   await update($, pad, cur => {
-    if (cur.peek?.at !== pending.at) return cur
-    claimed = true
+    const claim = claimPress(cur, 'peek', pending.at)
+    claimed = claim.claimed
 
-    return { ...cur, peek: undefined }
+    return claim.next
   })
   if (!claimed || now - pending.at > INSPECT_PRESS_MS) return
   const target = nearest(await read($, agents), await read($, motion), at, undefined, foot)
@@ -818,10 +818,10 @@ const useTick = async ($: EngineInterface, now: number, at: Player | null | unde
   // One update claims the press, so two hooks that saw it pending cannot both act on it.
   let claimed = false
   await update($, pad, cur => {
-    if (cur.inspect?.at !== pending.at) return cur
-    claimed = true
+    const claim = claimPress(cur, 'inspect', pending.at)
+    claimed = claim.claimed
 
-    return { ...cur, inspect: undefined }
+    return claim.next
   })
   if (!claimed || now - pending.at > INSPECT_PRESS_MS) return
   const roomNames = Object.fromEntries(map.rooms.map(room => [room.id, room.name]))
@@ -1137,6 +1137,11 @@ const PROBE_RETRY_MS = 200
 let probing = false
 
 const runProbe = async ($: EngineInterface): Promise<void> => {
+  const ssh = sshReason(await envOf($, 'SSH_CONNECTION'), await envOf($, 'SSH_TTY'))
+  if (ssh !== undefined) {
+    await settleScene($, { kind: 'denied', reason: ssh })
+    return
+  }
   for (let attempt = 0; attempt < PROBE_TRIES; attempt++) {
     if ((await read($, scene)).effective !== 'probe') return
     const sized = await read($, viewport)
@@ -1464,10 +1469,11 @@ const imageTick = async (
   const px = pixelsFor(size)
   const key = writeKeyOf(px, sceneKey(model))
   if (!shouldWrite(loop.mark, key, input.now)) return
-  loop.seq += 1
+  const changed = loop.mark?.key !== key
+  loop.seq = seqFor(loop.mark, key, loop.seq)
   loop.mark = { key, at: input.now }
   loop.held = { size: px, scene: model, seq: loop.seq }
-  if (loop.ready && loop.pendingSince === undefined) loop.pendingSince = input.now
+  if (changed && loop.ready && loop.pendingSince === undefined) loop.pendingSince = input.now
   try {
     await writeState($, loop, stateText({ seq: loop.seq, heartbeatAt: input.now, size: px, scene: model }))
   } catch (error) {
