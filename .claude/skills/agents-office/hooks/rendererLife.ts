@@ -157,15 +157,24 @@ export const WATCHDOG_EXIT_MIN_MS = 9000
 export const isWatchdogExit = (code: number | null, signal: string | null, ranMs: number, stderr: string): boolean =>
   code === 0 && signal === null && ranMs >= WATCHDOG_EXIT_MIN_MS && stderr.trim() === ''
 
+// A refusal that says no Image is mounted: the pane is hidden behind a peek tab or has just remounted, so the picture has
+// nowhere to go yet. That is timing, not a verdict on the terminal (E-07).
+export const isUnmountedDeny = (deny: string): boolean => /mounted/i.test(deny)
+
 // A blit refusal is final only when the host answered it (a throw is the engine closing or a race), the pane size is the
 // size the frame was made for, and the text does not say nothing is mounted yet (E-07).
-export const isFinalBlitDeny = (threw: boolean, deny: string, sameSize: boolean): boolean => !threw && sameSize && !/mounted/i.test(deny)
+export const isFinalBlitDeny = (threw: boolean, deny: string, sameSize: boolean): boolean => !threw && sameSize && !isUnmountedDeny(deny)
 
 // Consecutive blits that threw or were refused without a final deny. At this count the picture is given up for text, so a
 // blit that never works cannot leave the placeholder on screen for good. Any accepted blit starts the count again.
 export const BLIT_FAIL_CAP = 3
 
 export const blitFailVerdict = (failures: number): 'retry' | 'text' => (failures >= BLIT_FAIL_CAP ? 'text' : 'retry')
+
+// The failure count after one more blit that did not draw. A not-mounted refusal is retried for as long as it lasts (the
+// office tab can sit behind a peek for minutes): it neither adds to the count nor clears it. A throw always adds.
+export const blitFailuresAfter = (failures: number, threw: boolean, deny: string): number =>
+  !threw && isUnmountedDeny(deny) ? failures : failures + 1
 
 // What a closed pane asks of the plugin: the person closing the peek tab brings the office back with the pad's keys; the
 // office pane closing stops the renderer, except when the plugin closed it itself to raise the peek tab (D31, E-04).

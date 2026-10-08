@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { BLIT_FAIL_CAP, blitFailVerdict, classify, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next, paneCloseOf, PROBE_ROUNDS, probeRoundVerdict, sshReason, STALL_MS } from './rendererLife'
+import { BLIT_FAIL_CAP, blitFailuresAfter, blitFailVerdict, classify, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isUnmountedDeny, isWatchdogExit, next, paneCloseOf, PROBE_ROUNDS, probeRoundVerdict, sshReason, STALL_MS } from './rendererLife'
 import type { Life, LifeEvent, Probe } from './rendererLife'
 
 const crash: LifeEvent = { kind: 'exit', code: 1, signal: null, stderr: 'boom' }
@@ -207,4 +207,23 @@ test('repeated blit failures retry below the cap and fall to text at it', () => 
   expect(blitFailVerdict(BLIT_FAIL_CAP - 1)).toBe('retry')
   expect(blitFailVerdict(BLIT_FAIL_CAP)).toBe('text')
   expect(blitFailVerdict(BLIT_FAIL_CAP + 1)).toBe('text')
+})
+
+const UNMOUNTED = 'no Image of its own is mounted under key "scene" in office'
+
+test('not-mounted denies never count toward the cap, however many arrive', () => {
+  expect(isUnmountedDeny(UNMOUNTED)).toBe(true)
+  expect(isUnmountedDeny('the Image draws its alt here')).toBe(false)
+  let failures = 0
+  for (let i = 0; i < 5; i++) failures = blitFailuresAfter(failures, false, UNMOUNTED)
+
+  expect(failures).toBe(0)
+  expect(blitFailVerdict(failures)).toBe('retry')
+})
+
+test('a not-mounted deny keeps the count and a throw or another deny adds to it', () => {
+  expect(blitFailuresAfter(2, false, UNMOUNTED)).toBe(2)
+  expect(blitFailuresAfter(2, true, 'engine closing')).toBe(3)
+  expect(blitFailuresAfter(2, true, UNMOUNTED)).toBe(3)
+  expect(blitFailuresAfter(2, false, 'a transient refusal')).toBe(3)
 })
