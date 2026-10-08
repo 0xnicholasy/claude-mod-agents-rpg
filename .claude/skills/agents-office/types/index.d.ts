@@ -65,8 +65,11 @@ declare module 'claude-code' {
         path: Array<{ x: number; y: number }>
         movedAt?: number
         emote?: string
+        emoteUntil?: number
         chat?: string
+        chatUntil?: number
         until?: number
+        act?: { kind: 'mug'; until: number } | { kind: 'sit' }
       } | null
       cat: {
         x: number
@@ -78,7 +81,12 @@ declare module 'claude-code' {
         seed: number
       } | null
       inspect: { agentId: string; text: string; until: number } | null
-      peek: { agentId: string; label: string; lines: string[] } | null
+      hintLine: string | null
+      catPetUntil: number
+      peek: { source: 'agent' | 'board' | 'rack'; agentId?: string; label: string; lines: string[] } | null
+      peekSwap: boolean
+      usage: { percent?: number; usd?: number }
+      board: Array<{ id?: string; content: string; status: string }>
       turn: string | null
       asking: boolean
       identity: { sessionId: string; startedAt: number; dir?: string } | null
@@ -115,6 +123,18 @@ declare module 'claude-code' {
           } | null
         }
       >
+      renderer: {
+        status: 'off' | 'starting' | 'running' | 'backoff' | 'failed'
+        dir?: string
+        exits: number[]
+        reason?: string
+        retryAt?: number
+      }
+      scene: {
+        want: 'auto' | 'image' | 'text'
+        effective: 'probe' | 'image' | 'text'
+        reason?: string
+      }
       pad: {
         handled: string
         clear: string

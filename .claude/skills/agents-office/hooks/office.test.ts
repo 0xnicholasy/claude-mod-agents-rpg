@@ -1,11 +1,16 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { buildOffice, canStand, MID_FOOT } from './map'
+import { itemsOf } from './items'
+import type { Item } from './items'
+import { mapFor } from './loop'
+import { COOLER_LINES, rectGap } from './use'
+import { buildOffice, canStand, CAT_FOOT, MID_FOOT } from './map'
 import { findPath } from './path'
 import { NUDGE_TEXT } from './pad'
 import { STRIP_ROWS, TICK_MS } from './timing'
-import type { OfficeMap } from './map'
+import type { OfficeMap, Rect } from './map'
+import type { SceneFigure, SceneModel } from './scene'
 const buildMap = (columns: number, rows: number): OfficeMap => buildOffice(columns, rows, [{ id: 'team:t1', label: 'proj' }], MID_FOOT)
 
 const paneProps = {
@@ -252,7 +257,7 @@ test('typing into the pad records a coalesced burst and flips the drawn value', 
   await ui.unmount()
 })
 
-test('a pad key walks the player one tile per tick', async ($, on) => {
+test('a pad key walks the player one tile, then two per tick while held', async ($, on) => {
   const clock = mock.clock(on)
   const xs: number[] = []
   on('state.set', ($, e, next) => {
@@ -272,7 +277,7 @@ test('a pad key walks the player one tile per tick', async ($, on) => {
   await clock.advance(100)
   expect(xs.at(-1)).toBe((spawn ?? 0) + 1)
   await clock.advance(100)
-  expect(xs.at(-1)).toBe((spawn ?? 0) + 2)
+  expect(xs.at(-1)).toBe((spawn ?? 0) + 3)
   await ui.unmount()
 })
 
@@ -724,8 +729,8 @@ const startOffice = async ($: Engine, on: On, v1Roster?: Record<string, unknown>
     return next(e)
   })
   stubSession(on, logs)
-  // The share preference read in session.start: nothing stored.
-  on('store.get', () => ({ value: undefined }))
+  // The share preference read in session.start: nothing stored. The scene is pinned to the v2 text office (T13: `auto` probes).
+  on('store.get', (_$, e) => ({ value: e.key === 'scene' ? 'text' : undefined }))
   // The branch lookup in session.start: a repo with no branch (detached HEAD).
   on('process.run', () => ({
     value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
@@ -1007,7 +1012,7 @@ test('the strip always renders exactly five truncating rows', async ($, on) => {
   await ui.unmount()
 })
 
-test('a 25-row body shows the two newest strip lines', async ($, on) => {
+test('a 25-row body shows the newest strip line and the caption in the last row', async ($, on) => {
   const { ui } = await startOffice($, on)
   await $.agent.spawn({ ...spawnArgs, name: 'a1' })
   for (let i = 0; i < 3; i += 1) await $.tool.call({ tool: 'SendMessage', to: 'a1', message: `m${i}` })
@@ -1015,12 +1020,11 @@ test('a 25-row body shows the two newest strip lines', async ($, on) => {
   const rows = await ui.findAll({ type: 'Text' })
 
   expect(rows).toHaveLength(2)
-  expect(await ui.find({ type: 'Text', text: /told a1: m2/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /told a1: m1/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /told a1: m0/ })).toBeUndefined()
-  // Oldest of the two first: m1 renders before m2.
+  // The player starts at its desk, so the hint takes the last strip row from the newest line (D30), as an inspect line does.
   expect(rows[0]?.text).toContain('m1')
-  expect(rows[1]?.text).toContain('m2')
+  expect(rows[1]?.text).toBe('e: desk')
   await ui.unmount()
 })
 
@@ -1246,6 +1250,7 @@ test('inspect shows for 6 s and a messages deny keeps the base text', async ($, 
 test('the peek pane draws the lines', async ($, on) => {
   const clock = mock.clock(on)
   const opened: Array<{ id: string; title?: string; focus?: true }> = []
+  on('ui.close', () => ({ value: undefined }))
   on('ui.open', (_$, e) => {
     opened.push({ id: e.id, title: e.title, focus: e.focus })
     return { value: { isPlaced: true } }
@@ -1271,8 +1276,8 @@ test('the peek pane draws the lines', async ($, on) => {
   await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'E', kind: 'change' })
   await clock.advance(200)
 
-  // Opened without focus, titled for the agent; the pad keeps the keys.
-  expect(opened.filter(o => o.id === 'office-peek')).toEqual([{ id: 'office-peek', title: 'Peek: main', focus: undefined }])
+  // Opened with focus (D31), titled for the agent.
+  expect(opened.filter(o => o.id === 'office-peek')).toEqual([{ id: 'office-peek', title: 'Peek: main', focus: true }])
   const peek = await $.ui.mount({ ...paneAt(23), requestId: 'office-peek' })
   const texts = (await peek.findAll({ type: 'Text' })).map(t => String(t.text))
   expect(texts).toEqual(['> fix the bug', 'Looking at it now', 'Found it'])
@@ -1531,7 +1536,7 @@ test('six teams at 76 columns still blit the mounted size', async ($, on) => {
   const dir = '/home/u/.claude/agents-office/presence'
   const lengths: number[] = []
   const clock = mock.clock(on)
-  stubStore(on, { share: 'all' })
+  stubStore(on, { share: 'all', scene: 'text' })
   stubSession(on)
   on('agent.list', () => ({ value: [] }))
   on('ui.blit', (_$, e) => {
@@ -1769,4 +1774,1164 @@ test('a resize between pane sizes keeps the mid footprint and does not reseat th
   expect(writes.seatFoot).toBeUndefined()
   expect(writes.viewport).toMatchObject({ columns: 62, foot: MID_FOOT })
   await ui.unmount()
+})
+
+// ---- The image scene (T12) ----------------------------------------------------------------------------
+const STATE_DIR = '/tmp/agents-office-state.t1'
+
+// Stubs the renderer's three spawns by argv: `mktemp` (the state dir), `node` (render.mjs, which prints `lines` and
+// then stays alive, setting `returned` once its stream is closed) and `rm` (the cleanup). Records every argv.
+// `idle` makes the child print `lines` once and then write nothing, like a renderer showing a static scene.
+// A `pkill` spawn ends the node stub like SIGTERM does (`killed`); `finish()` ends it with code 0 like the renderer's watchdog.
+const stubRenderer = (
+  on: On,
+  lines: string,
+  idle = false,
+  ending: 'run' | 'exit' | 'throw' = 'run',
+  frames = false,
+): { spawned: string[][]; state: { returned: boolean; killed: boolean }; finish: () => void } => {
+  const spawned: string[][] = []
+  const state = { returned: false, killed: false }
+  let finishing = false
+  let frameNo = 1
+  let release: (() => void) | undefined
+  on('process.spawn', async function* (_$, e) {
+    spawned.push([...e.argv])
+    if (e.argv[0] === 'mktemp') {
+      yield { stream: 'stdout' as const, text: `${STATE_DIR}\n` }
+    } else if (e.argv[0] === 'pkill') {
+      state.killed = true
+      release?.()
+    } else if (e.argv[0] === 'node') {
+      try {
+        if (ending === 'throw') throw new Error('spawn node ENOENT')
+        yield { stream: 'stdout' as const, text: lines }
+        if (ending === 'exit') return { value: { code: 1, signal: null } }
+        if (idle) {
+          await new Promise<void>(resolve => (release = resolve))
+        } else {
+          while (!state.killed && !finishing) {
+            await new Promise<void>(resolve => setTimeout(() => resolve(), 20))
+            if (!state.killed && !finishing) yield { stream: 'stdout' as const, text: frames ? `frame ${(frameNo += 1)} /x/frame-${frameNo % 2}.png\n` : 'fps 1\n' }
+          }
+        }
+        if (finishing && !state.killed) {
+          finishing = false
+
+          return { value: { code: 0, signal: null } }
+        }
+
+        return { value: { code: null, signal: 'SIGTERM' } }
+      } finally {
+        state.returned = true
+      }
+    }
+
+    return { value: { code: 0, signal: null } }
+  })
+
+  return {
+    spawned,
+    state,
+    finish: () => {
+      finishing = true
+      release?.()
+    },
+  }
+}
+
+// The tsconfig carries no DOM or node types, but the test runtime has the timer (the stub streams wait on real time).
+declare function setTimeout(handler: () => void, ms: number): number
+
+const settle = (ms = 80): Promise<void> => new Promise(resolve => setTimeout(() => resolve(), ms))
+
+type SceneBlit = { key: string; file?: string; format?: string; generation?: number }
+
+// A session over a drawn pane with the image scene wanted: the tick starts the renderer once the pane has a map.
+const imageSession = async ($: Engine, on: On, lines: string, opts: { deny?: string; idle?: boolean; throws?: boolean; frames?: boolean } = {}) => {
+  const clock = mock.clock(on)
+  const blits: SceneBlit[] = []
+  const writes: Array<{ path: string; text: string }> = []
+  stubStore(on)
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.blit', (_$, e) => {
+    blits.push('source' in e && 'file' in e.source ? { key: e.key, file: e.source.file, format: e.source.format, generation: e.source.generation } : { key: e.key })
+    if (opts.throws === true) throw new Error('engine closing')
+
+    return { value: opts.deny === undefined ? {} : { deny: opts.deny } }
+  })
+  on('fs.write', (_$, e) => {
+    writes.push({ path: e.path, text: e.text })
+
+    return { value: undefined }
+  })
+  const renderer = stubRenderer(on, lines, opts.idle === true, 'run', opts.frames === true)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(runOffice('scene image'))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
+  for (let i = 0; i < 4; i++) {
+    await clock.advance(TICK_MS)
+    await settle()
+  }
+
+  return { ui, clock, blits, writes, ...renderer }
+}
+
+test('/office scene image spawns one renderer on the state file in a private temp dir', async ($, on) => {
+  const { ui, spawned } = await imageSession($, on, 'dir /tmp/frames\nready\n')
+
+  const nodes = spawned.filter(argv => argv[0] === 'node')
+  expect(spawned[0]).toEqual(['mktemp', '-d', '-t', 'agents-office-state.XXXXXX'])
+  expect(nodes).toHaveLength(1)
+  expect(nodes[0]?.[1]?.endsWith('/renderer/render.mjs')).toBe(true)
+  expect(nodes[0]?.[2]).toMatch(/^--session=[A-Za-z0-9-]+$/)
+  expect(nodes[0]?.[3]).toBe(`--state=${STATE_DIR}/state.json`)
+  await ui.unmount()
+})
+
+test('a second start request while the renderer runs spawns nothing', async ($, on) => {
+  const { ui, clock, spawned } = await imageSession($, on, 'dir /tmp/frames\nready\n')
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+
+  await $.command.run(runOffice('scene image'))
+  await $.command.run(runOffice('scene image'))
+  for (let i = 0; i < 6; i++) {
+    await clock.advance(TICK_MS)
+    await settle()
+  }
+
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+  expect(spawned.filter(argv => argv[0] === 'mktemp')).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('session.end ends the renderer and no later tick starts another', async ($, on) => {
+  on('session.end', () => ({ sessionId: 't1' }))
+  const { ui, clock, spawned, state } = await imageSession($, on, 'ready\n')
+  expect(state.returned).toBe(false)
+
+  await $.session.end({ reason: 'other', sessionId: 't1', resume: { id: 't1' } })
+  await settle(200)
+  for (let i = 0; i < 4; i++) {
+    await clock.advance(TICK_MS)
+    await settle()
+  }
+
+  expect(state.returned).toBe(true)
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([['rm', '-rf', '--', STATE_DIR]])
+  await ui.unmount()
+})
+
+test('a frame line from the renderer becomes one Image blit with that generation', async ($, on) => {
+  const { ui, blits } = await imageSession($, on, 'dir /tmp/frames\nready\nframe 3 /x/frame-1.png\n')
+
+  const images = blits.filter(b => b.key === 'scene')
+  expect(images).toHaveLength(1)
+  expect(images[0]).toEqual({ key: 'scene', file: '/x/frame-1.png', format: 'png', generation: 3 })
+  expect(blits.filter(b => b.key === 'office')).toHaveLength(0)
+  await ui.unmount()
+})
+
+test('in image mode the tick writes the scene to state.json and the pane draws the keyed Image', async ($, on) => {
+  const { ui, writes } = await imageSession($, on, 'ready\n')
+
+  const state = writes.filter(w => w.path === `${STATE_DIR}/state.json`)
+  expect(state.length).toBeGreaterThan(0)
+  expect(JSON.parse(state[0]?.text ?? '{}')).toMatchObject({ v: 1, seq: 1, size: { w: 76 * 8, h: 23 * 17 } })
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toMatchObject({ props: { columns: 76, rows: 23 } })
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+  await ui.unmount()
+})
+
+// A pane of the given body size; the Image box is columns x rows cells and the state size is columns*8 x rows*17 (D8, D57).
+const paneBox = (bodyColumns: number, bodyRows: number) =>
+  ({
+    plugin: 'agents-office',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'office',
+    props: { ...paneProps, bodyColumns, scroll: { offset: 0, bodyRows } },
+  }) as const
+
+type StateSeen = { seq: number; heartbeatAt: number; size: { w: number; h: number } }
+const statesOf = (writes: Array<{ path: string; text: string }>): StateSeen[] =>
+  writes.filter(w => w.path === `${STATE_DIR}/state.json`).map(w => JSON.parse(w.text) as StateSeen)
+
+test('image scene: a width and a height resize each write the new box as the state size', async ($, on) => {
+  const { ui, clock, writes } = await imageSession($, on, 'ready\n')
+  expect(statesOf(writes).at(-1)?.size).toEqual({ w: 76 * 8, h: 23 * 17 })
+  const boxes: Array<{ columns: number; rows: number }> = []
+  let current = ui
+  for (const [columns, rows] of [[116, 40], [76, 28], [70, 24]] as const) {
+    await current.unmount()
+    current = await $.ui.mount(paneBox(columns, rows))
+    await settle()
+    // One tick: the new size is written at once, without waiting for the 2 s heartbeat.
+    await clock.advance(TICK_MS)
+    await clock.advance(TICK_MS)
+    await settle()
+    const image = await current.find({ type: 'Image', key: 'scene' })
+    const box = { columns: Number(image?.props.columns), rows: Number(image?.props.rows) }
+    boxes.push(box)
+    expect(statesOf(writes).at(-1)?.size).toEqual({ w: box.columns * 8, h: box.rows * 17 })
+  }
+  // Width and height each changed from the previous box.
+  expect(boxes[0]?.columns).toBe(116)
+  expect(boxes[1]).toEqual({ columns: 76, rows: 23 })
+  expect(boxes[0]?.rows).not.toBe(boxes[1]?.rows)
+  expect(boxes[2]?.columns).toBe(70)
+  await current.unmount()
+})
+
+test('image scene: a pane below the minimum size shows the size line, sends no new scene and keeps the heartbeat', async ($, on) => {
+  const { ui, clock, writes, state } = await imageSession($, on, 'ready\n')
+  const before = statesOf(writes).at(-1)
+  expect(before).toBeDefined()
+  await ui.unmount()
+  const small = await $.ui.mount(paneBox(50, 8))
+  await settle()
+  for (let i = 0; i < 40; i++) {
+    await clock.advance(TICK_MS)
+    await settle(5)
+  }
+  const texts = await small.findAll({ type: 'Text' })
+
+  expect(JSON.stringify(texts)).toContain('Office needs a 60x11 pane')
+  expect(await small.find({ type: 'Image' })).toBeUndefined()
+  const held = statesOf(writes).filter(s => s.seq === before?.seq)
+  // 4 s below the minimum: the same seq is rewritten with newer heartbeats and no higher seq appears.
+  expect(statesOf(writes).at(-1)?.seq).toBe(before?.seq)
+  expect(held.length).toBeGreaterThan(1)
+  expect(held.at(-1)?.heartbeatAt ?? 0).toBeGreaterThan(before?.heartbeatAt ?? 0)
+  expect(state.returned).toBe(false)
+  await small.unmount()
+
+  // Back above the minimum: a new seq (so a new frame) with the new box.
+  const back = await $.ui.mount(paneBox(76, 28))
+  await settle()
+  for (let i = 0; i < 4; i++) {
+    await clock.advance(TICK_MS)
+    await settle(5)
+  }
+  expect(statesOf(writes).at(-1)?.seq).toBeGreaterThan(before?.seq ?? 0)
+  expect(statesOf(writes).at(-1)?.size).toEqual({ w: 608, h: 391 })
+  await back.unmount()
+})
+
+// The test engine cannot raise `ui.close` (its `$.ui` has no close), so the loop is ended by the other caller of
+// `stopRenderer`, `/office scene text`; the `ui.close` hook calls the same function.
+test('ending the scene ends the renderer loop, closes its stream and removes the state dir', async ($, on) => {
+  const { ui, spawned, state } = await imageSession($, on, 'ready\n')
+  expect(state.returned).toBe(false)
+
+  await $.command.run(runOffice('scene text'))
+  await settle(200)
+
+  expect(state.returned).toBe(true)
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([['rm', '-rf', '--', STATE_DIR]])
+  await ui.unmount()
+})
+
+test('a blit deny at the same size ends the renderer and shows the text office', async ($, on) => {
+  const { ui, spawned, state } = await imageSession($, on, 'ready\nframe 1 /x/frame-0.png\n', { deny: 'the Image draws its alt here' })
+  await settle(200)
+
+  expect(state.returned).toBe(true)
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([['rm', '-rf', '--', STATE_DIR]])
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a blit deny that says the pane is not mounted keeps the renderer running', async ($, on) => {
+  const { ui, spawned, state } = await imageSession($, on, 'ready\nframe 1 /x/frame-0.png\n', { deny: 'the pane is not mounted' })
+  await settle(200)
+
+  expect(state.returned).toBe(false)
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([])
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a stop ends a renderer that is writing nothing', async ($, on) => {
+  const { ui, spawned } = await imageSession($, on, 'ready\n', { idle: true })
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([])
+
+  await $.command.run(runOffice('scene text'))
+  await settle(200)
+
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([['rm', '-rf', '--', STATE_DIR]])
+  await ui.unmount()
+})
+
+test('a stop signals the renderer process by its state path and waits for its stream to end', async ($, on) => {
+  const { ui, spawned, state } = await imageSession($, on, 'ready\n', { idle: true })
+  expect(state.killed).toBe(false)
+
+  await $.command.run(runOffice('scene text'))
+  await settle(200)
+
+  expect(spawned.filter(argv => argv[0] === 'pkill')).toEqual([['pkill', '-TERM', '-f', '--', `--state=${STATE_DIR.replace('.', '\\.')}/state\\.json`]])
+  expect(state.killed).toBe(true)
+  expect(state.returned).toBe(true)
+  await ui.unmount()
+})
+
+test('a blit that throws keeps the renderer and the image scene', async ($, on) => {
+  const { ui, spawned, state } = await imageSession($, on, 'ready\nframe 1 /x/frame-0.png\n', { throws: true })
+  await settle(200)
+
+  expect(state.returned).toBe(false)
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([])
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a scene that gets no frame for 15 s restarts the renderer', async ($, on) => {
+  const { ui, clock, spawned, state } = await imageSession($, on, 'ready\n', { idle: true })
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+
+  for (let i = 0; i < 200; i++) {
+    await clock.advance(TICK_MS)
+    await settle(3)
+  }
+
+  expect(state.killed).toBe(true)
+  expect(spawned.filter(argv => argv[0] === 'node').length).toBeGreaterThan(1)
+  await ui.unmount()
+})
+
+test('a clean exit after the heartbeat window is a restart, not a crash', async ($, on) => {
+  const { ui, clock, spawned, finish } = await imageSession($, on, 'ready\nframe 1 /x/frame-0.png\n', { frames: true })
+  for (let i = 0; i < 100; i++) {
+    await clock.advance(TICK_MS)
+    await settle(2)
+  }
+  finish()
+  await settle(100)
+  for (let i = 0; i < 30; i++) {
+    await clock.advance(TICK_MS)
+    await settle(10)
+  }
+
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(2)
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('with the text scene the v2 Raster frame is blitted and nothing is spawned', async ($, on) => {
+  const clock = mock.clock(on)
+  const keys: string[] = []
+  stubStore(on, { scene: 'text' })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', (_$, e) => {
+    keys.push(e.key)
+
+    return { value: {} }
+  })
+  const { spawned } = stubRenderer(on, 'ready\n')
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
+  await clock.advance(TICK_MS * 3)
+  await settle()
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(keys).toContain('office')
+  expect(keys).not.toContain('scene')
+  expect(spawned).toEqual([])
+  await ui.unmount()
+})
+
+test('/office scene stores the mode, answers with text and rejects other values', async ($, on) => {
+  const kept = stubStore(on)
+  const auto = await $.command.run(runOffice('scene auto'))
+  expect(auto).toMatchObject({ text: 'Office scene: auto' })
+  expect(kept.get('scene')).toBe('auto')
+
+  const bad = await $.command.run(runOffice('scene bogus'))
+  expect(bad).toMatchObject({ text: 'Usage: /office scene auto|image|text' })
+  expect(kept.get('scene')).toBe('auto')
+})
+
+// ---- Detection and the fallback (T13) ------------------------------------------------------------------
+const TMUX_DENY = 'the Image draws its alt here: the terminal draws no placeholder images (env: inside tmux or screen)'
+
+// A pane over the stored scene mode (nothing stored = `auto`), the probe answered by `answer` per call, and the
+// renderer stubbed. `logged` collects the strip log writes; `replies` is the `/office` reply.
+const autoSession = async (
+  $: Engine,
+  on: On,
+  answer: (n: number, file: string) => string | undefined,
+  opts: { stored?: string; lines?: string; spawnFails?: boolean; exits?: boolean; env?: Record<string, string> } = {},
+) => {
+  const clock = mock.clock(on)
+  const probes: Array<{ key: string; file: string }> = []
+  const logs: string[][] = []
+  stubStore(on, opts.stored === undefined ? {} : { scene: opts.stored })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('state.set', ($$, e, next) => {
+    if (e.key === 'log') logs.push(e.value as string[])
+    return next(e)
+  })
+  on('ui.blit', (_$, e) => {
+    const file = 'source' in e && 'file' in e.source ? e.source.file : ''
+    if (file.endsWith('placeholder.png')) probes.push({ key: e.key, file })
+    const deny = file.endsWith('placeholder.png') ? answer(probes.length, file) : undefined
+
+    return { value: deny === undefined ? {} : { deny } }
+  })
+  on('fs.write', () => ({ value: undefined }))
+  on('process.run', (_$, e) => {
+    const stdout = e.argv[0] === 'printenv' ? `${opts.env?.[e.argv[1] ?? ''] ?? ''}\n` : ''
+
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const ending = opts.spawnFails === true ? 'throw' : opts.exits === true ? 'exit' : 'run'
+  const renderer = stubRenderer(on, opts.lines ?? 'ready\n', true, ending)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
+  for (let i = 0; i < 6; i++) {
+    await clock.advance(TICK_MS)
+    await settle()
+  }
+
+  return { ui, clock, probes, logs, ...renderer }
+}
+
+test('auto probes with the placeholder file, draws the Image and spawns once it is accepted', async ($, on) => {
+  const { ui, probes, spawned } = await autoSession($, on, () => undefined)
+
+  expect(probes[0]?.key).toBe('scene')
+  expect(probes[0]?.file.endsWith('/renderer/placeholder.png')).toBe(true)
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a probe deny gives the text office with the reason once, and never spawns', async ($, on) => {
+  const { ui, spawned, logs } = await autoSession($, on, () => TMUX_DENY)
+
+  expect(spawned.filter(argv => argv[0] === 'node' || argv[0] === 'mktemp')).toEqual([])
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  const reasons = (logs[logs.length - 1] ?? []).filter(line => line.includes(TMUX_DENY))
+  expect(reasons).toHaveLength(1)
+  const reply = await $.command.run(runOffice(''))
+  expect(JSON.stringify(reply)).toContain(TMUX_DENY)
+  await ui.unmount()
+})
+
+test('over ssh auto goes to the text office with the ssh reason and sends no probe', async ($, on) => {
+  const { ui, probes, spawned } = await autoSession($, on, () => undefined, { env: { SSH_CONNECTION: '1.2.3.4 22 5.6.7.8 22' } })
+
+  expect(probes).toEqual([])
+  expect(spawned.filter(argv => argv[0] === 'node' || argv[0] === 'mktemp')).toEqual([])
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(JSON.stringify(await $.command.run(runOffice('')))).toContain('ssh')
+  await ui.unmount()
+})
+
+test('a not-mounted deny retries and is never the verdict', async ($, on) => {
+  const { ui, probes, spawned } = await autoSession($, on, n => (n < 3 ? 'no Image of its own is mounted under key "scene" in office' : undefined))
+
+  expect(probes.length).toBe(3)
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('probe rounds that all run out give the text office with a reason', async ($, on) => {
+  const { ui, clock, logs, spawned } = await autoSession($, on, () => 'no Image of its own is mounted under key "scene" in office')
+  for (let i = 0; i < 140; i++) {
+    await clock.advance(TICK_MS)
+    await settle(3)
+  }
+
+  expect(spawned.filter(argv => argv[0] === 'node')).toEqual([])
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  expect((logs[logs.length - 1] ?? []).some(line => line.includes('never accepted the picture probe'))).toBe(true)
+  await ui.unmount()
+})
+
+test('a stored text scene never probes or spawns', async ($, on) => {
+  const { ui, probes, spawned } = await autoSession($, on, () => undefined, { stored: 'text' })
+
+  expect(probes).toEqual([])
+  expect(spawned).toEqual([])
+  await ui.unmount()
+})
+
+test('a spawn that rejects gives the text office with the node fix line', async ($, on) => {
+  const { ui, logs } = await autoSession($, on, () => undefined, { spawnFails: true })
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  expect((logs[logs.length - 1] ?? []).some(line => line.includes('Node.js was not found'))).toBe(true)
+  await ui.unmount()
+})
+
+test('an error no-chromium line gives the text office with the chromium fix line', async ($, on) => {
+  const { ui, logs } = await autoSession($, on, () => undefined, { lines: 'dir /x\nerror no-chromium none\n', exits: true })
+  await settle(200)
+
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  expect((logs[logs.length - 1] ?? []).some(line => line.includes('npx playwright install chromium'))).toBe(true)
+  await ui.unmount()
+})
+
+test('/office scene auto after a failure probes again', async ($, on) => {
+  let deny: string | undefined = TMUX_DENY
+  const { ui, probes } = await autoSession($, on, () => deny)
+  expect(probes.length).toBe(1)
+
+  deny = undefined
+  await $.command.run(runOffice('scene auto'))
+  for (let i = 0; i < 3; i++) await settle()
+
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('3 renderer crashes give the text office with the crash reason', async ($, on) => {
+  const { ui, clock, logs, spawned } = await autoSession($, on, () => undefined, { lines: 'ready\n', exits: true })
+  for (let i = 0; i < 40; i++) {
+    await clock.advance(TICK_MS)
+    await settle(30)
+  }
+
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(3)
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  expect((logs[logs.length - 1] ?? []).some(line => line.includes('crashed 3 times'))).toBe(true)
+  await ui.unmount()
+})
+
+// ---- Every pad key against the image scene (T16) -----------------------------------------------------
+// A session in image mode with main plus one spawned subagent `a1` (label `general-purpose`). `scene()` is the
+// scene of the newest state.json write; `calls` collects the dialogs, sends, aborts and opened panes.
+const padSession = async ($: Engine, on: On, answer = 'Yes') => {
+  const clock = mock.clock(on)
+  const states: string[] = []
+  const calls = { asks: [] as string[], sends: [] as Array<{ to: unknown; text: string }>, aborts: [] as string[], opened: [] as string[] }
+  stubStore(on)
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('ui.close', () => ({ value: undefined }))
+  on('ui.open', (_$, e) => {
+    calls.opened.push(`${e.id}|${e.title ?? ''}`)
+
+    return { value: { isPlaced: true } }
+  })
+  on('ui.blit', () => ({ value: {} }))
+  on('session.messages', () => ({ value: { deny: 'no transcript' } }))
+  on('fs.write', (_$, e) => {
+    if (e.path === `${STATE_DIR}/state.json`) states.push(e.text)
+
+    return { value: undefined }
+  })
+  on('tool.call', (_$, e) => {
+    if (e.tool !== 'AskUserQuestion') return { result: 'stub' }
+    const question = e.questions[0]?.question ?? ''
+    calls.asks.push(question)
+
+    return { result: { questions: e.questions.map(q => ({ ...q, options: q.options })), answers: { [question]: answer } } }
+  })
+  on('session.send', (_$, e) => {
+    calls.sends.push({ to: e.to, text: e.text })
+
+    return { isDelivered: true }
+  })
+  on('turn.abort', (_$, e) => {
+    calls.aborts.push(e.turnId)
+
+    return { value: undefined }
+  })
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: 'done' }))
+  stubRenderer(on, 'ready\n', false, 'run', true)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(runOffice('scene image'))
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
+  const wait = async (ms: number) => {
+    // Steps of one second, so every tick in between writes its state.
+    for (let left = ms; left > 0; left -= 1000) {
+      await clock.advance(Math.min(left, 1000))
+      await settle(5)
+    }
+  }
+  await wait(1000)
+  await $.agent.spawn(spawnArgs)
+  await wait(6000)
+  const scene = (): SceneModel => (JSON.parse(states.at(-1) ?? '{}') as { scene: SceneModel }).scene
+  const you = (): SceneFigure => {
+    const figure = scene().figures.find(f => f.key === 'player')
+    if (figure === undefined) throw new Error('no player figure in the scene')
+
+    return figure
+  }
+
+  return { ui, clock, wait, scene, you, calls, states }
+}
+
+// From the first desk, beside main: `]` then `[` walks the player out of its room and back (as the inspect test does).
+const toDesk = async ($: Engine, wait: (ms: number) => Promise<void>) => {
+  await pressKey($, ']')
+  await wait(JUMP_MS)
+  await pressKey($, '[')
+  await wait(JUMP_MS)
+}
+
+test('image scene: wasd runs the player two tiles per tick after the first and turns it', async ($, on) => {
+  const { ui, wait, you } = await padSession($, on)
+  const before = you()
+  await pressKey($, 'dddd')
+  await wait(1000)
+  const right = you()
+  expect(right.x - before.x).toBe(7 * 8)
+  expect(right.facing).toBe('right')
+  expect(right.sprite).toBe('person1-right')
+  await pressKey($, 'aa')
+  await wait(1000)
+  expect(you().x - right.x).toBe(-3 * 8)
+  expect(you().facing).toBe('left')
+  await ui.unmount()
+})
+
+test('image scene: ] and [ jump the player between rooms and the camera follows', async ($, on) => {
+  const { ui, wait, you, scene } = await padSession($, on)
+  const home = { you: you(), camera: scene().camera }
+  await pressKey($, ']')
+  await wait(JUMP_MS)
+  const away = { you: you(), camera: scene().camera }
+  expect({ x: away.you.x, y: away.you.y }).not.toEqual({ x: home.you.x, y: home.you.y })
+  const view = (f: SceneFigure) => ({ left: f.x - away.camera.x, top: f.y - away.camera.y })
+  // Wherever the camera is, the player stays inside the camera window.
+  expect(view(away.you).left).toBeGreaterThanOrEqual(0)
+  expect(view(away.you).left).toBeLessThanOrEqual(away.camera.w)
+  expect(view(away.you).top).toBeGreaterThanOrEqual(0)
+  expect(view(away.you).top).toBeLessThanOrEqual(away.camera.h)
+  await pressKey($, '[')
+  await wait(JUMP_MS)
+  expect({ x: you().x, y: you().y }).not.toEqual({ x: away.you.x, y: away.you.y })
+  expect(you().x).toBeGreaterThanOrEqual(scene().camera.x)
+  expect(you().x).toBeLessThanOrEqual(scene().camera.x + scene().camera.w)
+  await ui.unmount()
+})
+
+test('image scene: keys 1 to 4 show an emote above the player that ends after 3 s', async ($, on) => {
+  const { ui, wait, you } = await padSession($, on)
+  const shown: Array<string | undefined> = []
+  for (const key of ['1', '2', '3', '4']) {
+    await pressKey($, key)
+    await wait(1000)
+    shown.push(you().emote)
+    await wait(3000)
+    expect(you().emote).toBeUndefined()
+  }
+  expect(shown).toEqual(['!', '?', '\u2665', '\u266a'])
+  await ui.unmount()
+})
+
+test('image scene: e highlights the nearest agent and writes the inspect line as the caption for 6 s', async ($, on) => {
+  const { ui, wait, scene } = await padSession($, on)
+  await toDesk($, wait)
+  expect(scene().caption).toBe('e: inspect main')
+  await pressKey($, 'e')
+  await wait(1000)
+  expect(scene().figures.filter(f => f.highlight).map(f => f.key)).toEqual(['main'])
+  expect(scene().caption).toMatch(/^main \| working \| \w+ \| .+ \| \d+s$/)
+  await wait(6000)
+  // The inspect line is over; the hint is the caption again while main is in reach.
+  expect(scene().caption).toBe('e: inspect main')
+  expect(scene().figures.some(f => f.highlight)).toBe(false)
+  await ui.unmount()
+})
+
+test('image scene: E opens the peek pane titled for the agent and the scene is unchanged', async ($, on) => {
+  const { ui, wait, calls, you } = await padSession($, on)
+  await toDesk($, wait)
+  const at = { x: you().x, y: you().y }
+  await pressKey($, 'E')
+  await wait(1000)
+  expect(calls.opened.filter(o => o.startsWith('office-peek'))).toEqual(['office-peek|Peek: main'])
+  expect({ x: you().x, y: you().y }).toEqual(at)
+  await ui.unmount()
+})
+
+test('image scene: t shows the draft as the caption, Enter turns it into a chat bubble and the player stays', async ($, on) => {
+  const { ui, wait, you, scene } = await padSession($, on)
+  const before = you()
+  await pressKey($, 't')
+  await pressKey($, 'twasd hi')
+  await wait(1000)
+  expect(scene().caption).toBe('Say: wasd hi_')
+  expect(you().chat).toBeUndefined()
+  await $.ui.input({ plugin: 'agents-office', key: 'pad-input', text: 'twasd hi', kind: 'submit' })
+  await wait(1000)
+  expect(you().chat).toBe('wasd hi')
+  expect(scene().caption).toBe('e: desk')
+  expect({ x: you().x, y: you().y }).toEqual({ x: before.x, y: before.y })
+  await wait(5000)
+  expect(you().chat).toBeUndefined()
+  await ui.unmount()
+})
+
+test('image scene: m asks before nudging the agent beside the player and x asks before interrupting main', async ($, on) => {
+  const { ui, wait, calls } = await padSession($, on)
+  await toDesk($, wait)
+  await pressKey($, 'ddddd')
+  await wait(1000)
+  await pressKey($, 'm')
+  await wait(1000)
+  expect(calls.asks).toEqual(['Nudge general-purpose?'])
+  expect(calls.sends).toEqual([{ to: 'a1', text: NUDGE_TEXT }])
+  await $.turn.start({ text: 'go', turnId: 'turn-9' })
+  await pressKey($, 'x')
+  await wait(1000)
+  expect(calls.asks).toEqual(['Nudge general-purpose?', 'Interrupt main?'])
+  expect(calls.aborts).toEqual(['turn-9'])
+  await ui.unmount()
+})
+
+// ---- Other sessions in the image scene (T17) ----------------------------------------------------------
+// Three remote presence records (listed out of order): `a` is named, `b` and `c` are anonymous. Player `a` has an
+// emote and a chat line. `dead` makes `b` a tombstone with a newer mtime, as a session that ended.
+const remoteImageSession = async ($: Engine, on: On) => {
+  const dir = '/home/u/.claude/agents-office/presence'
+  const clock = mock.clock(on)
+  const states: string[] = []
+  const dead = { b: false }
+  stubStore(on, { share: 'all', scene: 'image' })
+  stubSession(on)
+  on('agent.list', () => ({ value: [] }))
+  on('ui.blit', () => ({ value: {} }))
+  on('process.run', (_$, e) => {
+    const stdout = e.argv[0] === 'printenv' ? (e.argv[1] === 'HOME' ? '/home/u\n' : '') : ''
+
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('fs.write', (_$, e) => {
+    if (e.path === `${STATE_DIR}/state.json`) states.push(e.text)
+
+    return { value: undefined }
+  })
+  on('fs.list', () => ({
+    value: ['c', 'a', 'b'].map(id => ({ name: `${id}.json`, kind: 'file' as const, size: 1, mtimeMs: id === 'b' && dead.b ? 3000 : 900, isLink: false })),
+  }))
+  const named = { a: 'alpha (main)', b: '', c: '' } as const
+  const started = { a: 10, b: 20, c: 30 } as const
+  on('fs.read', (_$, e) => {
+    const id = e.path.slice(dir.length + 1, -'.json'.length) as 'a' | 'b' | 'c'
+    if (id === 'b' && dead.b) return { value: JSON.stringify({ v: 1, sessionId: 'b', heartbeatAt: 3000, gone: true }) }
+    const player =
+      id === 'a'
+        ? { room: `team:${id}`, rx: 4, ry: 4, facing: 'left', emote: '◆', emoteUntil: 60000, chat: 'hello from alpha', chatUntil: 60000 }
+        : id === 'c'
+          ? { room: `team:${id}`, rx: 4, ry: 4, facing: 'right' }
+          : null
+
+    return {
+      value: JSON.stringify({
+        v: 1,
+        sessionId: id,
+        startedAt: started[id],
+        heartbeatAt: 900,
+        share: named[id] === '' ? 'anon' : 'all',
+        team: { label: named[id], branch: '' },
+        agents: [{ id: 'main', label: named[id] === '' ? '' : 'main', tier: 'opus', role: 'lead', room: `team:${id}`, pose: 'type', status: 'working' }],
+        player,
+      }),
+    }
+  })
+  stubRenderer(on, 'ready\n')
+  await $.session.start({ cwd: '/work/proj', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
+  const wait = async (ms: number) => {
+    for (let left = ms; left > 0; left -= 1000) {
+      await clock.advance(Math.min(left, 1000))
+      await settle(5)
+    }
+  }
+  await wait(3000)
+  const scene = (): SceneModel => (JSON.parse(states.at(-1) ?? '{}') as { scene: SceneModel }).scene
+
+  return { ui, wait, scene, dead, states }
+}
+
+test('image scene: other sessions show as rooms in startedAt order with remote agents and players', async ($, on) => {
+  const { ui, scene } = await remoteImageSession($, on)
+  const rooms = scene().rooms.filter(r => r.kind === 'team')
+  expect(rooms.map(r => r.id)).toEqual(['team:t1', 'team:a', 'team:b', 'team:c'])
+  expect(rooms.map(r => r.name)).toEqual(['proj', 'alpha (main)', 'Session 3', 'Session 4'])
+  const remoteAgents = scene().figures.filter(f => f.remote && !f.player)
+  expect(remoteAgents.map(f => f.key).sort()).toEqual(['a:main', 'b:main', 'c:main'])
+  const guests = scene().figures.filter(f => f.remote && f.player).sort((x, y) => (x.key < y.key ? -1 : 1))
+  expect(guests.map(f => [f.key, f.plate])).toEqual([
+    ['player:a', 'alpha (main)'],
+    ['player:c', 'Session 4'],
+  ])
+  expect(guests[0]).toMatchObject({ emote: '♥', chat: 'hello from alpha' })
+  await ui.unmount()
+})
+
+test('image scene: a tombstoned session leaves the scene within 5 s', async ($, on) => {
+  const { ui, wait, scene, dead } = await remoteImageSession($, on)
+  expect(scene().rooms.some(r => r.id === 'team:b')).toBe(true)
+  dead.b = true
+  await wait(5000)
+  const rooms = scene().rooms.filter(r => r.kind === 'team')
+  expect(rooms.map(r => r.id)).toEqual(['team:t1', 'team:a', 'team:c'])
+  expect(scene().figures.some(f => f.key.startsWith('b:'))).toBe(false)
+  // The anonymous room after it is renumbered by room order.
+  expect(rooms.map(r => r.name)).toEqual(['proj', 'alpha (main)', 'Session 3'])
+  await ui.unmount()
+})
+
+// ---- Using the office with e (T31) -------------------------------------------------------------------------
+type Written = {
+  player?: { x: number; y: number; path: unknown[]; act?: { kind: 'mug' | 'sit'; until?: number }; chat?: string; chatUntil?: number }
+  cat?: { x: number; y: number }
+  hintLine?: string | null
+  catPetUntil?: number
+  motion?: Record<string, { x: number; y: number; path: Array<{ x: number; y: number }> }>
+  viewport?: { columns: number; rows: number }
+  team?: { id: `team:${string}`; label: string }
+  inspect?: { text: string } | null
+}
+
+// A text-scene session with the pane mounted. A test cannot write atoms, so `state.set` keeps the newest value of each
+// and rewrites the player's position while `pin` is set (any key that moves the player then makes the write). `opened`
+// records the pane opens as `id|title`.
+const useSession = async ($: Engine, on: On, mode: 'text' | 'image' = 'text') => {
+  const clock = mock.clock(on)
+  const opened: string[] = []
+  const states: string[] = []
+  const last: Written = {}
+  const pin: { at?: { x: number; y: number } } = {}
+  on('state.set', ($$, e, next) => {
+    // StateWrite types `value` as the union of every atom; each key is read as its own shape.
+    const value = e.value as never
+    if (e.key === 'player' && pin.at !== undefined && value !== null) {
+      const pinned = { ...(value as object), x: pin.at.x, y: pin.at.y, path: [] }
+      last.player = pinned as Written['player']
+
+      return next({ ...e, value: pinned as never })
+    }
+    if (e.key === 'player' || e.key === 'motion' || e.key === 'viewport' || e.key === 'team' || e.key === 'inspect' || e.key === 'hintLine' || e.key === 'catPetUntil' || e.key === 'cat') (last as Record<string, unknown>)[e.key] = value
+
+    return next(e)
+  })
+  stubSession(on)
+  on('store.get', (_$, e) => ({ value: e.key === 'scene' ? mode : undefined }))
+  on('fs.write', (_$, e) => {
+    if (e.path === `${STATE_DIR}/state.json`) states.push(e.text)
+
+    return { value: undefined }
+  })
+  const renderer = mode === 'image' ? stubRenderer(on, 'ready\n', false, 'run', true) : undefined
+  // Each pane open or close as `open <id>[ focus][ esc]` / `close <id>`.
+  const events: string[] = []
+  on('ui.open', (_$, e) => {
+    opened.push(`${e.id}|${e.title ?? ''}`)
+    events.push(`open ${e.id}${e.focus === true ? ' focus' : ''}${e.closeOnEscape === true ? ' esc' : ''}`)
+
+    return { value: { isPlaced: true } }
+  })
+  on('ui.close', (_$, e) => {
+    events.push(`close ${e.id}`)
+
+    return { value: undefined }
+  })
+  on('ui.blit', () => ({ value: {} }))
+  on('agent.list', () => ({ value: [{ id: 'main', status: 'running' }, { id: 'done1', status: 'completed' }] as never }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('session.messages', () => ({ value: { deny: 'no transcript' } }))
+  on('tool.call', () => ({ result: 'stub' }))
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(paneAt(mode === 'image' ? 23 + STRIP_ROWS : 23))
+  await clock.advance(TICK_MS * 4)
+  const mapOf = (): OfficeMap => {
+    const size = last.viewport
+    const own = last.team
+    const map = size === undefined ? undefined : mapFor(size.columns, size.rows, own === undefined ? [] : [{ id: own.id, label: own.label }])
+    if (map === undefined) throw new Error('no map')
+
+    return map
+  }
+  const items = (): Item[] => itemsOf(mapOf())
+  const press = async (key: string): Promise<void> => {
+    await pressKey($, key)
+    await clock.advance(TICK_MS * 2)
+  }
+  // Puts the player on the first standable cell that is `gap` cells from `rect` and farther than that from every `apart` item and at least 3 from every agent rectangle in `agents` (a `d` makes the write the pin rewrites;
+  // the step snaps a player off a cell it cannot stand on, so the cell must be a real one).
+  const stand = async (rect: Rect, gap: number, apart: Rect[] = [], agents: Rect[] = []): Promise<void> => {
+    const map = mapOf()
+    for (let y = rect.y - gap - map.foot.h; y <= rect.y + rect.h + gap; y++) {
+      for (let x = rect.x - gap - map.foot.w; x <= rect.x + rect.w + gap; x++) {
+        const body = { x, y, w: map.foot.w, h: map.foot.h }
+        if (!canStand(map, x, y) || rectGap(body, rect) !== gap || apart.some(other => rectGap(body, other) <= gap) || agents.some(other => rectGap(body, other) <= 2)) continue
+        pin.at = { x, y }
+        await press('d')
+
+        return
+      }
+    }
+    throw new Error('no standable cell at that gap')
+  }
+  // Puts the player on the first standable cell that is 2 or more cells from every item, the cat and each agent.
+  const standClear = async (): Promise<void> => {
+    const map = mapOf()
+    const bodies: Rect[] = [
+      ...items().map(i => i.rect),
+      ...(last.cat === undefined ? [] : [{ x: last.cat.x, y: last.cat.y, w: CAT_FOOT.w, h: CAT_FOOT.h }]),
+      ...Object.values(last.motion ?? {}).map(m => ({ x: m.x, y: m.y, w: 5, h: 5 })),
+    ]
+    for (let y = 0; y < map.rows; y++) {
+      for (let x = 0; x < map.columns; x++) {
+        const body = { x, y, w: map.foot.w, h: map.foot.h }
+        if (!canStand(map, x, y) || bodies.some(other => rectGap(body, other) <= 2)) continue
+        pin.at = { x, y }
+        // `a`, not `d`: the same key as the last press changes nothing, and the pin needs a write.
+        await press('a')
+
+        return
+      }
+    }
+    throw new Error('no cell clear of every target')
+  }
+  const peekTexts = async (): Promise<string[]> => {
+    const pane = await $.ui.mount({ ...paneAt(23), requestId: 'office-peek' })
+    const texts = (await pane.findAll({ type: 'Text' })).map(t => String(t.text))
+    await pane.unmount()
+
+    return texts
+  }
+
+  const scene = (): SceneModel => (JSON.parse(states.at(-1) ?? '{}') as { scene: SceneModel }).scene
+  const figure = (key: string): SceneFigure | undefined => scene().figures.find(f => f.key === key)
+
+  return { clock, ui, opened, events, last, items, press, stand, standClear, peekTexts, scene, figure, renderer }
+}
+
+test('e at the whiteboard lists a TodoWrite and the pane redraws after a second TodoWrite', async ($, on) => {
+  const run = await useSession($, on)
+  const board = run.items().find(i => i.kind === 'whiteboard')
+  if (board === undefined) throw new Error('no whiteboard')
+  await run.stand(board.rect, 1)
+  await $.tool.call({ tool: 'TodoWrite', todos: [{ content: 'write tests', status: 'in_progress', activeForm: 'Writing tests' }, { content: 'ship', status: 'pending', activeForm: 'Shipping' }] })
+  await run.press('e')
+
+  expect(run.opened.filter(o => o.startsWith('office-peek'))).toEqual(['office-peek|Whiteboard'])
+  const pane = await $.ui.mount({ ...paneAt(23), requestId: 'office-peek' })
+  const lines = async () => (await pane.findAll({ type: 'Text' })).map(t => String(t.text))
+  expect(await lines()).toEqual(['[>] write tests', '[ ] ship'])
+  await $.tool.call({ tool: 'TodoWrite', todos: [{ content: 'write tests', status: 'completed', activeForm: 'Writing tests' }, { content: 'ship', status: 'in_progress', activeForm: 'Shipping' }] })
+  await run.clock.advance(TICK_MS)
+  expect(await lines()).toEqual(['[x] write tests', '[>] ship'])
+  await pane.unmount()
+  await run.ui.unmount()
+})
+
+test('e at the whiteboard shows the peek tab with the keys, behind it the office pane waits as a tab (D31)', async ($, on) => {
+  const run = await useSession($, on)
+  const board = run.items().find(i => i.kind === 'whiteboard')
+  if (board === undefined) throw new Error('no whiteboard')
+  await run.stand(board.rect, 1)
+  run.events.length = 0
+  await run.press('e')
+
+  // The office pane is closed so the peek can take the keys, then comes back behind it as a tab.
+  expect(run.events).toEqual(['close office', 'open office-peek focus esc', 'open office'])
+
+  // The Escape half (the `ui.close` hook asking the pad's keys back) cannot run here: the test engine's `$.ui` has no close.
+  await run.ui.unmount()
+})
+
+test('e at the whiteboard in the image scene swaps the tabs without stopping the renderer (D31)', async ($, on) => {
+  const run = await useSession($, on, 'image')
+  const board = run.items().find(i => i.kind === 'whiteboard')
+  if (board === undefined) throw new Error('no whiteboard')
+  await run.stand(board.rect, 1)
+  await run.press('e')
+
+  expect(run.events).toContain('close office')
+  expect(run.renderer?.spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+  expect(run.renderer?.spawned.filter(argv => argv[0] === 'pkill')).toEqual([])
+  expect(run.renderer?.state.returned).toBe(false)
+  await run.ui.unmount()
+})
+
+test('e at the server rack shows own tools, the context percent and the running count', async ($, on) => {
+  const run = await useSession($, on)
+  const rack = run.items().find(i => i.kind === 'rack')
+  if (rack === undefined) throw new Error('no rack')
+  await run.stand(rack.rect, 1)
+  await $.tool.call({ tool: 'Read', file_path: 'x' })
+  await $.session.measure({ context: { window: 1000000, tokens: 70000, percent: 7 }, rateLimits: [], cost: { usd: 0.383951 }, changed: ['context', 'cost'] })
+  await run.press('e')
+
+  expect(run.opened.filter(o => o.startsWith('office-peek'))).toEqual(['office-peek|Server rack'])
+  expect(await run.peekTexts()).toEqual(['context: 7%', 'cost: $0.38', 'agents: 1 running, 0 idle', 'main: Read'])
+  await run.ui.unmount()
+})
+
+test('e at a desk peeks the agent heading for it', async ($, on) => {
+  const run = await useSession($, on)
+  // A new agent walks in from the door to the desk it will own: first along the corridor, then up and back along the desk row.
+  await $.agent.spawn(spawnArgs)
+  await run.clock.advance(TICK_MS)
+  const anchor = run.last.motion?.a1?.path.at(-1)
+  const desk = run.items().find(i => i.kind === 'desk' && i.anchor?.x === anchor?.x && i.anchor?.y === anchor?.y)
+  if (desk === undefined) throw new Error('a1 has no desk')
+  // Wait until a1 is far from its desk (it still owns it: the last tile of its path), then stand beside the desk alone.
+  await run.clock.advance(TICK_MS * 28)
+  const far = run.last.motion?.a1
+  if (far === undefined || rectGap({ x: far.x, y: far.y, w: 5, h: 5 }, desk.rect) < 10) throw new Error('a1 is not away from its desk')
+  await run.stand(desk.rect, 1, run.items().filter(i => i.id !== desk.id).map(i => i.rect), [{ x: far.x, y: far.y, w: 5, h: 5 }, { ...(run.last.motion?.main ?? { x: 0, y: 0 }), w: 5, h: 5 }])
+  await run.press('e')
+
+  expect(run.opened.filter(o => o.startsWith('office-peek'))).toEqual(['office-peek|Peek: general-purpose'])
+  await run.ui.unmount()
+})
+
+test('e next to an agent inspects it and opens no peek pane', async ($, on) => {
+  const run = await useSession($, on)
+  const at = run.last.motion?.main
+  if (at === undefined) throw new Error('main is not seated')
+  await run.stand({ x: at.x, y: at.y, w: 5, h: 5 }, 0)
+  await run.press('e')
+
+  expect(run.opened.filter(o => o.startsWith('office-peek'))).toEqual([])
+  expect(run.last.inspect?.text).toMatch(/^main \| /)
+  await run.ui.unmount()
+})
+
+const MODES = ['text', 'image'] as const
+
+// Stands beside `rect` with every `apart` rect farther away: one cell off if some cell allows that, else touching it.
+const standBeside = async (run: Awaited<ReturnType<typeof useSession>>, rect: Rect, apart: Rect[]): Promise<void> => {
+  try {
+    await run.stand(rect, 1, apart)
+  } catch {
+    await run.stand(rect, 0, apart)
+  }
+}
+
+const besideItem = async (run: Awaited<ReturnType<typeof useSession>>, kind: Item['kind']): Promise<void> => {
+  const all = run.items()
+  const item = all.find(i => i.kind === kind)
+  if (item === undefined) throw new Error(`no ${kind}`)
+  await standBeside(run, item.rect, all.filter(i => i !== item).map(i => i.rect))
+}
+
+for (const mode of MODES) {
+  test(`${mode} scene: e at the coffee machine holds a mug for 8 s`, async ($, on) => {
+    const run = await useSession($, on, mode)
+    await besideItem(run, 'coffee')
+    await run.press('e')
+
+    expect(run.last.player?.act?.kind).toBe('mug')
+    if (mode === 'image') {
+      expect(run.figure('player')?.holding).toBe('mug')
+      expect(run.last.inspect ?? undefined).toBeUndefined()
+    } else {
+      expect(run.last.inspect?.text).toBe('You hold a mug of coffee.')
+    }
+    await run.clock.advance(7500)
+    expect(run.last.player?.act?.kind).toBe('mug')
+    if (mode === 'image') expect(run.figure('player')?.holding).toBe('mug')
+    await run.clock.advance(800)
+    expect(run.last.player?.act).toBeUndefined()
+    if (mode === 'image') expect(run.figure('player')?.holding).toBeUndefined()
+    // Over for good: no later tick brings the mug back.
+    await run.clock.advance(1000)
+    expect(run.last.player?.act).toBeUndefined()
+    await run.ui.unmount()
+  })
+
+  test(`${mode} scene: e at the sofa sits and d stands`, async ($, on) => {
+    const run = await useSession($, on, mode)
+    await besideItem(run, 'sofa')
+    await run.press('e')
+
+    expect(run.last.player?.act).toEqual({ kind: 'sit' })
+    if (mode === 'image') expect(run.figure('player')?.pose).toBe('seated')
+    else expect(run.last.inspect?.text).toBe('You sit on the sofa.')
+    await run.clock.advance(3000)
+    expect(run.last.player?.act).toEqual({ kind: 'sit' })
+    await run.press('d')
+    expect(run.last.player?.act).toBeUndefined()
+    if (mode === 'image') expect(run.figure('player')?.pose).toBe('standing')
+    // A room jump stands the player up as well.
+    await run.press('e')
+    expect(run.last.player?.act).toEqual({ kind: 'sit' })
+    await run.press(']')
+    expect(run.last.player?.act).toBeUndefined()
+    await run.ui.unmount()
+  })
+
+  test(`${mode} scene: e at the water cooler chats one of the fixed lines for 5 s`, async ($, on) => {
+    const run = await useSession($, on, mode)
+    await besideItem(run, 'cooler')
+    await run.press('e')
+
+    const said = run.last.player?.chat
+    expect(COOLER_LINES as readonly (string | undefined)[]).toContain(said)
+    if (mode === 'image') expect(run.figure('player')?.chat).toBe(said)
+    await run.clock.advance(5500)
+    expect(run.last.player?.chat).toBeUndefined()
+    if (mode === 'image') expect(run.figure('player')?.chat).toBeUndefined()
+    await run.ui.unmount()
+  })
+
+  test(`${mode} scene: e beside the cat shows a heart on it for 3 s`, async ($, on) => {
+    const run = await useSession($, on, mode)
+    const kitty = run.last.cat
+    if (kitty === undefined) throw new Error('no cat')
+    // The cat wins a tie with an item, so touching it is enough; an agent would win the tie, so none is near.
+    await run.stand({ x: kitty.x, y: kitty.y, w: CAT_FOOT.w, h: CAT_FOOT.h }, 0, [], Object.values(run.last.motion ?? {}).map(m => ({ x: m.x, y: m.y, w: 5, h: 5 })))
+    await run.press('e')
+
+    expect(run.last.catPetUntil ?? 0).toBeGreaterThan(0)
+    if (mode === 'image') expect(run.figure('cat')?.emote).toBe('♥')
+    else expect(run.last.inspect?.text).toBe('You pet the cat.')
+    await run.clock.advance(3500)
+    if (mode === 'image') expect(run.figure('cat')?.emote).toBeUndefined()
+    await run.ui.unmount()
+  })
+
+  test(`${mode} scene: the hint shows beside an item and is gone after walking away`, async ($, on) => {
+    const run = await useSession($, on, mode)
+    await besideItem(run, 'coffee')
+    await run.clock.advance(TICK_MS * 2)
+
+    expect(run.last.hintLine).toBe('e: coffee machine')
+    if (mode === 'image') expect(run.scene().caption).toBe('e: coffee machine')
+    await run.standClear()
+    await run.clock.advance(TICK_MS * 2)
+
+    expect(run.last.hintLine).toBeNull()
+    if (mode === 'image') expect(run.scene().caption).toBeUndefined()
+    await run.ui.unmount()
+  })
+}
+
+test('a subagent TodoWrite does not reach the whiteboard', async ($, on) => {
+  const run = await useSession($, on)
+  const board = run.items().find(i => i.kind === 'whiteboard')
+  if (board === undefined) throw new Error('no whiteboard')
+  await run.stand(board.rect, 1)
+  await $.tool.call({ tool: 'TodoWrite', agentId: 'a1', todos: [{ content: 'sub task', status: 'pending', activeForm: 'Sub task' }] } as never)
+  await run.press('e')
+
+  expect(await run.peekTexts()).toEqual(['No plan yet.'])
+  await run.ui.unmount()
 })

@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, ProcessSpawnResult, Register } from 'claude-code'
 import { activityFor } from './activity'
 import { expire, markTool, migrateRoster, onActivity, onSpawn, seedMain, syncList } from './agents'
 import type { Roster } from './agents'
@@ -10,15 +10,20 @@ import type { Cat } from './cat'
 import { cropFrame, focusOf, overlaySpan, viewFor } from './camera'
 import { buildFrame, hourOf, placeMotion } from './frame'
 import type { Bubble, Motion } from './frame'
+import { clampCells, newestFrame, parseLine, pixelsFor, seqFor, shouldWrite, splitLines, stateText, writeKeyOf } from './bridge'
+import type { WriteMark } from './bridge'
 import { arrived, clean, interrupted, interruptFailed, nudged, nudgeFailed, pushLog, reported, told } from './log'
 import { bodyRowsFor, INLINE_MAX_ROWS, mapFor, rasterSize } from './loop'
 import { canStand, MID_FOOT, MIN_COLUMNS, MIN_ROWS, roomAt } from './map'
 import type { Footprint, OfficeMap, RoomId, TeamSpec } from './map'
 import { assignTarget, enterAtDoor, step } from './motion'
 import { inspectText, lastTextOf, nearest, peekLines } from './inspect'
-import { chatLine, CONFIRM_OPTIONS, INITIAL_PAD, isYes, NUDGE_TEXT, onPadInput, onPadSubmit } from './pad'
+import { itemsOf } from './items'
+import { chatLine, claimPress, CONFIRM_OPTIONS, INITIAL_PAD, isYes, NUDGE_TEXT, onPadInput, onPadSubmit } from './pad'
 import {
+  asScene,
   asShare,
+  DEFAULT_SCENE,
   DEFAULT_SHARE,
   envValue,
   mergeRemote,
@@ -32,6 +37,7 @@ import {
   remoteRoster,
   remotePlayersOf,
   routeRemote,
+  SCENE_USAGE,
   SHARE_USAGE,
   signature,
   toPresencePlayer,
@@ -39,18 +45,26 @@ import {
   toTombstone,
   writeDue,
 } from './presence'
-import type { Parsed, Remote, ShareMode } from './presence'
+import type { Parsed, Remote, SceneMode, ShareMode } from './presence'
 import type { PadState } from './pad'
 import { padRectAt, settleChat, settleEmote, spawnPlayer, startJump, stepPlayer } from './player'
 import type { Player } from './player'
 import { packCells } from './raster'
+import { blitFailVerdict, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next as nextLife, paneCloseOf, probeRoundVerdict, sshReason } from './rendererLife'
+import type { Life, LifeEvent, Probe } from './rendererLife'
+import { sceneKey, sceneOf } from './scene'
+import type { SceneModel } from './scene'
 import { baseName, branchOf, teamLabel } from './team'
 import { hashKey } from './sprites'
-import { INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timing'
+import { boardLines, hintOf, MUG_MS, nodesOfTodos, outcomeOf, PET_MS, rackLines, settleAct, targetOf as useTargetOf } from './use'
+import type { BoardNode, Outcome } from './use'
+import { CHAT_MS, INSPECT_MS, LIST_MS, PAD_FOCUS_MS, PRESENCE_MS, TICK_MS } from './timing'
 
 const PANE = 'office'
 const PAD_KEY = 'pad-input'
 const PEEK_PANE = 'office-peek'
+// The Image's key inside the office pane (D6): the renderer's frames are blitted to it.
+const SCENE_KEY = 'scene'
 // Body rows the peek pane asks for: up to 10 message lines and a little room (D25).
 const PEEK_ROWS = 12
 const opened = atom({ plugin: 'agents-office', key: 'opened' } as const, false)
@@ -87,9 +101,28 @@ const cat = atom({ plugin: 'agents-office', key: 'cat' } as const, null as Cat |
 type Inspect = { agentId: string; text: string; until: number }
 const inspect = atom({ plugin: 'agents-office', key: 'inspect' } as const, null as Inspect | null)
 
-// The peek pane's content (D25): the nearest own agent's last text messages, or one `Nothing to show` line.
-type Peek = { agentId: string; label: string; lines: string[] }
+// The hint line (D30): what `e` would do for the nearest target, recomputed every tick; null when nothing is in reach.
+const hintLine = atom({ plugin: 'agents-office', key: 'hintLine' } as const, null as string | null)
+
+// When the heart over the cat stops (D29); an old time (or 0) once it is over. Local, never published.
+const catPetUntil = atom({ plugin: 'agents-office', key: 'catPetUntil' } as const, 0)
+
+// The peek pane's content (D25, D26): an own agent's last text messages (`agent`, from `E` or a desk), the plan (`board`,
+// drawn live from its source, so `lines` is only the first draw) or the server rack (`rack`); one `Nothing to show` line
+// when an agent has no text.
+type Peek = { source: 'agent' | 'board' | 'rack'; agentId?: string; label: string; lines: string[] }
 const peek = atom({ plugin: 'agents-office', key: 'peek' } as const, null as Peek | null)
+// True while `openPeek` closes and reopens the office pane to raise the peek tab, so the `ui.close` hook does not stop the renderer (D31).
+const peekSwap = atom({ plugin: 'agents-office', key: 'peekSwap' } as const, false)
+
+// The newest context fill and cost from `session.measure` (D28); a field is absent until the first response reports it.
+type Usage = { percent?: number; usd?: number }
+const usage = atom({ plugin: 'agents-office', key: 'usage' } as const, {} as Usage)
+
+// The plan as TodoWrite / TaskCreate / TaskUpdate left it (D27): the whiteboard falls back to it only when the todo-list
+// plugin's `plan` is undefined. `id` is the task id of a TaskCreate.
+type BoardItem = { id?: string; content: string; status: string }
+const board = atom({ plugin: 'agents-office', key: 'board' } as const, [] as BoardItem[])
 
 // The id of the main turn that is running (`turn.start`), null between turns; `x` aborts it after a Yes (D25).
 const turnRef = atom({ plugin: 'agents-office', key: 'turn' } as const, null as string | null)
@@ -104,6 +137,14 @@ const identity = atom({ plugin: 'agents-office', key: 'identity' } as const, nul
 
 // The share preference (D19), mirrored from `$.store` key `share`.
 const share = atom({ plugin: 'agents-office', key: 'share' } as const, DEFAULT_SHARE as ShareMode)
+
+// The scene preference and what the pane draws (D10), `want` mirrored from `$.store` key `scene`. `effective` is
+// decided by `effectiveScene`: `probe` while `auto` waits for the placeholder blit (D11), then `image` or `text`.
+type SceneState = { want: SceneMode; effective: 'probe' | 'image' | 'text'; reason?: string }
+const scene = atom({ plugin: 'agents-office', key: 'scene' } as const, { want: DEFAULT_SCENE, effective: 'text' } as SceneState)
+
+// The renderer child's life (D12), driven by the pure `rendererLife` machine.
+const renderer = atom({ plugin: 'agents-office', key: 'renderer' } as const, initialLife as Life)
 
 // The publisher's bookkeeping (D18): the record text last written (without its heartbeat), when, and whether
 // the tombstone is out. No file paths or other text live here.
@@ -277,6 +318,13 @@ const resolveIdentity = async ($: EngineInterface): Promise<void> => {
 const loadShare = async ($: EngineInterface): Promise<void> => {
   const stored = await $.store.get('share')
   await update($, share, () => asShare(stored))
+}
+
+// Loads the stored scene preference into the atom (D10). Nothing stored is `auto`: the render probes (D11).
+const loadScene = async ($: EngineInterface): Promise<void> => {
+  const want = asScene(await $.store.get('scene'))
+  const life = await read($, renderer)
+  await update($, scene, () => sceneFor(want, life))
 }
 
 // Writes the tombstone once (D18); a no-op without a presence file path or when it is already out.
@@ -536,8 +584,28 @@ const stepPlayerTick = async ($: EngineInterface, map: OfficeMap, now: number, p
     jumping === null
       ? { player: spawnPlayer(map, own.id, padCells), intent }
       : stepPlayer(jumping, map, intent, now, own.id, padCells)
-  const next = out.player === undefined ? undefined : settleChat(settleEmote(out.player, padNow.emote, now), padNow.chat, now)
-  if (next !== undefined && next !== current) await update($, player, () => next)
+  const settled = out.player === undefined ? undefined : settleChat(settleEmote(out.player, padNow.emote, now), padNow.chat, now)
+  // A key tap, a room jump or a step ends sitting (D29); the mug ends by the clock.
+  const moved =
+    (intent !== undefined && out.intent !== undefined && out.intent.taps < intent.taps) ||
+    padNow.jump !== undefined ||
+    (current !== null && settled !== undefined && (settled.x !== current.x || settled.y !== current.y))
+  let next = settled
+  if (settled !== undefined && (settled !== current || current?.act !== undefined)) {
+    const walked = settled
+    // The act and a chat line are taken from the atom's own current value, so one a hook wrote since the read above (an
+    // `e` press) is not dropped; only the tick's own changes (position, facing, emote, a typed chat) are applied.
+    await update($, player, cur => {
+      if (cur === null) return walked
+      const { act: _read, ...bare } = walked
+      const { chat: _text, chatUntil: _until, ...quiet } = bare
+      const kept = padNow.chat === undefined ? settleChat({ ...quiet, ...(cur.chat === undefined ? {} : { chat: cur.chat, ...(cur.chatUntil === undefined ? {} : { chatUntil: cur.chatUntil }) }) }, undefined, now) : bare
+      const result = settleAct({ ...kept, ...(cur.act === undefined ? {} : { act: cur.act }) }, now, moved)
+
+      return JSON.stringify(result) === JSON.stringify(cur) ? cur : result
+    })
+    next = (await read($, player)) ?? settled
+  }
   if (padNow.emote !== undefined && next !== undefined) {
     // Only the emote that was applied is cleared; a newer press stays for the next tick.
     const applied = padNow.emote
@@ -575,12 +643,27 @@ const INSPECT_PRESS_MS = 1000
 const inspectTick = async ($: EngineInterface, map: OfficeMap, now: number, at: Player | null | undefined): Promise<string | undefined> => {
   const padNow = await read($, pad)
   const pending = padNow.inspect
-  if (pending !== undefined && at !== null && at !== undefined) {
-    await update($, pad, cur => (cur.inspect?.at === pending.at ? { ...cur, inspect: undefined } : cur))
+  // A press whose nearest target (D24: nearest wins, agent > cat > item on a tie) is an item or the cat is `useTick`'s, so this
+  // tick leaves it pending; every other press is claimed here. An unclaimed press goes stale and is dropped below.
+  const roster = await read($, agents)
+  const moving = await read($, motion)
+  const reach =
+    pending === undefined || at === null || at === undefined
+      ? undefined
+      : useTargetOf({ player: at, foot: map.foot, agents: roster, motion: moving, items: itemsOf(map), cat: (await read($, cat)) ?? undefined })
+  const forUse = reach !== undefined && reach.kind !== 'agent' && pending !== undefined && now - pending.at <= INSPECT_PRESS_MS
+  if (pending !== undefined && at !== null && at !== undefined && !forUse) {
+    // One update claims the press, so `useTick` and this tick cannot both act on it.
+    let claimed = false
+    await update($, pad, cur => {
+      const claim = claimPress(cur, 'inspect', pending.at)
+      claimed = claim.claimed
+
+      return claim.next
+    })
     // A press that waited (no player or map yet) is stale, not a phantom inspect later.
-    if (now - pending.at > INSPECT_PRESS_MS) return undefined
-    const roster = await read($, agents)
-    const target = nearest(roster, await read($, motion), at, undefined, map.foot)
+    if (!claimed || now - pending.at > INSPECT_PRESS_MS) return undefined
+    const target = nearest(roster, moving, at, undefined, map.foot)
     let text = 'Nobody within 2 tiles.'
     if (target !== undefined) {
       let lastText: string | undefined
@@ -619,30 +702,201 @@ const catTick = async ($: EngineInterface, map: OfficeMap, now: number): Promise
 }
 
 // `E` (D25), called from the ui.input hook: finds the nearest agent within 2 tiles among this session's own roster (a remote agent is never in
-// it), writes the `peek` atom and opens `office-peek` without focus, so the pad keeps the keys. A messages deny or
+// it), writes the `peek` atom and shows `office-peek` (`openPeek`, D31). A messages deny or
 // throw, or no text, shows `Nothing to show for <label>.`. Nobody in range shows the inspect line instead.
 const peekTick = async ($: EngineInterface, now: number, at: Player | null | undefined, foot: Footprint): Promise<void> => {
   const pending = (await read($, pad)).peek
   if (pending === undefined || at === null || at === undefined) return
-  await update($, pad, cur => (cur.peek?.at === pending.at ? { ...cur, peek: undefined } : cur))
-  if (now - pending.at > INSPECT_PRESS_MS) return
+  let claimed = false
+  await update($, pad, cur => {
+    const claim = claimPress(cur, 'peek', pending.at)
+    claimed = claim.claimed
+
+    return claim.next
+  })
+  if (!claimed || now - pending.at > INSPECT_PRESS_MS) return
   const target = nearest(await read($, agents), await read($, motion), at, undefined, foot)
   if (target === undefined) {
     await update($, inspect, () => ({ agentId: '', text: 'Nobody within 2 tiles.', until: now + INSPECT_MS }))
     return
   }
-  const label = clean(target.label)
+  await openAgentPeek($, target.id, target.label)
+}
+
+// Writes the `peek` atom and shows `office-peek` (D31). The surface shows one pane at a time and refuses `focus` for a pane
+// opened while the pad Input holds the keys (T34 spike: `focus: true` left `office-peek` unshown and unfocused beside the
+// office). So the office pane is closed, the peek pane is opened with `focus` (granted: the prompt has the keys again),
+// and the office pane is opened again behind it as a tab, still in this asked context so it is placed at any width.
+// Escape (`closeOnEscape`) closes the peek; the `ui.close` hook then re-opens the office pane with the pad's focus.
+// Only called from the ui.input hook.
+// Forgets the last blit mark so the next frame is drawn again even when the scene is unchanged.
+const reframeRenderer = (): void => {
+  if (rendererLoop !== undefined) rendererLoop.mark = undefined
+}
+
+const openPeek = async ($: EngineInterface, shown: Peek, title: string): Promise<void> => {
+  await update($, peek, () => shown)
+  await update($, peekSwap, () => true)
+  let isPeekUp = false
+  try {
+    await $.ui.close({ id: PANE })
+    const opened = await $.ui.open({ id: PEEK_PANE, title, rows: PEEK_ROWS, focus: true, closeOnEscape: true })
+    isPeekUp = opened.isPlaced
+    if ('reason' in opened && opened.reason !== undefined) logOnce($, 'peek open', String(opened.reason))
+  } finally {
+    // The office always comes back; with the keys when the peek is not up (the press context is still asked).
+    try {
+      await $.ui.open({ id: PANE, title: 'Office', rows: INLINE_MAX_ROWS, columns: MIN_COLUMNS, ...(isPeekUp ? {} : { focus: true as const }) })
+      // The re-opened pane mounts a fresh Image, so the last blit mark no longer describes what is on screen.
+      reframeRenderer()
+    } finally {
+      await update($, peekSwap, () => false)
+    }
+  }
+}
+
+const openAgentPeek = async ($: EngineInterface, agentId: string, rawLabel: string): Promise<void> => {
+  const label = clean(rawLabel)
   let lines: string[] = []
   try {
-    const rows = target.id === 'main' ? await $.session.messages() : await $.session.messages({ agentId: target.id })
+    const rows = agentId === 'main' ? await $.session.messages() : await $.session.messages({ agentId })
     if (Array.isArray(rows)) lines = peekLines(rows)
   } catch (error) {
     $.ui.log(`agents-office: peek messages threw ${String(error)}`, { to: 'debug' })
   }
   if (lines.length === 0) lines = [`Nothing to show for ${label}.`]
-  await update($, peek, () => ({ agentId: target.id, label, lines }))
-  const opened = await $.ui.open({ id: PEEK_PANE, title: `Peek: ${label}`, rows: PEEK_ROWS })
-  if ('reason' in opened && opened.reason !== undefined) logOnce($, 'peek open', String(opened.reason))
+  await openPeek($, { source: 'agent', agentId, label, lines }, `Peek: ${label}`)
+}
+
+// Keeps the `board` mirror in step with a successful TodoWrite (the whole list, `newTodos` first), TaskCreate (one more
+// pending item, its id from the result) or TaskUpdate (a status change, `deleted` removes it).
+const mirrorBoard = async (
+  $: EngineInterface,
+  e: { tool: string; todos?: unknown; subject?: unknown; taskId?: unknown; status?: unknown },
+  output: unknown,
+): Promise<void> => {
+  if (e.tool === 'TodoWrite') {
+    // The tool result and input are typed per tool, which the generic hook input is not; these reads are checked at runtime.
+    const result = output as { newTodos?: BoardItem[] } | undefined
+    const source = Array.isArray(result?.newTodos) ? result.newTodos : Array.isArray(e.todos) ? (e.todos as BoardItem[]) : undefined
+    if (source === undefined) return
+    await update($, board, () => source.map(t => ({ content: String(t.content), status: String(t.status) })))
+  } else if (e.tool === 'TaskCreate') {
+    const id = (output as { task?: { id?: unknown } } | undefined)?.task?.id
+    if (typeof e.subject !== 'string') return
+    const item: BoardItem = { ...(typeof id === 'string' ? { id } : {}), content: e.subject, status: 'pending' }
+    await update($, board, cur => [...cur, item])
+  } else if (e.tool === 'TaskUpdate' && typeof e.taskId === 'string') {
+    const taskId = e.taskId
+    const status = typeof e.status === 'string' ? e.status : undefined
+    const subject = typeof e.subject === 'string' ? e.subject : undefined
+    await update($, board, cur =>
+      status === 'deleted'
+        ? cur.filter(t => t.id !== taskId)
+        : cur.map(t => (t.id === taskId ? { ...t, ...(status === undefined ? {} : { status }), ...(subject === undefined ? {} : { content: subject }) } : t)),
+    )
+  }
+}
+
+// The plan the whiteboard draws (D27): the todo-list plugin's `plan` nodes, or this plugin's own mirror when that read is
+// undefined (todo-list absent or no plan yet). Read live by the peek pane, so a change redraws it.
+const boardNodes = async ($: EngineInterface): Promise<BoardNode[]> => {
+  const plan = await read($, { plugin: 'todo-list', key: 'plan' } as const)
+  if (plan !== undefined) return plan.nodes.map(n => ({ id: n.id, parentId: n.parentId, title: n.title, status: n.status }))
+
+  return nodesOfTodos((await read($, board)).map(t => ({ content: t.content, status: t.status })))
+}
+
+// `e` on a desk, whiteboard or rack (D24, D26), called from the ui.input hook: a pending `pad.inspect` runs `targetOf`.
+// An agent target (and nothing in reach) is left for `inspectTick`, so the v2 inspect path is untouched; any other target
+// is consumed here. A coffee machine, sofa, water cooler or the cat are consumed without effect until their todo lands.
+const useTick = async ($: EngineInterface, now: number, at: Player | null | undefined): Promise<void> => {
+  const pending = (await read($, pad)).inspect
+  if (pending === undefined || at === null || at === undefined) return
+  const size = await read($, viewport)
+  const map = await mapAt($, size.columns, size.rows)
+  if (map === undefined) return
+  const roster = await read($, agents)
+  const moving = await read($, motion)
+  const target = useTargetOf({ player: at, foot: map.foot, agents: roster, motion: moving, items: itemsOf(map), cat: (await read($, cat)) ?? undefined })
+  if (target === undefined || target.kind === 'agent') return
+  const ownId = (await read($, team))?.id
+  if (ownId === undefined) return
+  // One update claims the press, so two hooks that saw it pending cannot both act on it.
+  let claimed = false
+  await update($, pad, cur => {
+    const claim = claimPress(cur, 'inspect', pending.at)
+    claimed = claim.claimed
+
+    return claim.next
+  })
+  if (!claimed || now - pending.at > INSPECT_PRESS_MS) return
+  const roomNames = Object.fromEntries(map.rooms.map(room => [room.id, room.name]))
+  const outcome: Outcome = outcomeOf(target, { ownId, roster, motion: moving, roomNames }, now, hashKey(ownId))
+  switch (outcome.kind) {
+    case 'peek':
+      await openAgentPeek($, outcome.agentId, outcome.label)
+      return
+    case 'board':
+      await openPeek($, { source: 'board', label: 'Whiteboard', lines: boardLines(await boardNodes($)) }, 'Whiteboard')
+      return
+    case 'rack': {
+      let list: Array<{ id: string; status: string }> = []
+      try {
+        list = (await $.agent.list()).map(a => ({ id: a.id, status: a.status }))
+      } catch (error) {
+        $.ui.log(`agents-office: agent list threw ${String(error)}`, { to: 'debug' })
+      }
+      await openPeek($, { source: 'rack', label: 'Server rack', lines: rackLines({ roster, agentList: list, usage: await read($, usage) }) }, 'Server rack')
+      return
+    }
+    case 'line':
+      await update($, inspect, () => ({ agentId: '', text: clean(outcome.text), until: now + INSPECT_MS }))
+      return
+    case 'act': {
+      const act = outcome.act
+      await update($, player, cur => (cur === null ? cur : { ...cur, act }))
+      await artLine($, now, act.kind === 'mug' ? ACT_LINES.mug : ACT_LINES.sit, act.kind === 'mug' ? MUG_MS : INSPECT_MS)
+      return
+    }
+    case 'say': {
+      const text = outcome.text
+      await update($, player, cur => (cur === null ? cur : { ...cur, chat: text, chatUntil: now + CHAT_MS }))
+      return
+    }
+    case 'pet':
+      await update($, catPetUntil, () => now + PET_MS)
+      await artLine($, now, ACT_LINES.pet, PET_MS)
+      return
+    case 'inspect':
+      return
+  }
+}
+
+// What the art-only outcomes say when the scene is not an image (the text office draws no mug, sofa pose or heart), as
+// the action line of the caption (D25, D30). In the image scene the drawing is the answer and no line is written.
+const ACT_LINES = { mug: 'You hold a mug of coffee.', sit: 'You sit on the sofa.', pet: 'You pet the cat.' } as const
+
+const artLine = async ($: EngineInterface, now: number, text: string, ms: number): Promise<void> => {
+  if ((await read($, scene)).effective === 'image') return
+  await update($, inspect, () => ({ agentId: '', text, until: now + ms }))
+}
+
+// The hint (D30): the nearest target's `e: ...` line, kept in the `hintLine` atom for the caption. Written only when it
+// changes, so a still player does not redraw the pane each tick.
+const hintTick = async (
+  $: EngineInterface,
+  map: OfficeMap,
+  at: Player | null,
+  roster: Roster,
+  moving: Motion,
+  kitty: Cat | null,
+): Promise<string | undefined> => {
+  const target = at === null ? undefined : useTargetOf({ player: at, foot: map.foot, agents: roster, motion: moving, items: itemsOf(map), cat: kitty ?? undefined })
+  const line = hintOf(target, roster)
+  if ((await read($, hintLine)) !== (line ?? null)) await update($, hintLine, () => line ?? null)
+
+  return line
 }
 
 // Asks `question` with No first; `act` runs only when the answer is exactly Yes. A dismissed dialog rejects and a
@@ -734,6 +988,533 @@ const confirmTick = async ($: EngineInterface, now: number, at: Player | null | 
   )
 }
 
+// ---- The renderer child (T12, D5, D6, D12) ---------------------------------------------------------
+type ChildStream = ReturnType<EngineInterface['process']['spawn']>
+
+// The running renderer's handle and the writer's bookkeeping, not drawn state (D12): one per session, like the
+// timer handles. `child` is the stream whose `return()` ends the node process; `stateDir` is the private dir this
+// loop made and removes; `seq` and `mark` pace the `state.json` writes (D7). `whenClosed` settles when a stop is
+// asked, so the read loop never waits on an idle child to notice it (a queued `return()` would wait too).
+type RendererLoop = {
+  closed: boolean
+  child?: ChildStream
+  stateDir?: string
+  seq: number
+  mark?: WriteMark
+  // The last scene written and its pixel box: below the minimum pane size only the heartbeat is rewritten, with this
+  // same seq, so the renderer stays alive and draws nothing (T19).
+  held?: { size: { w: number; h: number }; scene: SceneModel; seq: number }
+  // Set once the renderer printed `ready`; a scene write from then on is owed a `frame` line, and `pendingSince` is when
+  // the oldest unanswered one was written (E-08). `stalled` is set by the tick that found the page hung.
+  ready: boolean
+  pendingSince?: number
+  stalled: boolean
+  // The last `state.json` write: writes are chained so none starts after the dir is removed (E-12).
+  writing: Promise<undefined>
+  whenClosed: Promise<undefined>
+  close: () => void
+}
+let rendererLoop: RendererLoop | undefined
+
+const OUTPUT_TAIL = 4000
+const STATE_DIR_TEMPLATE = 'agents-office-state.XXXXXX'
+const STATE_DIR_MARK = 'agents-office-state.'
+const STATE_FILE = 'state.json'
+
+// One debug line per renderer event that ends or stops a loop, so a stop always has a reason in the log.
+const rendererLog = ($: EngineInterface, message: string): void => {
+  try {
+    $.ui.log(`agents-office: renderer ${message}`, { to: 'debug' })
+  } catch {
+    // Logging must never throw out of a hook.
+  }
+}
+
+// Ends the child: `$.ui.close` alone does not stop it, only `return()` on its stream does (D12). Safe to call twice.
+// `return()` is not awaited: behind a pending `next()` of an idle child it may not settle until the child writes, and
+// the loop must still reach its cleanup (the renderer's own watchdog ends a child that return() never reached).
+const endChild = ($: EngineInterface, loop: RendererLoop): void => {
+  const child = loop.child
+  if (child === undefined) return
+  loop.child = undefined
+  const ended: ProcessSpawnResult = { code: null, signal: null }
+  child.return(ended).catch(error => rendererLog($, `return threw ${String(error)}`))
+}
+
+// Asks the running loop to end (the pane closed, or the scene changed); the loop ends the child and logs its exit.
+const stopRenderer = ($: EngineInterface, why: string): void => {
+  const loop = rendererLoop
+  if (loop === undefined) return
+  rendererLog($, `stop requested by ${why}`)
+  loop.close()
+}
+
+// Ends the node process of this loop and its Chromium. `return()` on the stream is queued behind the pending `next()` of
+// an idle child, so it cannot be relied on (E-02); the renderer shuts its browser on SIGTERM, found by its own state path.
+const killRenderer = async ($: EngineInterface, dir: string): Promise<void> => {
+  const pattern = `--state=${dir}/${STATE_FILE}`.replace(/[^A-Za-z0-9_/=-]/g, ch => `\\${ch}`)
+  try {
+    await spawnOut($, ['pkill', '-TERM', '-f', '--', pattern])
+  } catch (error) {
+    rendererLog($, `kill threw ${String(error)}`)
+  }
+}
+
+// Runs a command by `$.process.spawn` until it ends and returns its stdout and exit code.
+const spawnOut = async ($: EngineInterface, argv: readonly string[]): Promise<{ stdout: string; code: number | null }> => {
+  let stdout = ''
+  const stream = $.process.spawn({ argv })
+  for (;;) {
+    const step = await stream.next()
+    if (step.done === true) return { stdout, code: step.value.code }
+    if (step.value.stream === 'stdout') stdout += step.value.text
+  }
+}
+
+// Feeds one event to the `renderer` atom and returns the life it produced.
+const lifeEvent = async ($: EngineInterface, event: LifeEvent): Promise<Life> => {
+  const now = await $.clock.now()
+  let after: Life = initialLife
+  await update($, renderer, cur => {
+    after = nextLife(cur, event, now)
+
+    return after
+  })
+
+  return after
+}
+
+// The scene state for a wish before any probe ran: `auto` waits at `probe`, `image` draws, `text` is v2.
+const sceneFor = (want: SceneMode, life: Life): SceneState => {
+  const { effective, reason } = effectiveScene(want, { kind: 'pending' }, life)
+
+  return { want, effective, ...(reason === undefined ? {} : { reason }) }
+}
+
+const REASON_MS = 8000
+
+// Says why the pane fell back to text, once: a log line, and the overlay line for 8 s (D17).
+const announceReason = async ($: EngineInterface, reason: string): Promise<void> => {
+  const now = await $.clock.now()
+  await pushLines($, [clean(reason)])
+  await update($, inspect, () => ({ agentId: '', text: clean(reason), until: now + REASON_MS }))
+}
+
+// Decides the scene again from a probe result and the renderer life. Only a pane still drawing a scene is touched, so
+// a stale probe or loop never undoes `/office scene text`. A switch to text with a reason announces it once.
+const settleScene = async ($: EngineInterface, probe: Probe): Promise<void> => {
+  const life = await read($, renderer)
+  let announce: string | undefined
+  let toText = false
+  await update($, scene, (cur): SceneState => {
+    // `update` may run this again after a lost race; only the last run decides whether to announce.
+    announce = undefined
+    toText = false
+    if (cur.effective === 'text') return cur
+    const { effective, reason } = effectiveScene(cur.want, probe, life)
+    if (effective === cur.effective && reason === cur.reason) return cur
+    if (effective === 'text') {
+      announce = reason
+      toText = true
+    }
+
+    return { want: cur.want, effective, ...(reason === undefined ? {} : { reason }) }
+  })
+  // The text office draws no scene, so a running renderer would only wait for a heartbeat that never comes (E-05).
+  if (toText) stopRenderer($, 'fall to text')
+  if (announce !== undefined) await announceReason($, announce)
+}
+
+// The fallback reason for a command reply: empty unless the text office is showing because the image scene was wanted.
+const reasonSuffix = async ($: EngineInterface): Promise<string> => {
+  const cur = await read($, scene)
+
+  return cur.want !== 'text' && cur.effective === 'text' && cur.reason !== undefined ? ` ${cur.reason}` : ''
+}
+
+// Switches the pane to the v2 text office after a failure (a failed life or a refused blit), with the reason.
+const fallToText = async ($: EngineInterface, probe: Probe): Promise<void> => settleScene($, probe)
+
+// The probe (D11): a blit of the placeholder as a file source onto the mounted `scene` Image. Accepted means the
+// terminal can draw pictures; any other deny (the alt case, a file it cannot read) means text, and nothing is spawned.
+// A deny that only says nothing is mounted yet, or a changed pane size, is tried again a few times. Runs in a timer
+// closure because a render cannot write state (D20); one at a time.
+const PROBE_TRIES = 5
+const PROBE_RETRY_MS = 200
+let probing = false
+
+const runProbe = async ($: EngineInterface): Promise<void> => {
+  const ssh = sshReason(await envOf($, 'SSH_CONNECTION'), await envOf($, 'SSH_TTY'))
+  if (ssh !== undefined) {
+    await settleScene($, { kind: 'denied', reason: ssh })
+    return
+  }
+  for (let attempt = 0; attempt < PROBE_TRIES; attempt++) {
+    if ((await read($, scene)).effective !== 'probe') return
+    const sized = await read($, viewport)
+    let deny: string | undefined
+    let threw = false
+    try {
+      const result = await $.ui.blit({
+        requestId: PANE,
+        key: SCENE_KEY,
+        source: { file: `${$.plugin.root}/renderer/placeholder.png`, format: 'png', generation: 0 },
+      })
+      deny = result.deny
+    } catch (error) {
+      // An exception is not a deny (D11): the engine may be closing, so it retries like "not mounted".
+      deny = String(error)
+      threw = true
+    }
+    if (deny === undefined) {
+      await settleScene($, { kind: 'ok' })
+      return
+    }
+    if (!threw && (await isFinalDeny($, deny, sized))) {
+      await settleScene($, { kind: 'denied', reason: deny })
+      return
+    }
+    // "No Image of its own is mounted" and a changed size are never a verdict: the scene stays at `probe`, and the
+    // next render probes again if the retries below ran out.
+    logOnce($, 'probe', `blit refused, trying again (${deny})`)
+    await new Promise<void>(resolve => {
+      $.clock.after(PROBE_RETRY_MS, () => resolve())
+    })
+  }
+}
+
+// When every try was refused as "not mounted" the scene stays at `probe`; a later round (1 s on, at most 5) tries again,
+// and when the last round is refused too the pane falls to the text office with a reason.
+const startProbe = ($: EngineInterface, delay: number, round: number): void => {
+  probing = true
+  $.clock.after(delay, () => {
+    runProbe($)
+      .catch(error => logOnce($, 'probe', `threw ${String(error)}`))
+      .then(async () => {
+        const cur = await read($, scene)
+        const verdict = probeRoundVerdict(cur.effective, round, (await read($, viewport)).columns > 0)
+        if (verdict === 'again') {
+          startProbe($, 1000, round + 1)
+          return undefined
+        }
+        probing = false
+        // Closed pane: no verdict; the scene stays at `probe` and the next render schedules the probe again.
+        if (verdict === 'stop') return undefined
+        // Every round was refused without a verdict: the text office with a reason, never a placeholder that stays (E-09).
+        return settleScene($, { kind: 'denied', reason: 'the terminal never accepted the picture probe.' })
+      })
+      .catch(() => {
+        probing = false
+      })
+  })
+}
+
+const scheduleProbe = ($: EngineInterface): void => {
+  if (probing) return
+  startProbe($, 0, 1)
+}
+
+// A scene change from the render itself (no Image element on this terminal): written in a timer closure (D20).
+const denyFromRender = ($: EngineInterface, reason: string): void => {
+  $.clock.after(0, () => {
+    settleScene($, { kind: 'denied', reason }).catch(error => logOnce($, 'scene', `settle threw ${String(error)}`))
+  })
+}
+
+// The same refusal handling as the v2 Raster blit: a changed viewport is a stale frame and a "mounted" deny means
+// nothing is drawn yet, so both only log and the next frame retries; the same size with any other deny is final.
+const isFinalDeny = async ($: EngineInterface, deny: string, size: { columns: number; rows: number }): Promise<boolean> => {
+  const latest = await read($, viewport)
+  const sameSize = latest.columns === size.columns && latest.rows === size.rows
+
+  return isFinalBlitDeny(false, deny, sameSize)
+}
+
+const REAP_MS = 5000
+
+// Waits (bounded) for a killed child's stream to end, so a new renderer never starts beside one still shutting down.
+const reapChild = async ($: EngineInterface, child: ChildStream, pulled: ReturnType<ChildStream['next']> | undefined): Promise<void> => {
+  let waiting = pulled
+  const drain = async (): Promise<void> => {
+    try {
+      for (;;) {
+        const step = await (waiting ?? child.next())
+        waiting = undefined
+        if (step.done === true) return
+      }
+    } catch {
+      // A stream that rejects has ended.
+    }
+  }
+  const timeout = new Promise<void>(resolve => {
+    $.clock.after(REAP_MS, () => resolve())
+  })
+  await Promise.race([drain(), timeout])
+}
+
+// One renderer from start to end: makes the private state dir, spawns node, turns its stdout into Image blits and
+// life events, and always ends the child and removes the dir it made. Leaving the read loop by any path runs `return()`
+// and logs why the loop ended.
+const runRenderer = async ($: EngineInterface, loop: RendererLoop): Promise<void> => {
+  const script = `${$.plugin.root}/renderer/render.mjs`
+  let stdout = ''
+  let stderr = ''
+  let denied: string | undefined
+  let outcome: LifeEvent = { kind: 'closed' }
+  let ending = 'ended'
+  let nodeAsked = false
+  let spawnedChild: ChildStream | undefined
+  let pulled: ReturnType<ChildStream['next']> | undefined
+  let childDone = false
+  let spawnedAt = 0
+  let blitFailures = 0
+  try {
+    const current = await read($, renderer)
+    if (current.status !== 'backoff') await lifeEvent($, { kind: 'closed' })
+    const started = await lifeEvent($, current.status === 'backoff' ? { kind: 'retry-due' } : { kind: 'want-start' })
+    if (started.status !== 'starting') {
+      ending = `not started (life ${started.status})`
+      return
+    }
+    const made = await spawnOut($, ['mktemp', '-d', '-t', STATE_DIR_TEMPLATE])
+    const dir = made.stdout.trim()
+    if (made.code !== 0 || !dir.startsWith('/')) throw new Error(`mktemp failed with code ${String(made.code)}`)
+    loop.stateDir = dir
+    // The renderer names its temp dir after the session; keep only characters safe in a path.
+    const session = (await $.session.id()).replace(/[^A-Za-z0-9-]/g, '')
+    if (loop.closed) {
+      ending = 'closed before spawn'
+      return
+    }
+    nodeAsked = true
+    const child = $.process.spawn({ argv: ['node', script, `--session=${session}`, `--state=${dir}/${STATE_FILE}`] })
+    spawnedChild = child
+    spawnedAt = await $.clock.now()
+    loop.child = child
+    if (loop.closed) {
+      ending = 'closed at spawn'
+      endChild($, loop)
+      return
+    }
+    let carry = ''
+    let rendererDir: string | undefined
+    for (;;) {
+      // A pull left pending by a stop stays in `pulled`, so the reap below can wait on it.
+      pulled = pulled ?? child.next()
+      const step = await Promise.race([pulled, loop.whenClosed])
+      if (step !== undefined) pulled = undefined
+      if (step === undefined || loop.closed) {
+        ending = 'closed while reading'
+        break
+      }
+      if (step.done === true) {
+        childDone = true
+        ending = `child ended (code ${String(step.value.code)}, signal ${String(step.value.signal)})`
+        outcome = { kind: 'exit', code: step.value.code, signal: step.value.signal, stderr, stdout }
+        break
+      }
+      const piece = step.value
+      if (piece.stream === 'stderr') {
+        stderr = (stderr + piece.text).slice(-OUTPUT_TAIL)
+        continue
+      }
+      stdout = (stdout + piece.text).slice(-OUTPUT_TAIL)
+      const split = splitLines(carry, piece.text)
+      carry = split.carry
+      const lines = split.lines.flatMap(text => {
+        const parsed = parseLine(text)
+
+        return parsed === undefined ? [] : [parsed]
+      })
+      for (const line of lines) {
+        if (line.kind === 'dir') {
+          rendererDir = line.path
+          logOnce($, 'renderer', `dir ${line.path}`)
+        } else if (line.kind === 'ready') {
+          await lifeEvent($, { kind: 'ready', ...(rendererDir === undefined ? {} : { dir: rendererDir }) })
+          rendererLog($, 'ready')
+          loop.ready = true
+          // A scene written before the renderer was up is owed its first frame from now on.
+          if (loop.held !== undefined) loop.pendingSince = await $.clock.now()
+        } else if (line.kind === 'frame') {
+          loop.pendingSince = undefined
+        }
+      }
+      // Only the newest frame of a piece is blitted; the older ones are already overwritten on disk (D6).
+      const latest = newestFrame(lines)
+      if (latest === undefined) continue
+      const sized = await read($, viewport)
+      let deny: string | undefined
+      let threw = false
+      try {
+        const result = await $.ui.blit({ requestId: PANE, key: SCENE_KEY, source: { file: latest.path, format: 'png', generation: latest.n } })
+        deny = result.deny
+      } catch (error) {
+        // A throw is not a deny (E-07): the engine may be closing or the pane remounting, so the next frame retries.
+        deny = String(error)
+        threw = true
+      }
+      if (deny === undefined) {
+        blitFailures = 0
+        continue
+      }
+      if (!threw && (await isFinalDeny($, deny, sized))) {
+        denied = deny
+        ending = `blit denied (${deny})`
+        break
+      }
+      blitFailures += 1
+      if (blitFailVerdict(blitFailures) === 'text') {
+        denied = `the terminal kept refusing the picture (${deny})`
+        ending = `blit failed ${blitFailures} times (${deny})`
+        break
+      }
+      logOnce($, 'renderer', `blit refused, retrying on the next frame (${deny})`)
+    }
+  } catch (error) {
+    ending = `threw ${String(error)}`
+    outcome = { kind: 'spawn-failed', error: String(error), noOutput: nodeAsked && stdout === '' }
+  } finally {
+    endChild($, loop)
+    const dir = loop.stateDir
+    loop.stateDir = undefined
+    const safeDir = dir !== undefined && dir.startsWith('/') && baseName(dir).startsWith(STATE_DIR_MARK)
+    // The process is ended by signal while it is alive (E-02), before the dir it reads goes away.
+    if (spawnedChild !== undefined && !childDone && dir !== undefined) await killRenderer($, dir)
+    // No write starts once `stateDir` is cleared; one already running finishes before the dir is removed (E-12).
+    await loop.writing
+    if (dir !== undefined && safeDir) {
+      await spawnOut($, ['rm', '-rf', '--', dir]).catch(error => rendererLog($, `cleanup threw ${String(error)}`))
+    }
+    if (spawnedChild !== undefined && !childDone) await reapChild($, spawnedChild, pulled)
+    rendererLog($, `loop ended: ${ending}`)
+  }
+  const ranMs = (await $.clock.now()) - spawnedAt
+  // An exit the plugin did not ask for is a crash. The renderer's own watchdog ends it with code 0 when no heartbeat arrived
+  // for 10 s; that exit counts toward MAX_EXITS like any other, only its reason is relabelled.
+  if (outcome.kind === 'exit' && isWatchdogExit(outcome.code, outcome.signal, ranMs, outcome.stderr)) {
+    outcome = { ...outcome, stderr: 'no heartbeat reached the renderer for 10 s' }
+  }
+  const life = await lifeEvent($, loop.stalled ? { kind: 'exit', code: 1, signal: null, stderr: 'the picture stopped updating', stdout: '' } : outcome)
+  // A loop stopped from outside is stale: the scene it served is already decided elsewhere, so it never falls to text.
+  // A stall stop is a failure of this renderer, so it goes through the life like a crash and counts toward MAX_EXITS.
+  if (loop.closed && !loop.stalled) return
+  if (denied !== undefined) await fallToText($, { kind: 'denied', reason: denied })
+  else if (life.status === 'failed') await fallToText($, { kind: 'ok' })
+}
+
+// Starts the one renderer of this session when none runs.
+const startRenderer = ($: EngineInterface): void => {
+  if (rendererLoop !== undefined) return
+  let settle: (value: undefined) => void = () => undefined
+  const whenClosed = new Promise<undefined>(resolve => {
+    settle = resolve
+  })
+  const loop: RendererLoop = {
+    closed: false,
+    ready: false,
+    stalled: false,
+    writing: Promise.resolve(undefined),
+    seq: 0,
+    whenClosed,
+    close: () => {
+      loop.closed = true
+      settle(undefined)
+    },
+  }
+  rendererLoop = loop
+  runRenderer($, loop)
+    .catch(error => logOnce($, 'renderer', `loop threw ${String(error)}`))
+    .finally(() => {
+      if (rendererLoop === loop) rendererLoop = undefined
+    })
+}
+
+// Starts the renderer when the image scene is wanted and the pane is drawn (the tick only gets here with a map).
+// A failed life shows the text office; a backoff waits for its retry time.
+const ensureRenderer = async ($: EngineInterface, now: number): Promise<void> => {
+  // One renderer per session (D12): a running loop is never doubled, and a tick that was in flight when
+  // session.end cancelled the timer must not start a new one.
+  if (rendererLoop !== undefined || loopTimer === undefined) return
+  const life = await read($, renderer)
+  if (life.status === 'failed') {
+    await fallToText($, { kind: 'ok' })
+    return
+  }
+  if (life.status === 'backoff' && (life.retryAt ?? 0) > now) return
+  // session.end may have run while the read above was pending.
+  if (rendererLoop !== undefined || loopTimer === undefined) return
+  startRenderer($)
+}
+
+// Writes `state.json` in order with every other write of this loop, and only while the loop still owns its dir: a write
+// that started after the dir was removed would recreate it with default permissions (E-12).
+const writeState = ($: EngineInterface, loop: RendererLoop, text: string): Promise<undefined> => {
+  const run = async (): Promise<undefined> => {
+    const dir = loop.stateDir
+    if (loop.closed || dir === undefined) return undefined
+    await $.fs.write(`${dir}/${STATE_FILE}`, text)
+
+    return undefined
+  }
+  const chained = loop.writing.then(run, run)
+  loop.writing = chained.catch(() => undefined)
+
+  return chained
+}
+
+// A scene the renderer never answered with a frame means a hung page: the loop is stopped and restarted through the life
+// like a crash, so a page that keeps hanging ends in the text office (E-08).
+const checkStall = ($: EngineInterface, loop: RendererLoop, now: number): boolean => {
+  if (loop.stalled || !isStalled(loop.pendingSince, now)) return loop.stalled
+  loop.stalled = true
+  rendererLog($, 'no frame for a written scene, restarting')
+  loop.close()
+
+  return true
+}
+
+// The image-mode half of the tick: builds the scene model and writes `state.json` when it changed or the heartbeat
+// is due (D7). The Raster blit is skipped.
+const imageTick = async (
+  $: EngineInterface,
+  input: Parameters<typeof sceneOf>[0],
+  size: { columns: number; rows: number },
+): Promise<void> => {
+  await ensureRenderer($, input.now)
+  const loop = rendererLoop
+  if (loop === undefined || loop.closed || loop.stateDir === undefined) return
+  if (checkStall($, loop, input.now)) return
+  const model = sceneOf(input)
+  const px = pixelsFor(size)
+  const key = writeKeyOf(px, sceneKey(model))
+  if (!shouldWrite(loop.mark, key, input.now)) return
+  const changed = loop.mark?.key !== key
+  loop.seq = seqFor(loop.mark, key, loop.seq)
+  loop.mark = { key, at: input.now }
+  loop.held = { size: px, scene: model, seq: loop.seq }
+  if (changed && loop.ready && loop.pendingSince === undefined) loop.pendingSince = input.now
+  try {
+    await writeState($, loop, stateText({ seq: loop.seq, heartbeatAt: input.now, size: px, scene: model }))
+  } catch (error) {
+    loop.mark = undefined
+    throw error
+  }
+}
+
+// A pane below the minimum size draws the size line and no Image, so no new scene is sent: the renderer gets no new
+// seq and writes no frame. The heartbeat is still rewritten (same seq) so the watchdog does not end the renderer (D7).
+const holdRenderer = async ($: EngineInterface, now: number): Promise<void> => {
+  const loop = rendererLoop
+  if (loop === undefined || loop.closed || loop.stateDir === undefined || loop.held === undefined) return
+  if (checkStall($, loop, now)) return
+  if (!shouldWrite(loop.mark, '', now)) return
+  // The empty key matches no scene, so the first write after the pane is big enough again is a new seq and a new
+  // frame (the Image remounts with the placeholder and needs one).
+  loop.mark = { key: '', at: now }
+  await writeState($, loop, stateText({ seq: loop.held.seq, heartbeatAt: now, size: loop.held.size, scene: loop.held.scene }))
+}
+
 const tick = async ($: EngineInterface): Promise<void> => {
   const now = await $.clock.now()
   await guard($, 'team', undefined, async () => ensureTeam($, undefined, false))
@@ -762,7 +1543,11 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const size = await read($, viewport)
   const map = await mapAt($, size.columns, size.rows)
   if (map === undefined) {
-    // No pane drawn: scripts cannot advance, but a shown bubble still expires.
+    // No pane drawn (or one below the minimum size): the image renderer only keeps its heartbeat (T19).
+    await guard($, 'hold', undefined, async () => holdRenderer($, now))
+    // Nothing is drawn, so no hint is shown either.
+    if ((await read($, hintLine)) !== null) await update($, hintLine, () => null)
+    // Scripts cannot advance, but a shown bubble still expires.
     await guard($, 'bubbles', undefined, async () => {
       if (expireBubbles(await read($, bubbles), now) === (await read($, bubbles))) return
       await update($, bubbles, cur => expireBubbles(cur, now))
@@ -787,10 +1572,50 @@ const tick = async ($: EngineInterface): Promise<void> => {
   const kitty = await guard($, 'cat', await read($, cat), async () => catTick($, map, now))
   const inspected = await guard($, 'inspect', undefined, async () => inspectTick($, map, now, walker))
   // The message being typed takes the inspect line (D47).
-  const shown = chatLine(await read($, pad)) ?? inspected
+  const hinted = await guard($, 'hint', undefined, async () => hintTick($, map, walker, after.agents, after.motion, kitty))
+  const shown = chatLine(await read($, pad)) ?? inspected ?? hinted
   const noStrip = (await read($, viewport)).strip === 0
   const ownId = (await read($, team))?.id ?? ''
   const focus = focusOf(map, walker, ownId)
+  const drawing = (await read($, scene)).effective
+  if (drawing === 'probe') {
+    // The render's Image is being probed: the Raster has no mounted key yet, so nothing is blitted.
+    lastFrameCells = null
+
+    return
+  }
+  if (drawing === 'image') {
+    // The image scene is fed to the renderer instead of the Raster; a later switch back to text blits afresh.
+    lastFrameCells = null
+    const typed = chatLine(await read($, pad))
+    await guard($, 'scene', undefined, async () =>
+      imageTick(
+        $,
+        {
+          map,
+          paneColumns: size.columns,
+          paneRows: size.rows,
+          player: walker,
+          ownId,
+          now,
+          agents: after.agents,
+          remoteAgents: await remoteAgentsOf($),
+          motion: after.motion,
+          bubbles: after.bubbles,
+          others: remotePlayersOf(await read($, remote), map),
+          cat: kitty,
+          inspect: await read($, inspect),
+          chatLine: typed,
+          act: walker?.act ?? null,
+          catPetUntil: await read($, catPetUntil),
+          hint: hinted,
+        },
+        size,
+      ),
+    )
+
+    return
+  }
   const span = overlaySpan(map, size.columns, size.rows, focus)
   const frame = buildFrame({
     map,
@@ -932,6 +1757,7 @@ export const register: Register = on => {
     await guard($, 'session.start branch', undefined, async () => labelTeam($, e.cwd))
     // The share mode loads before the dir resolves, so a publisher that waits for `dir` never sees the default.
     await guard($, 'session.start share', undefined, async () => loadShare($))
+    await guard($, 'session.start scene', undefined, async () => loadScene($))
     await guard($, 'session.start presence', undefined, async () => resolveIdentity($))
     await guard($, 'session.start presence cleanup', undefined, async () => cleanPresence($))
     await guard($, 'session.start presence timer', undefined, async () => {
@@ -952,6 +1778,10 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     presenceTimer?.cancel()
     presenceTimer = undefined
+    // The tick is the only thing that starts a renderer, so ending it first keeps the loop from coming back (D12).
+    loopTimer?.cancel()
+    loopTimer = undefined
+    stopRenderer($, 'session.end')
     await guard($, 'session.end', undefined, async () => writeTombstone($))
 
     return next(e)
@@ -990,6 +1820,20 @@ export const register: Register = on => {
       const current = await read($, motion)
       if (assignTarget(current, map, id, room) === current) return
       await update($, motion, cur => assignTarget(cur, map, id, room))
+    })
+    const result = await next(e)
+    // The whiteboard's own copy of the plan (D27), kept from a main-agent call that went through (a subagent's list is not the session's plan); the todo-list `plan` wins when set.
+    if (e.agentId === undefined && result.deny === undefined && result.isError !== true) await guard($, 'tool.call board', undefined, async () => mirrorBoard($, e, result.result))
+
+    return result
+  })
+
+  // The context fill and cost the server rack shows (D28). A field a measure leaves out keeps its last value, and stays absent until a first response reports it.
+  on('session.measure', async ($, e, next) => {
+    await guard($, 'session.measure', undefined, async () => {
+      const percent = e.context.percent
+      const usd = e.cost?.usd
+      await update($, usage, cur => (cur.percent === (percent ?? cur.percent) && cur.usd === (usd ?? cur.usd) ? cur : { percent: percent ?? cur.percent, usd: usd ?? cur.usd }))
     })
 
     return next(e)
@@ -1038,7 +1882,17 @@ export const register: Register = on => {
   // The pane closed (plugin, person or unload-with-hooks): stop blitting until a render.
   on('ui.close', async ($, e, next) => {
     const result = await next(e)
-    if (e.id === PANE) {
+    const closing = paneCloseOf({ id: e.id, origin: e.origin.kind }, { office: PANE, peek: PEEK_PANE }, await read($, peekSwap))
+    if (closing.reopenOffice) {
+      // Escape (or a closed tab) on the peek pane: the office pane waits behind it as a tab (D31), so ask the pad's keys
+      // back with a re-open. An office pane the person closed meanwhile stays closed.
+      await guard($, 'ui.close peek', undefined, async () => {
+        if ((await $.ui.panes()).some(pane => pane.id === PANE)) await openOffice($)
+      })
+    }
+    if (closing.stopRenderer) {
+      // Closing the pane does not stop the child: the loop must end and call `return()` on its stream (D12).
+      stopRenderer($, 'ui.close')
       await guard($, 'ui.close', undefined, async () => {
         await update($, viewport, () => ({ columns: 0, rows: 0 }))
       })
@@ -1050,22 +1904,31 @@ export const register: Register = on => {
   on('command.run', { command: 'office' }, async ($, e) =>
     guard($, 'command.run', { text: 'Office pane failed to open.' }, async () => {
       const parsed = parseOfficeArgs(e.args)
-      if (parsed.kind === 'usage') return { text: SHARE_USAGE }
+      if (parsed.kind === 'usage') return { text: parsed.topic === 'scene' ? SCENE_USAGE : SHARE_USAGE }
       if (parsed.kind === 'share') {
         await $.store.set('share', parsed.mode)
         await update($, share, () => parsed.mode)
 
         return { text: `Office sharing: ${parsed.mode}` }
       }
+      if (parsed.kind === 'scene') {
+        await $.store.set('scene', parsed.mode)
+        // A new request clears an earlier crash count, then `auto` probes again and `image` draws (D10).
+        const cleared = await update($, renderer, cur => (cur.status === 'failed' ? initialLife : cur))
+        await update($, scene, () => sceneFor(parsed.mode, cleared))
+        if (parsed.mode !== 'image') stopRenderer($, `/office scene ${parsed.mode}`)
+
+        return { text: `Office scene: ${parsed.mode}${await reasonSuffix($)}` }
+      }
       const wasOpened = await read($, opened)
       await openOffice($)
 
-      return { text: wasOpened ? 'Office pane reopened.' : 'Office pane opened.' }
+      return { text: `${wasOpened ? 'Office pane reopened.' : 'Office pane opened.'}${await reasonSuffix($)}` }
     }),
   )
 
   // Not a render, so it may write state (D20). Bursts are coalesced: onPadInput diffs the value.
-  on('ui.input', { element: PAD_KEY }, async ($, e, next) => {
+  on('ui.input', { element: PAD_KEY }, async ($, e) => {
     await guard($, 'ui.input', undefined, async () => {
       const now = await $.clock.now()
       if (e.kind === 'submit') await update($, pad, cur => onPadSubmit(cur, now))
@@ -1073,12 +1936,18 @@ export const register: Register = on => {
       // The peek pane opens here, not in the tick: an open the plugin makes on its own waits undrawn below 144
       // columns, while one answering a key press is placed at any width (d.ts PaneOpenArgs).
       if ((await read($, pad)).peek !== undefined) await peekTick($, now, await read($, player), await footOf($))
+      // `e` at a desk, whiteboard or rack opens the same pane, so it is answered here too (T31).
+      await useTick($, now, await read($, player))
     })
     await guard($, 'ui.input confirm', undefined, async () => {
       await confirmTick($, await $.clock.now(), await read($, player), await footOf($))
     })
 
-    return next(e)
+    // The hook answers the input itself instead of `next(e)`: the pad's own handlers do nothing, and core would look
+    // them up under the handle of the render the key was typed into. A render that replaced that tree (a remount,
+    // image <-> raster, a reload) has released the handle, and core then threw `no handler is held under handle N`,
+    // which reached the transcript (T22b). The answer has the shape core's would have.
+    return { element: e.element, value: e.value }
   })
 
   // The peek pane (D25): the lines the tick stored, one truncating Text each. Drawing writes nothing.
@@ -1093,7 +1962,8 @@ export const register: Register = on => {
       async () => {
         const { Box, Text } = $.ui.resolve(e)
         const shown = await read($, peek)
-        const lines = shown?.lines ?? ['Nothing to show.']
+        // The whiteboard is drawn from its source on every render, so a plan change redraws it (D27).
+        const lines = shown?.source === 'board' ? boardLines(await boardNodes($)) : (shown?.lines ?? ['Nothing to show.'])
 
         return (
           <Box flexDirection="column">
@@ -1138,7 +2008,8 @@ export const register: Register = on => {
           )
         }
 
-        const { Raster, Input } = $.ui.resolve(e)
+        const elements = $.ui.resolve(e)
+        const { Raster, Input, Image } = elements
         const bodyRows = bodyRowsFor(e.props.placement, e.props.scroll.bodyRows, e.viewport?.rows)
         const { columns, rows, strip: stripCount, foot } = rasterSize(e.props.bodyColumns, bodyRows)
         // Drawing is pure: a state write inside the hook is denied. A timer closure
@@ -1155,8 +2026,44 @@ export const register: Register = on => {
             </Box>
           )
         }
+        const shownScene = (await read($, scene)).effective
+        // `Image` in the table is not proof the terminal draws it (tmux has it): the probe blit is the signal (D11).
+        const hasImage = 'Image' in elements && Image !== undefined
+        if (shownScene !== 'text' && !hasImage) denyFromRender($, 'this surface has no Image element.')
+        if (shownScene === 'probe' && hasImage) scheduleProbe($)
+        if (shownScene !== 'text' && hasImage) {
+          // The image scene (T12, D18): the Image is mounted from the first render, with the placeholder until the
+          // first frame is blitted to its key; the pad Input sits over its bottom-left cell like over the Raster.
+          const drawn = await read($, scene)
+          const rowsOfLog = await read($, log)
+          const recent = stripCount > 0 ? rowsOfLog.slice(-stripCount) : []
+          const imageStrip = Array.from({ length: stripCount }, (_, i) => recent[i] ?? ' ')
+          const imagePad = await read($, pad)
+
+          return (
+            <Box flexDirection="column">
+              <Box>
+                <Image
+                  key={SCENE_KEY}
+                  source={{ file: `${$.plugin.root}/renderer/placeholder.png`, format: 'png', generation: 0 }}
+                  columns={clampCells(columns)}
+                  rows={clampCells(rows)}
+                  alt={`Agents Office image scene (mode: ${drawn.want})`}
+                />
+                <Box position="absolute" bottom={0} left={0} width={2}>
+                  <Input key={PAD_KEY} value={imagePad.clear} submitLabel="" onSubmit={() => undefined} />
+                </Box>
+              </Box>
+              {imageStrip.map((line, i) => (
+                <Text key={`log-${i}`} dimColor wrap="truncate-end">
+                  {line}
+                </Text>
+              ))}
+            </Box>
+          )
+        }
         const inspected = await read($, inspect)
-        const inspectLine = chatLine(await read($, pad)) ?? (inspected !== null && inspected.until > (await $.clock.now()) ? inspected.text : undefined)
+        const inspectLine = chatLine(await read($, pad)) ?? (inspected !== null && inspected.until > (await $.clock.now()) ? inspected.text : undefined) ?? (await read($, hintLine)) ?? undefined
         const drawnPlayer = await read($, player)
         const ownTeamId = (await read($, team))?.id ?? ''
         const focus = focusOf(map, drawnPlayer, ownTeamId)

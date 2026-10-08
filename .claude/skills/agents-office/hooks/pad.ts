@@ -203,3 +203,8 @@ export const chatLine = (state: PadState): string | undefined => {
 
   return `Say: ${chars.slice(0, CHAT_MAX).join('')}${chars.length > CHAT_MAX ? '|' : '_'}`
 }
+
+// Claims a pending press (`inspect` or `peek`) for the caller. `update` may run its change again after a lost race, so the
+// result is computed fresh on every run and the caller keeps only the last run's `claimed`.
+export const claimPress = (cur: PadState, key: 'inspect' | 'peek', at: number): { next: PadState; claimed: boolean } =>
+  cur[key]?.at === at ? { next: { ...cur, [key]: undefined }, claimed: true } : { next: cur, claimed: false }

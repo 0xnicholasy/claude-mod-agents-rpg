@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { OfficeAgent, Roster } from './agents'
-import { asShare, placeRemotePlayer, remotePlayersOf, toPresencePlayer, envValue, MAX_RECORD_BYTES, mergeRemote, parseOfficeArgs, parseRecord, planReads, presenceDir, presencePath, signature, toRecord, toTombstone, writeDue } from './presence'
+import { asScene, asShare, placeRemotePlayer, remotePlayersOf, toPresencePlayer, envValue, MAX_RECORD_BYTES, mergeRemote, parseOfficeArgs, parseRecord, planReads, presenceDir, presencePath, signature, toRecord, toTombstone, writeDue } from './presence'
 import { buildOffice, canStand as canStandAt, MID_FOOT } from './map'
 import type { OfficeMap } from './map'
 import type { Parsed, PresenceRecord } from './presence'
@@ -30,6 +30,21 @@ test('office arguments split into open, share and usage', () => {
   expect(parseOfficeArgs('share bogus')).toEqual({ kind: 'usage' })
   expect(parseOfficeArgs('share')).toEqual({ kind: 'usage' })
   expect(parseOfficeArgs('hello')).toEqual({ kind: 'usage' })
+})
+
+test('the scene mode falls back to text', () => {
+  expect(asScene('image')).toBe('image')
+  expect(asScene('bogus')).toBe('auto')
+  expect(asScene(undefined)).toBe('auto')
+})
+
+test('/office scene takes auto, image or text and anything else is the scene usage', () => {
+  expect(parseOfficeArgs('scene image')).toEqual({ kind: 'scene', mode: 'image' })
+  expect(parseOfficeArgs(' Scene AUTO ')).toEqual({ kind: 'scene', mode: 'auto' })
+  expect(parseOfficeArgs('scene text')).toEqual({ kind: 'scene', mode: 'text' })
+  expect(parseOfficeArgs('scene bogus')).toEqual({ kind: 'usage', topic: 'scene' })
+  expect(parseOfficeArgs('scene')).toEqual({ kind: 'usage', topic: 'scene' })
+  expect(parseOfficeArgs('scene image extra')).toEqual({ kind: 'usage', topic: 'scene' })
 })
 
 const agentAt = (id: string, over: Partial<OfficeAgent> = {}): OfficeAgent => ({
@@ -286,6 +301,15 @@ test('a published player carries only its documented keys and a forged expiry is
   expect(remotePlayersOf(forged, map)[0]).toMatchObject({ emoteUntil: 3020, chatUntil: 5020 })
   // A chat that has run out is not published, and the emote keeps its own expiry.
   expect(toPresencePlayer(map, { x: 20, y: 3, facing: 'up', emote: '!', emoteUntil: 2000, chat: 'hello', chatUntil: 1000 }, 1500)).toMatchObject({ emote: '!', emoteUntil: 2000 })
+})
+
+test('a player holding a mug or sitting publishes no new field (interactions D29)', () => {
+  const map = teamMap(80)
+  const holding = { x: 20, y: 3, facing: 'up' as const, frame: 0, path: [], act: { kind: 'mug' as const, until: 9000 } }
+  const sitting = { ...holding, act: { kind: 'sit' as const } }
+
+  expect(Object.keys(toPresencePlayer(map, holding, 0) ?? {}).sort()).toEqual(['facing', 'room', 'rx', 'ry'])
+  expect(toPresencePlayer(map, sitting, 0)).toEqual(toPresencePlayer(map, { x: 20, y: 3, facing: 'up' }, 0))
 })
 
 test('a remote player moves between figure sizes', () => {

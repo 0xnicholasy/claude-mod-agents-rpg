@@ -4,6 +4,7 @@ import type { OfficeMap, Point, Rect, Room } from './map'
 import { findPath } from './path'
 import type { Dir, Intent, PendingChat, PendingEmote } from './pad'
 import type { Facing } from './sprites'
+import type { Act } from './use'
 import { CHAT_MS, EMOTE_MS, INTENT_MS } from './timing'
 
 export type Player = {
@@ -21,9 +22,16 @@ export type Player = {
   emoteUntil?: number
   chat?: string
   chatUntil?: number
+  // A coffee mug in hand or sitting on the sofa (interactions D29); local, never published.
+  act?: Act
 }
 
 const FACING: Readonly<Record<Dir, Facing>> = { w: 'up', a: 'left', s: 'down', d: 'right' }
+// Tiles one consumed tap moves while the key is held: a tap that follows a step in the same direction within INTENT_MS
+// (key repeat) runs this many tiles, so a held key walks at twice the old 1 tile per 100 ms tick (T22). A first or
+// lone tap still moves one tile, so placing the player stays exact.
+export const RUN_TILES = 2
+
 const DELTA: Readonly<Record<Dir, Point>> = { w: { x: 0, y: -1 }, a: { x: -1, y: 0 }, s: { x: 0, y: 1 }, d: { x: 1, y: 0 } }
 
 // The two bottom-left columns of the last two map rows: the pad's Input draws its `…` and `⏎` there.
@@ -117,7 +125,15 @@ export const stepPlayer = (
   const facing = FACING[intent.key]
   if (!canStand(map, nx, ny)) return { player: { ...walker, facing }, intent: used }
 
-  return { player: { ...walker, x: nx, y: ny, facing, frame: (walker.frame + 1) % 4, movedAt: now }, intent: used }
+  // A repeat of the last step's direction runs one tile further when that tile is free too.
+  const running = walker.movedAt !== undefined && now - walker.movedAt <= INTENT_MS && walker.facing === facing
+  const further = running && canStand(map, nx + delta.x * (RUN_TILES - 1), ny + delta.y * (RUN_TILES - 1))
+  const tiles = further ? RUN_TILES : 1
+  const frame = (walker.frame + tiles) % 4
+  return {
+    player: { ...walker, x: walker.x + delta.x * tiles, y: walker.y + delta.y * tiles, facing, frame, movedAt: now },
+    intent: used,
+  }
 }
 
 // Advances a room-jump path by one tile; a step that cannot be stood on cancels the path.
