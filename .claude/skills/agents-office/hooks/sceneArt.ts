@@ -101,7 +101,7 @@ export type SpriteName = keyof typeof SPRITES
 
 export const SPRITE_NAMES = Object.keys(SPRITES) as readonly SpriteName[]
 
-// Terminal cell size in image pixels (v3 D8, from the spike's box.ts).
+// Terminal cell size in image pixels (v3 D8, measured in Ghostty).
 export const CELL_PX = { w: 8, h: 17 } as const
 
 // Seating offsets in px (v3 D21). A seated figure is the back view (`personN-up`) in the chair, in front of its desk,

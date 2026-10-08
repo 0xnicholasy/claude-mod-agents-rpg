@@ -67,6 +67,8 @@ The pane draws the text office by itself when the cases below happen. It shows t
 
 In `auto`, Chromium is never started before the test image is accepted.
 
+Troubleshooting: if `/office scene image` replies "the Image draws its alt here: the terminal draws no placeholder images" in a terminal that does draw images (for example Ghostty), the image probe (seen on Claude Code 2.1.293) can miss the terminal's answer. Start Claude with `CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1` (outside tmux and screen, which cannot draw the image).
+
 ## Controls
 
 These work once the pad has focus.

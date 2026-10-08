@@ -34,7 +34,7 @@ test('every person sprite variant and facing has a table entry', async () => {
   }
 })
 
-test('CELL_PX is the spike cell size', async () => {
+test('CELL_PX is the 8 x 17 terminal cell size', async () => {
   expect(CELL_PX).toEqual({ w: 8, h: 17 })
 })
 

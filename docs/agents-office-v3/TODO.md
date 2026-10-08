@@ -1,8 +1,8 @@
 # Agents Office v3: an image office drawn by headless Chromium
 
 ultraplan: agents-office-v3 | branch: feat/agents-office-v3 | base: feat/agents-office-v2 | tag: pre-agents-office-v3-feat-agents-office-v2 | created: 2026-10-07
-Status: ACTIVE
-Progress: 36/37 done
+Status: COMPLETE 2026-10-08, kept as backlog
+Progress: 37/37 done
 
 ## Goal
 Replace the terminal-cell office scene with an HTML/CSS/JS scene that headless Chromium (playwright) renders into PNG frames, shown in the pane by the terminal `Image` element through `$.ui.blit({ requestId, key, source: { file, format: 'png', generation } })`.
@@ -12,7 +12,7 @@ Where the terminal cannot draw images, or node/Chromium is missing or crashes, t
 ## Constraints
 - Base `feat/agents-office-v2`. Each todo gets a branch `feat/agents-office-v3-<id>` from `origin/feat/agents-office-v3` and a PR into it. One landing PR into `feat/agents-office-v2` at the end, merged by the owner (D1).
 - Claude Code 2.1.289. The API authority is `vendor/claude-code/claude-code.d.ts`, which is never edited; grep it, never read it whole (20k lines). Line numbers in this file cite it.
-- The proven spike and the generated art live in `docs/agents-office-v3/spike/` (`imgspike/` plugin: `hooks/html.tsx`, `hooks/box.ts`, `renderer/render.mjs`, `renderer/office.html`, `renderer/placeholder.png`; `v3-assets/`: `sprites/` (82 PNGs + `atlas.json`), raw sheets, `slice.mjs`, `lib.mjs`). This file calls that folder `SPIKE`. It is reference material; todos copy from it, never import from it. TZZ deletes it.
+- The proven spike and the generated art live in `docs/agents-office-v3/spike/` (`imgspike/` plugin: `hooks/html.tsx`, `hooks/box.ts`, `renderer/render.mjs`, `renderer/office.html`, `renderer/placeholder.png`; `v3-assets/`: `sprites/` (82 PNGs + `atlas.json`), raw sheets, `slice.mjs`, `lib.mjs`). This file calls that folder `SPIKE`. It is reference material; todos copy from it, never import from it. TZZ deleted it (2026-10-08); it stays in the git history before the TZZ PR.
 - npm, TypeScript strict. No emoji in code (write symbols such as U+2665 as `♥` escapes). No `any`/`unknown` without a comment that justifies it. Never use `// eslint-disable`.
 - State lives in `$.state` atoms, declared inline under `'agents-office'` in `types/index.d.ts` (validate refuses aliases). Module variables hold only timer handles, log de-dup caches and, from T12, the renderer child's stream handle (D12).
 - All `$` code stays in `register.tsx`. Every other module under `hooks/` is pure, with a `*.test.ts` beside it importing from `'claude-code/testing'`. A render cannot write state; it writes through `$.clock.after(0)` (v2 D20).
@@ -89,7 +89,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: the pgrep lines and parse-failure count pasted into the Log; the stub recipe passes in a scratch `claude plugin test`
 
 ### T02 Spike detection, the Input over an Image, and height-only resize
-- status: done (#87, 2026-10-07; owner verified in Ghostty 2026-10-07: pad Input over the Image does not break the picture (D18 confirmed), Image-in-elements=true, height-only resize re-renders (D23); Terminal.app probe not run: owner-skipped, the README already says Terminal.app is expected to fall back)
+- status: done (#87, 2026-10-07; owner verified in Ghostty 2026-10-07: pad Input over the Image does not break the picture (D18 confirmed), Image-in-elements=true, height-only resize re-renders (D23); owner re-checked the whole image office in Ghostty 2026-10-08 (T34 and TZZ): it works with `CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1` set, because Claude Code 2.1.293's image probe can miss Ghostty's answer; Terminal.app probe not run: owner-skipped, the README already says Terminal.app is expected to fall back)
 - needs: none
 - size: S
 - scope: With the scratch plugin, record:
@@ -572,7 +572,7 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 - verify: `rtk proxy npm run check`; LIVE text
 
 ### TZZ Cleanup and land
-- status: todo
+- status: done (#PRNUM, 2026-10-08)
 - needs: every other todo
 - scope: run `/implement cleanup`; also delete `docs/agents-office-v3/spike/`
 - done when: skill removed from the branch, spike folder removed, TODO.md archived, landing PR into feat/agents-office-v2 open and approved by the owner
@@ -624,3 +624,4 @@ Before the changes (same driver; load rose from 3.5 to 7.9 during the first rows
 2026-10-08 T32 #94 `e` outcomes wired in `useTick`: coffee writes `player.act` mug (MUG_MS 8 s), sofa `act` sit, cooler writes the player's own chat (a COOLER_LINES entry, CHAT_MS) and the cat sets the new `catPetUntil` atom (PET_MS 3 s); the tick (`stepPlayerTick`) settles the act from the atom's own current value (a hook's write between its read and write is kept) and clears sit on a tapped key, a room jump or a changed tile; `hintTick` writes the new `hintLine` atom each tick (only on change) from `targetOf` + `hintOf`, read by `sceneOf` (`act`, `catPetUntil`, `hint`), the text overlay and the strip's last row. In the text scene the mug, sit and heart (art-only) are an action line `You hold a mug of coffee.` / `You sit on the sofa.` / `You pet the cat.` in the `inspect` atom; the image scene writes none. Presence keeps its field pick (a test proves a player with `act` publishes only room, rx, ry, facing). The player atom type gained `act`, `emoteUntil`, `chatUntil`. Office tests run in both modes (`useSession` takes a mode); the 25-row strip test and two image caption tests now expect the hint. LIVE (tmux -L aot32, text scene): `e: desk` at spawn, `e: inspect main`, `e: water cooler` after `]`, `e: pet the cat` after `[`, then `e` gave `You pet the cat.`.
 2026-10-08 T33 #95 README gains "Things to use" (the `e` rules: nearest wins, agent > cat > item ties, table order then lower x; each prop's effect; the whiteboard source, the rack as a snapshot of the own session; the hint and caption order; text-mode limits) and the `e` row of Controls points to it. This breaks "README only in T21", as T33 allowed. LIVE text scene: coffee gave `You hold a mug of coffee.`, the cooler showed the bubble `The cooler gurgles.`, the cat gave `You pet the cat.`; whiteboard, rack and sofa were not reached by hand (covered by the office tests).
 2026-10-08 T34 #96 D31: `e` and `Shift+E` now switch to the peek tab and `Esc` returns to the Office with the pad focus. Spike (quoted in D31): `focus: true` from the ui.input hook was refused (`office-peek` shown false, focused false); closing the office first made it shown and focused; a re-open of the office from the ui.close hook waits undrawn below 110 columns, so the office is re-opened right after the peek in the asked press context. Office test `e at the whiteboard shows the peek tab with the keys...` (and the updated peek test) fail without the change (revert check: 2 failed, 445 passed) and pass with it (447 pass). The ui.close hook cannot be raised by the test engine (no `$.ui.close`), so the Escape half is proven LIVE only. LIVE (tmux -L aot34, text scene, 120x40): `e: whiteboard` hint, `e` showed `Whiteboard Office` / `No plan yet.`, `Esc` showed the office again, `d` x4 moved the character 4 columns with the prompt empty; also at 80x24.
+2026-10-08 TZZ #PRNUM `.claude/skills/implement` and `docs/agents-office-v3/spike/` removed, TODO.md kept as the backlog record, README troubleshooting line for `CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1`, `.claude/skills/agents-office/tsconfig.json` (written by `claude plugin test`) in .gitignore, stale spike comments reworded. Owner confirmed in Ghostty 2026-10-08: the image office is back with `CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1` (Claude Code 2.1.293's image probe can miss Ghostty's answer), walk, interactions work, `e` switches to the peek tab and `Esc` returns with images. Landing PR feat/agents-office-v3 into feat/agents-office-v2 opened for the owner to merge.
