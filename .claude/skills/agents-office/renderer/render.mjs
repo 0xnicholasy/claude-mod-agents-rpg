@@ -1,8 +1,8 @@
 // Usage: node render.mjs [width] [height] [--seconds=N] [--state=<path>] [--session=<id>] [--once]
 // Protocol (D6): stdout lines `dir`, `ready`, `frame`, `fps`, `error <code> <text>`.
 // Watchdog (D7): private 0700 temp dir with a `pid` file, sweep of dead sibling dirs, exit on a stale
-// heartbeat (> 10 s) or a changed parent pid, cleanup on SIGTERM/SIGINT.
-import { mkdtempSync, writeSync, chmodSync, rmSync, writeFileSync, renameSync, readFileSync, readdirSync } from 'node:fs'
+// heartbeat (> 10 s) or a changed parent pid, cleanup on SIGTERM/SIGINT/SIGHUP.
+import { mkdtempSync, writeSync, chmodSync, rmSync, writeFileSync, renameSync, readFileSync, readdirSync, lstatSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -26,18 +26,47 @@ const FAST_PX = 1_000_000 // viewports above this use CDP optimizeForSpeed (T18)
 const STALE_MS = 10_000
 const WATCHDOG_MS = 1000
 const PREFIX = 'agents-office-'
+const STATE_PREFIX = 'agents-office-state.'
 
 // Frames go only into a private per-run dir (0700), removed on exit.
 const outDir = mkdtempSync(join(tmpdir(), `${PREFIX}${session}-`))
 chmodSync(outDir, 0o700)
 writeFileSync(join(outDir, 'pid'), String(process.pid))
 process.stdout.write(`dir ${outDir}\n`)
-process.on('exit', () => rmSync(outDir, { recursive: true, force: true }))
-// The plugin's private state dir is removed here too, in case the plugin cannot (only a dir it made: `mktemp` names).
-const stateDir = dirname(statePath)
-if (basename(stateDir).startsWith('agents-office-state.')) process.on('exit', () => rmSync(stateDir, { recursive: true, force: true }))
 
-// Remove sibling dirs whose pid file names a dead process. A dir without a readable pid file is left alone.
+// A directory is removable only when it is a real directory (not a symlink), owned by this uid, and mode 0700.
+const ownedPrivateDir = dir => {
+  try {
+    const st = lstatSync(dir)
+    return st.isDirectory() && !st.isSymbolicLink() && st.uid === process.getuid() && (st.mode & 0o777) === 0o700
+  } catch {
+    return false
+  }
+}
+// The state dir comes from the --state flag: remove it only if it is a direct child of the temp dir with the
+// renderer's own state-dir prefix and passes the same ownership checks. Never remove any other path.
+const stateDir = dirname(statePath)
+let ownedStateDir = false
+try {
+  ownedStateDir =
+    basename(stateDir).startsWith(STATE_PREFIX) &&
+    realpathSync(dirname(stateDir)) === realpathSync(tmpdir()) &&
+    ownedPrivateDir(stateDir)
+} catch {
+  ownedStateDir = false
+}
+if (ownedStateDir) {
+  try {
+    writeFileSync(join(stateDir, 'pid'), String(process.pid)) // marker so the sweep can reclaim it if we are killed
+  } catch {
+    // a missing marker only means the sweep will not reclaim this dir
+  }
+}
+process.on('exit', () => {
+  rmSync(outDir, { recursive: true, force: true })
+  if (ownedStateDir) rmSync(stateDir, { recursive: true, force: true })
+})
+
 const alive = pid => {
   try {
     process.kill(pid, 0)
@@ -56,16 +85,29 @@ const sweep = () => {
   for (const name of names) {
     if (!name.startsWith(PREFIX)) continue
     const dir = join(tmpdir(), name)
-    if (dir === outDir) continue
+    if (dir === outDir || dir === stateDir) continue
     try {
-      const pid = Number(readFileSync(join(dir, 'pid'), 'utf8').trim())
+      if (!ownedPrivateDir(dir)) continue
+      const marker = join(dir, 'pid')
+      if (!lstatSync(marker).isFile()) continue
+      const pid = Number(readFileSync(marker, 'utf8').trim())
       if (Number.isInteger(pid) && pid > 0 && !alive(pid)) rmSync(dir, { recursive: true, force: true })
     } catch {
-      // no pid file or unreadable: not ours to remove
+      // not ours or already gone: leave it
     }
   }
 }
 sweep()
+
+let browser
+let closing = false
+const shutdown = async code => {
+  closing = true
+  if (browser) await Promise.race([browser.close().catch(() => {}), new Promise(res => setTimeout(res, 3000))])
+  process.exit(code)
+}
+// Installed before Playwright loads so a hangup at any point still runs the exit cleanup.
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => void shutdown(0))
 
 const fail = (code, err) => {
   const text = (err instanceof Error ? err.message : String(err)).split('\n')[0]
@@ -77,9 +119,9 @@ let chromium
 try {
   ;({ chromium } = await import('playwright'))
 } catch (err) {
-  fail('no-playwright', err)
+  const missing = (err?.code === 'ERR_MODULE_NOT_FOUND' || err?.code === 'MODULE_NOT_FOUND') && /['"]playwright['"]/.test(String(err.message))
+  fail(missing ? 'no-playwright' : 'playwright-import', err)
 }
-let browser
 try {
   // Our handlers own the signals: Playwright's SIGINT handler would exit 130 on its own.
   browser = await chromium.launch({ handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false })
@@ -87,15 +129,6 @@ try {
   // Playwright words a missing browser as "Executable doesn't exist at <path>" (measured on 1.x, T11).
   fail(/executable doesn't exist/i.test(String(err)) ? 'no-chromium' : 'launch', err)
 }
-let closing = false
-const shutdown = async code => {
-  closing = true
-  // A hung Chromium must not keep the renderer alive: give close() 3 s, then exit anyway.
-  await Promise.race([browser.close().catch(() => {}), new Promise(res => setTimeout(res, 3000))])
-  process.exit(code)
-}
-process.on('SIGTERM', () => shutdown(0))
-process.on('SIGINT', () => shutdown(0))
 browser.on('disconnected', () => {
   if (!closing) fail('page', new Error('browser disconnected'))
 })

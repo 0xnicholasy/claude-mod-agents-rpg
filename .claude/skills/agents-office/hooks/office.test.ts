@@ -1782,23 +1782,46 @@ const STATE_DIR = '/tmp/agents-office-state.t1'
 // Stubs the renderer's three spawns by argv: `mktemp` (the state dir), `node` (render.mjs, which prints `lines` and
 // then stays alive, setting `returned` once its stream is closed) and `rm` (the cleanup). Records every argv.
 // `idle` makes the child print `lines` once and then write nothing, like a renderer showing a static scene.
-const stubRenderer = (on: On, lines: string, idle = false, ending: 'run' | 'exit' | 'throw' = 'run'): { spawned: string[][]; state: { returned: boolean } } => {
+// A `pkill` spawn ends the node stub like SIGTERM does (`killed`); `finish()` ends it with code 0 like the renderer's watchdog.
+const stubRenderer = (
+  on: On,
+  lines: string,
+  idle = false,
+  ending: 'run' | 'exit' | 'throw' = 'run',
+  frames = false,
+): { spawned: string[][]; state: { returned: boolean; killed: boolean }; finish: () => void } => {
   const spawned: string[][] = []
-  const state = { returned: false }
+  const state = { returned: false, killed: false }
+  let finishing = false
+  let frameNo = 1
+  let release: (() => void) | undefined
   on('process.spawn', async function* (_$, e) {
     spawned.push([...e.argv])
     if (e.argv[0] === 'mktemp') {
       yield { stream: 'stdout' as const, text: `${STATE_DIR}\n` }
+    } else if (e.argv[0] === 'pkill') {
+      state.killed = true
+      release?.()
     } else if (e.argv[0] === 'node') {
       try {
         if (ending === 'throw') throw new Error('spawn node ENOENT')
         yield { stream: 'stdout' as const, text: lines }
         if (ending === 'exit') return { value: { code: 1, signal: null } }
-        if (idle) await new Promise<void>(() => undefined)
-        for (;;) {
-          await new Promise<void>(resolve => setTimeout(() => resolve(), 20))
-          yield { stream: 'stdout' as const, text: 'fps 1\n' }
+        if (idle) {
+          await new Promise<void>(resolve => (release = resolve))
+        } else {
+          while (!state.killed && !finishing) {
+            await new Promise<void>(resolve => setTimeout(() => resolve(), 20))
+            if (!state.killed && !finishing) yield { stream: 'stdout' as const, text: frames ? `frame ${(frameNo += 1)} /x/frame-${frameNo % 2}.png\n` : 'fps 1\n' }
+          }
         }
+        if (finishing && !state.killed) {
+          finishing = false
+
+          return { value: { code: 0, signal: null } }
+        }
+
+        return { value: { code: null, signal: 'SIGTERM' } }
       } finally {
         state.returned = true
       }
@@ -1807,7 +1830,14 @@ const stubRenderer = (on: On, lines: string, idle = false, ending: 'run' | 'exit
     return { value: { code: 0, signal: null } }
   })
 
-  return { spawned, state }
+  return {
+    spawned,
+    state,
+    finish: () => {
+      finishing = true
+      release?.()
+    },
+  }
 }
 
 // The tsconfig carries no DOM or node types, but the test runtime has the timer (the stub streams wait on real time).
@@ -1818,7 +1848,7 @@ const settle = (ms = 80): Promise<void> => new Promise(resolve => setTimeout(() 
 type SceneBlit = { key: string; file?: string; format?: string; generation?: number }
 
 // A session over a drawn pane with the image scene wanted: the tick starts the renderer once the pane has a map.
-const imageSession = async ($: Engine, on: On, lines: string, opts: { deny?: string; idle?: boolean } = {}) => {
+const imageSession = async ($: Engine, on: On, lines: string, opts: { deny?: string; idle?: boolean; throws?: boolean; frames?: boolean } = {}) => {
   const clock = mock.clock(on)
   const blits: SceneBlit[] = []
   const writes: Array<{ path: string; text: string }> = []
@@ -1828,6 +1858,7 @@ const imageSession = async ($: Engine, on: On, lines: string, opts: { deny?: str
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.blit', (_$, e) => {
     blits.push('source' in e && 'file' in e.source ? { key: e.key, file: e.source.file, format: e.source.format, generation: e.source.generation } : { key: e.key })
+    if (opts.throws === true) throw new Error('engine closing')
 
     return { value: opts.deny === undefined ? {} : { deny: opts.deny } }
   })
@@ -1836,7 +1867,7 @@ const imageSession = async ($: Engine, on: On, lines: string, opts: { deny?: str
 
     return { value: undefined }
   })
-  const renderer = stubRenderer(on, lines, opts.idle === true)
+  const renderer = stubRenderer(on, lines, opts.idle === true, 'run', opts.frames === true)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run(runOffice('scene image'))
   const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
@@ -2036,6 +2067,61 @@ test('a stop ends a renderer that is writing nothing', async ($, on) => {
   await ui.unmount()
 })
 
+test('a stop signals the renderer process by its state path and waits for its stream to end', async ($, on) => {
+  const { ui, spawned, state } = await imageSession($, on, 'ready\n', { idle: true })
+  expect(state.killed).toBe(false)
+
+  await $.command.run(runOffice('scene text'))
+  await settle(200)
+
+  expect(spawned.filter(argv => argv[0] === 'pkill')).toEqual([['pkill', '-TERM', '-f', '--', `--state=${STATE_DIR.replace('.', '\\.')}/state\\.json`]])
+  expect(state.killed).toBe(true)
+  expect(state.returned).toBe(true)
+  await ui.unmount()
+})
+
+test('a blit that throws keeps the renderer and the image scene', async ($, on) => {
+  const { ui, spawned, state } = await imageSession($, on, 'ready\nframe 1 /x/frame-0.png\n', { throws: true })
+  await settle(200)
+
+  expect(state.returned).toBe(false)
+  expect(spawned.filter(argv => argv[0] === 'rm')).toEqual([])
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a scene that gets no frame for 15 s restarts the renderer', async ($, on) => {
+  const { ui, clock, spawned, state } = await imageSession($, on, 'ready\n', { idle: true })
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+
+  for (let i = 0; i < 200; i++) {
+    await clock.advance(TICK_MS)
+    await settle(3)
+  }
+
+  expect(state.killed).toBe(true)
+  expect(spawned.filter(argv => argv[0] === 'node').length).toBeGreaterThan(1)
+  await ui.unmount()
+})
+
+test('a clean exit after the heartbeat window is a restart, not a crash', async ($, on) => {
+  const { ui, clock, spawned, finish } = await imageSession($, on, 'ready\nframe 1 /x/frame-0.png\n', { frames: true })
+  for (let i = 0; i < 100; i++) {
+    await clock.advance(TICK_MS)
+    await settle(2)
+  }
+  finish()
+  await settle(100)
+  for (let i = 0; i < 30; i++) {
+    await clock.advance(TICK_MS)
+    await settle(10)
+  }
+
+  expect(spawned.filter(argv => argv[0] === 'node')).toHaveLength(2)
+  expect(await ui.find({ type: 'Image', key: 'scene' })).toBeDefined()
+  await ui.unmount()
+})
+
 test('with the text scene the v2 Raster frame is blitted and nothing is spawned', async ($, on) => {
   const clock = mock.clock(on)
   const keys: string[] = []
@@ -2146,6 +2232,19 @@ test('a not-mounted deny retries and is never the verdict', async ($, on) => {
   await ui.unmount()
 })
 
+test('probe rounds that all run out give the text office with a reason', async ($, on) => {
+  const { ui, clock, logs, spawned } = await autoSession($, on, () => 'no Image of its own is mounted under key "scene" in office')
+  for (let i = 0; i < 140; i++) {
+    await clock.advance(TICK_MS)
+    await settle(3)
+  }
+
+  expect(spawned.filter(argv => argv[0] === 'node')).toEqual([])
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  expect((logs[logs.length - 1] ?? []).some(line => line.includes('never accepted the picture probe'))).toBe(true)
+  await ui.unmount()
+})
+
 test('a stored text scene never probes or spawns', async ($, on) => {
   const { ui, probes, spawned } = await autoSession($, on, () => undefined, { stored: 'text' })
 
@@ -2240,7 +2339,7 @@ const padSession = async ($: Engine, on: On, answer = 'Yes') => {
   })
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: 'done' }))
-  stubRenderer(on, 'ready\n')
+  stubRenderer(on, 'ready\n', false, 'run', true)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run(runOffice('scene image'))
   const ui = await $.ui.mount(paneAt(23 + STRIP_ROWS))
@@ -2520,7 +2619,7 @@ const useSession = async ($: Engine, on: On, mode: 'text' | 'image' = 'text') =>
 
     return { value: undefined }
   })
-  if (mode === 'image') stubRenderer(on, 'ready\n')
+  const renderer = mode === 'image' ? stubRenderer(on, 'ready\n', false, 'run', true) : undefined
   // Each pane open or close as `open <id>[ focus][ esc]` / `close <id>`.
   const events: string[] = []
   on('ui.open', (_$, e) => {
@@ -2604,7 +2703,7 @@ const useSession = async ($: Engine, on: On, mode: 'text' | 'image' = 'text') =>
   const scene = (): SceneModel => (JSON.parse(states.at(-1) ?? '{}') as { scene: SceneModel }).scene
   const figure = (key: string): SceneFigure | undefined => scene().figures.find(f => f.key === key)
 
-  return { clock, ui, opened, events, last, items, press, stand, standClear, peekTexts, scene, figure }
+  return { clock, ui, opened, events, last, items, press, stand, standClear, peekTexts, scene, figure, renderer }
 }
 
 test('e at the whiteboard lists a TodoWrite and the pane redraws after a second TodoWrite', async ($, on) => {
@@ -2638,6 +2737,20 @@ test('e at the whiteboard shows the peek tab with the keys, behind it the office
   expect(run.events).toEqual(['close office', 'open office-peek focus esc', 'open office'])
 
   // The Escape half (the `ui.close` hook asking the pad's keys back) cannot run here: the test engine's `$.ui` has no close.
+  await run.ui.unmount()
+})
+
+test('e at the whiteboard in the image scene swaps the tabs without stopping the renderer (D31)', async ($, on) => {
+  const run = await useSession($, on, 'image')
+  const board = run.items().find(i => i.kind === 'whiteboard')
+  if (board === undefined) throw new Error('no whiteboard')
+  await run.stand(board.rect, 1)
+  await run.press('e')
+
+  expect(run.events).toContain('close office')
+  expect(run.renderer?.spawned.filter(argv => argv[0] === 'node')).toHaveLength(1)
+  expect(run.renderer?.spawned.filter(argv => argv[0] === 'pkill')).toEqual([])
+  expect(run.renderer?.state.returned).toBe(false)
   await run.ui.unmount()
 })
 

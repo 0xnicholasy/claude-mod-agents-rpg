@@ -84,6 +84,7 @@ declare module 'claude-code' {
       hintLine: string | null
       catPetUntil: number
       peek: { source: 'agent' | 'board' | 'rack'; agentId?: string; label: string; lines: string[] } | null
+      peekSwap: boolean
       usage: { percent?: number; usd?: number }
       board: Array<{ id?: string; content: string; status: string }>
       turn: string | null

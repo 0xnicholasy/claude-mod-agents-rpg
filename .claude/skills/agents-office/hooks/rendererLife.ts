@@ -125,3 +125,30 @@ export const effectiveScene = (want: 'auto' | 'image' | 'text', probe: Probe, li
 
   return { effective: 'probe' }
 }
+
+// A scene written to the renderer that no `frame` line answers within this long means a hung page (E-08).
+export const STALL_MS = 15_000
+
+export const isStalled = (pendingSince: number | undefined, now: number): boolean => pendingSince !== undefined && now - pendingSince > STALL_MS
+
+// The renderer ends itself with code 0 when no fresh heartbeat reached it for 10 s; such an exit after that long a run is
+// the watchdog, not a crash. A fast clean exit still counts as a crash, so a renderer that dies at once cannot restart in a storm.
+export const WATCHDOG_EXIT_MIN_MS = 9000
+
+export const isWatchdogExit = (code: number | null, signal: string | null, ranMs: number, stderr: string): boolean =>
+  code === 0 && signal === null && ranMs >= WATCHDOG_EXIT_MIN_MS && stderr.trim() === ''
+
+// A blit refusal is final only when the host answered it (a throw is the engine closing or a race), the pane size is the
+// size the frame was made for, and the text does not say nothing is mounted yet (E-07).
+export const isFinalBlitDeny = (threw: boolean, deny: string, sameSize: boolean): boolean => !threw && sameSize && !/mounted/i.test(deny)
+
+// What a closed pane asks of the plugin: the person closing the peek tab brings the office back with the pad's keys; the
+// office pane closing stops the renderer, except when the plugin closed it itself to raise the peek tab (D31, E-04).
+export const paneCloseOf = (
+  closed: { id: string; origin: string },
+  ids: { office: string; peek: string },
+  swapping: boolean,
+): { reopenOffice: boolean; stopRenderer: boolean } => ({
+  reopenOffice: closed.id === ids.peek && closed.origin === 'person',
+  stopRenderer: closed.id === ids.office && !swapping,
+})

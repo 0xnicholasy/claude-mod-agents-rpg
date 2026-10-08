@@ -3,7 +3,7 @@
 // Then cases a-c (D13, D7) and --once: frame pacing, stale heartbeat, missing Chromium.
 // Runs locally only: it needs Chromium (`npx playwright install chromium`).
 import { spawn, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, copyFileSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -196,6 +196,87 @@ if (exitCode === 0) {
       check(code === 0 && frameCount(r) === 1 && dir !== undefined && !existsSync(dir), `once: exit ${code}, ${frameCount(r)} frames`)
       check(swept && kept, `sweep: dead dir swept ${swept}, live dir kept ${kept}`)
       console.log('pass once: 1 frame, exit 0, dir gone; sweep removed the dead dir and kept the live one')
+    }
+    {
+      // Live updates: a new seq renders, a size change resizes, a torn write is survived.
+      const statePath = join(scratch, 'live.json')
+      const base = JSON.parse(readFileSync(fixture, 'utf8'))
+      const write = (patch, raw) =>
+        writeFileSync(statePath, raw ?? JSON.stringify({ ...base, heartbeatAt: Date.now(), ...patch }))
+      write({ seq: 1 })
+      const r = launch([...sizeArgs, `--state=${statePath}`])
+      check(await r.waitFor(l => l.startsWith('frame '), 20_000), 'live: no first frame')
+      const next = async (what, from) => {
+        check(await r.waitFor(l => l.startsWith('frame ') && frameCount(r) > from, 15_000), `live: no frame after ${what}`)
+        return r.lines.filter(l => l.startsWith('frame ')).at(-1).split(' ').slice(2).join(' ')
+      }
+      let n = frameCount(r)
+      write({ seq: 2 })
+      await next('a new seq', n)
+      n = frameCount(r)
+      write({ seq: 3, size: { w: size.w + 40, h: size.h + 20 } })
+      const png = readFileSync(await next('a size change', n))
+      check(
+        png.readUInt32BE(16) === size.w + 40 && png.readUInt32BE(20) === size.h + 20,
+        `live: resized frame is ${png.readUInt32BE(16)}x${png.readUInt32BE(20)}, want ${size.w + 40}x${size.h + 20}`,
+      )
+      n = frameCount(r)
+      write({}, '{"v":1,"seq":4,"heart')
+      await sleep(1500)
+      check(r.proc.exitCode === null && frameCount(r) === n, 'live: torn write crashed the renderer or made a frame')
+      check(!r.lines.some(l => l.startsWith('error ')), 'live: torn write produced an error line')
+      write({ seq: 4 })
+      await next('a valid write after a torn one', n)
+      const dir = r.dirOf()
+      await killAfter(r)
+      check(dir !== undefined && !existsSync(dir), 'live: dir still exists after SIGTERM')
+      console.log('pass live: new seq, resize, torn write survived, dir gone after SIGTERM')
+    }
+    {
+      // Orphan watchdog: kill the parent, the renderer must exit and remove its dir.
+      const out = join(scratch, 'orphan.out')
+      const fd = openSync(out, 'w')
+      const stateFile = fixtureWith('orphan.json', Date.now() + 60_000)
+      const parent = spawn(
+        'node',
+        ['-e', "const{spawn}=require('node:child_process');const c=spawn('node',process.argv.slice(1),{stdio:['ignore',+process.env.OUT_FD,'inherit']});console.log(c.pid);setInterval(()=>{},1000)", renderer, ...sizeArgs, `--state=${stateFile}`],
+        { stdio: ['ignore', 'pipe', 'inherit', fd], env: { ...process.env, OUT_FD: '3' } },
+      )
+      closeSync(fd)
+      let pid
+      parent.stdout.once('data', d => {
+        pid = Number(String(d).trim())
+      })
+      const lineOf = word => readFileSync(out, 'utf8').split('\n').find(l => l.startsWith(word))
+      const until = async (pred, ms) => {
+        const end = Date.now() + ms
+        while (Date.now() < end) {
+          if (pred()) return true
+          await sleep(100)
+        }
+        return false
+      }
+      try {
+        check(await until(() => lineOf('ready ') !== undefined || lineOf('ready') !== undefined, 20_000), 'orphan: renderer never became ready')
+        check(Number.isInteger(pid), 'orphan: no renderer pid')
+        const dir = lineOf('dir ').slice(4)
+        parent.kill('SIGKILL')
+        const alive = () => {
+          try {
+            process.kill(pid, 0)
+            return true
+          } catch {
+            return false
+          }
+        }
+        const gone = await until(() => !alive(), 15_000)
+        if (!gone) process.kill(pid, 'SIGKILL')
+        check(gone, 'orphan: renderer still running 15 s after its parent died')
+        check(!existsSync(dir), 'orphan: dir still exists after the renderer exited')
+        console.log('pass orphan: renderer exited and cleaned up after its parent was killed')
+      } finally {
+        if (parent.exitCode === null && parent.signalCode === null) parent.kill('SIGKILL')
+      }
     }
   } catch (err) {
     console.error(`smoke failed: ${err instanceof Error ? err.message : String(err)}`)

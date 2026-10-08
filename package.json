@@ -7,9 +7,10 @@
     "test": "claude plugin test .claude/skills/agents-office",
     "install:user": "sh scripts/install-user.sh",
     "uninstall:user": "sh scripts/uninstall-user.sh",
-    "check": "npm run validate && npm run typecheck && npm run test",
+    "check": "npm run validate && npm run typecheck && npm run sprites:verify && npm run test",
     "sprites": "node scripts/sprites/slice.mjs",
     "sprites:check": "node scripts/sprites/check-table.mjs",
+    "sprites:verify": "npm run sprites:check && node scripts/sprites/write-table.mjs --check",
     "sprites:table": "node scripts/sprites/write-table.mjs",
     "smoke:renderer": "node scripts/smoke-renderer.mjs"
   },

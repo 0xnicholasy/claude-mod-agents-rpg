@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { classify, effectiveScene, initialLife, next } from './rendererLife'
+import { classify, effectiveScene, initialLife, isFinalBlitDeny, isStalled, isWatchdogExit, next, paneCloseOf, STALL_MS } from './rendererLife'
 import type { Life, LifeEvent, Probe } from './rendererLife'
 
 const crash: LifeEvent = { kind: 'exit', code: 1, signal: null, stderr: 'boom' }
@@ -133,4 +133,32 @@ test('a spawn that fails before node printed anything is no-node, a later one is
   expect(quiet.reason).toContain('Node.js was not found')
   const loud = run([...start(0).slice(0, 1), [{ kind: 'spawn-failed', error: 'hooks stream chain failed' }, 10]])
   expect(loud.status).toBe('backoff')
+})
+
+test('a stall needs a pending scene older than STALL_MS', () => {
+  expect(isStalled(undefined, 1e9)).toBe(false)
+  expect(isStalled(1000, 1000 + STALL_MS)).toBe(false)
+  expect(isStalled(1000, 1001 + STALL_MS)).toBe(true)
+})
+
+test('a clean exit after the heartbeat window is the watchdog, a fast or noisy one is a crash', () => {
+  expect(isWatchdogExit(0, null, 10_500, '')).toBe(true)
+  expect(isWatchdogExit(0, null, 500, '')).toBe(false)
+  expect(isWatchdogExit(1, null, 10_500, '')).toBe(false)
+  expect(isWatchdogExit(0, null, 10_500, 'boom')).toBe(false)
+})
+
+test('a thrown or not-mounted or resized blit deny is not final', () => {
+  expect(isFinalBlitDeny(false, 'the Image draws its alt here', true)).toBe(true)
+  expect(isFinalBlitDeny(true, 'engine closing', true)).toBe(false)
+  expect(isFinalBlitDeny(false, 'no Image is mounted', true)).toBe(false)
+  expect(isFinalBlitDeny(false, 'the Image draws its alt here', false)).toBe(false)
+})
+
+test('closing the office pane stops the renderer unless the plugin is swapping to the peek tab', () => {
+  const ids = { office: 'office', peek: 'office-peek' }
+  expect(paneCloseOf({ id: 'office', origin: 'person' }, ids, false)).toEqual({ reopenOffice: false, stopRenderer: true })
+  expect(paneCloseOf({ id: 'office', origin: 'plugin' }, ids, true)).toEqual({ reopenOffice: false, stopRenderer: false })
+  expect(paneCloseOf({ id: 'office-peek', origin: 'person' }, ids, false)).toEqual({ reopenOffice: true, stopRenderer: false })
+  expect(paneCloseOf({ id: 'office-peek', origin: 'plugin' }, ids, false)).toEqual({ reopenOffice: false, stopRenderer: false })
 })
