@@ -216,3 +216,7 @@ Each Claude Code session writes one small JSON file, and every pane reads the fi
 - The v3 plan and decisions are in `docs/agents-office-v3/TODO.md`.
 - Hot reload: saving a file in the mod reloads the module in a running session. The office keeps its agents, because state lives in `$.state` atoms and not in module variables.
 - Debug lines in the Claude Code debug log start with `agents-office:`. A line containing `threw` or `refused` is a failure.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

@@ -2,5 +2,12 @@
   "name": "agents-office",
   "version": "0.1.0",
   "description": "A pane that shows the session's agents as pixel characters in an office.",
+  "author": {
+    "name": "0xnicholasy",
+    "url": "https://github.com/0xnicholasy"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/0xnicholasy/claude-mod-agents-rpg",
+  "repository": "https://github.com/0xnicholasy/claude-mod-agents-rpg",
   "types": "./types/index.d.ts"
 }
